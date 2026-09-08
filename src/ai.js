@@ -92,11 +92,14 @@ function extractContentFromResponse(data) {
 /**
  * 兼容回退：直接请求酒馆后端端点（无 ChatCompletionService 的环境）。
  * 仍然由酒馆服务端转发出站，不产生浏览器直连。
+ * forceNonStream: 强制非流式。非流式请求的上游错误会以 JSON {error:{message}}
+ * 原样返回（而非流式的状态码透传），可拿到供应商的真实报错文本。
  */
-async function callViaBackendEndpoint({ apiCfg, genParams, messages }) {
+async function callViaBackendEndpoint({ apiCfg, genParams, messages, forceNonStream = false }) {
     const c = ctx();
     if (!c || typeof c.getRequestHeaders !== 'function') throw new Error('SillyTavern context unavailable');
     const payload = buildGenerationPayload({ apiCfg, genParams, messages });
+    if (forceNonStream) payload.stream = false;
     if (!payload.reverse_proxy) throw new Error('未配置API地址');
     if (!payload.model) throw new Error('未配置模型名称');
 
@@ -225,9 +228,11 @@ async function callMainApi({ genParams, messages }) {
     }
 }
 
+let providerNonStreamOnly = false;
+
 export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     const viaMain = apiCfg.provider !== 'custom';
-    log(`AI call: ${taskLabel || 'task'} | channel=${viaMain ? 'tavern generateRaw quiet (主通道，绕过预设注入)' : 'tavern ChatCompletionService (自定义端点)'} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')}`);
+    log(`AI call: ${taskLabel || 'task'} | channel=${viaMain ? 'tavern generateRaw quiet (主通道，绕过预设注入)' : 'tavern ChatCompletionService (自定义端点)'} | url=${viaMain ? '-' : (apiCfg.url || '未配置')} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')}`);
 
     if (viaMain) {
         return callMainApi({ genParams, messages });
@@ -236,10 +241,29 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
     try {
-        const text = await callViaTavernService({ apiCfg, genParams, messages, signal: controller.signal });
-        if (text !== null) return text;
-        warn('ChatCompletionService unavailable, falling back to backend endpoint request');
-        return await callViaBackendEndpoint({ apiCfg, genParams, messages });
+        const effectiveStream = !providerNonStreamOnly && apiCfg.stream !== false;
+        try {
+            const text = await callViaTavernService({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages, signal: controller.signal });
+            if (text !== null) return text;
+            warn('ChatCompletionService unavailable, falling back to backend endpoint request');
+            return await callViaBackendEndpoint({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages });
+        } catch (e) {
+            const msg = String(e?.message || e || '');
+            // 官方服务的流式路径会丢弃上游错误体（tryParseStreamingError 的 throw 被
+            // 自身 catch 吞掉，只剩 "Got response status NNN"）。此时用非流式重试一次：
+            // 非流式的上游错误会以 JSON 原样返回，能拿到供应商真实报错；
+            // 若供应商只是不支持流式，重试会直接成功。
+            if (/^Got response status/.test(msg)) {
+                warn(`upstream rejected the request (${msg}); retrying without stream to surface the provider error`);
+                const text = await callViaBackendEndpoint({ apiCfg, genParams, messages, forceNonStream: true });
+                if (apiCfg.stream !== false && !providerNonStreamOnly) {
+                    providerNonStreamOnly = true;
+                    warn('provider rejected streaming but succeeded without it; remaining calls in this session will skip streaming');
+                }
+                return text;
+            }
+            throw e instanceof Error ? e : new Error(msg);
+        }
     } catch (e) {
         if (e?.name === 'AbortError' || String(e?.message || e) === 'timeout') {
             throw new Error('API请求超时，请稍后重试');
