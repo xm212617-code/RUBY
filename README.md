@@ -1,0 +1,111 @@
+# RUBY Analyzer（独立版）
+
+SillyTavern 1.16+ 的独立第三方扩展。基于对话楼层周期性调用 AI 执行角色分析任务，将结果写入聊天世界书。
+
+完全脱离宿主插件运行，仅使用 SillyTavern 官方扩展 API（`SillyTavern.getContext()`）、原生 STscript 命令与原生事件系统。
+
+## 功能
+
+- **无感后台监听**：基于酒馆原生事件（`GENERATION_ENDED` / `CHAT_CHANGED` / `MESSAGE_RECEIVED`），每条 AI 回复后自动判断周期位置，到点静默执行分析，不占用前台、不打断对话
+- **周期调度**：周期位置 = `((AI回复楼层 - 1) % 周期长度) + 1`，纯函数现算；漏触发的楼层自动累积补齐；支持同位置多任务按序独立执行
+- **增量阅读**：每个任务独立维护"已读书签"（聊天元数据），只读上次之后的新楼层（含被隐藏正文），每次最多 20 楼
+- **参考条目池 / 任务输出引用**：世界书条目注册为变量注入提示词；任务间可互相引用输出（含引用自己的上次结果实现跨周期累积）
+- **悬浮球 + 完整面板**：可拖动悬浮球一键打开配置面板，状态灯实时显示引擎状态（绿=监听中 / 蓝闪=分析中 / 红=错误）
+- **每个任务单独绑定角色卡**：整份配置可绑定到指定角色（角色切换自动换配置）；任务级还可再限定生效角色
+- **API 安全**：密钥只存于本机扩展设置，绝不进入角色卡 / 世界书 / 导出模板；自定义端点请求经酒馆服务端转发（无 CORS、密钥不暴露前端）
+- **多配置方案 + 模板导入导出**：多套方案随时切换；JSON 模板即插即拔，兼容旧版模板格式
+- **原生更新通道**：manifest 已启用 `auto_update`，通过酒馆扩展管理器自动/手动更新
+
+## 安装
+
+### 方式一：扩展管理器安装（推荐）
+
+把本目录推送到 Git 仓库后，在 SillyTavern → 扩展 → 安装扩展 中填入仓库地址安装。
+
+### 方式二：手动放置
+
+将 `ruby-analyzer` 文件夹复制到：
+
+```
+SillyTavern/public/scripts/extensions/third-party/ruby-analyzer
+```
+
+刷新页面即自动加载。
+
+## API 渠道
+
+所有分析调用均走酒馆通道（由酒馆前端服务发起、酒馆服务端转发出站），不存在任何浏览器对外的独立直连；全过程异步执行，不阻塞对话。
+
+| 渠道 | 通道 | 说明 |
+|---|---|---|
+| 酒馆主 API | 原生 `generateRaw`（quiet 调用） | 仅借用酒馆主通道发送：**绕过预设的提示词注入**——主提示词、越狱、角色卡、聊天记录一概不进入上下文，发送的只有 RUBY 自己组装的破限消息与任务提示词（与酒馆自身静默提示词同一机制）；RUBY 生成参数通过官方 `CHAT_COMPLETION_SETTINGS_READY` 事件钩子覆写到本次请求。出站请求与普通生成同源同形 |
+| 自定义 OpenAI 兼容端点 | 原生 `ChatCompletionService`（ST 1.16 官方请求服务） | 酒馆官方为扩展提供的 chat completion 请求服务：同一后端端点、同一负载组装约定、同一 SSE 解析器（`EventSourceStream` + `getStreamingReply`）。地址填到版本段（如 `https://api.deepseek.com/beta`），服务端自动拼接 `/chat/completions`；可一键拉取模型列表 |
+
+## 斜杠命令
+
+```
+/ruby                    打开面板
+/ruby status             查看引擎状态
+/ruby run task=1         手动执行任务 #1
+/ruby run startup=true   手动执行开局任务
+/ruby run all=true       手动执行全部启用任务
+/ruby reload             重载配置（切换绑定/方案后生效）
+```
+
+## 配置层级
+
+```
+extensionSettings.RubyAnalyzer
+├── api                  API 凭据（全局本地，含密钥）
+├── global               全局配置（未绑定角色共用）
+├── characterConfigs     按角色 avatar 索引的独立绑定配置
+└── ui                   界面偏好（悬浮球位置、通知开关）
+```
+
+当前生效层：角色绑定配置 > 全局配置。面板"角色绑定"页可绑定 / 解绑 / 复制到全局。
+
+## 项目结构
+
+```
+ruby-analyzer/
+├── manifest.json      扩展清单（auto_update 已启用）
+├── index.js           入口：初始化、/ruby 命令注册
+├── style.css          悬浮球 + 面板样式
+└── src/
+    ├── env.js         环境访问、STscript 执行器、日志
+    ├── config.js      配置模式、存储层（全局/角色绑定）、API 设置
+    ├── scheduler.js   周期纯函数（位置计算、任务收集、关键词扫描）
+    ├── reader.js      消息分类、增量阅读、书签管理
+    ├── worldbook.js   世界书读写（原生 STscript + loadWorldInfo/saveWorldInfo）
+    ├── jailbreak.js   破限消息组装（system/assistant/user + 注入位置）
+    ├── ai.js          AI 调用层（generateRaw / 后端代理 + SSE 流式）
+    ├── engine.js      事件编排、补齐循环、分析管线
+    ├── orb.js         可拖动悬浮球
+    └── panel.js       配置面板（玩家/创作者双版面）
+```
+
+## 与旧版（宿主插件内嵌版）的差异
+
+- 触发机制由宿主插件回调改为酒馆原生事件，行为等价且更可靠
+- API 调用改为 `generateRaw`（主 API）或酒馆后端代理（自定义端点），大提示词不再经过命令行解析
+- 宿主插件的剧情总结集成不再存在；如需历史背景参考，将总结条目加入参考池即可
+- 无感更新交由酒馆扩展管理器的官方更新通道
+- 配置存储从宿主任务系统迁移为独立的角色绑定 / 全局两层结构；旧版导出的 JSON 模板可直接导入
+
+## 配置模板（热插拔）
+
+导入页兼容三代模板格式，旧版导出的 JSON 可直接导入：
+
+| 来源 | 识别特征 | 导入行为 |
+|---|---|---|
+| 本插件 v3 | `_meta.version: 3.0.0`，presets 数组含 `cyclePositions`/`keywordScan`/`characters` | 全字段保真往返 |
+| 旧版 v2.x（多方案） | `_meta.type: RUBY_ANALYZER_PRESET` + `presets` 数组，任务仅 `triggerFloor` | 每方案独立导入；`triggerFloor` 自动转为周期位置；`startupTask.triggerFloors` 同步转换；`gen`/`jailbreak`/标签一并导入 |
+| 旧版 v1.x（单方案） | 无 `presets`，顶层 `tasks`/`referencePool`/`startupTask` | 包装为名为"导入的方案"的单方案导入 |
+
+导入前会显示来源版本与方案/任务数量并要求确认；导入后 `/ruby reload` 生效。反向兼容：本插件导出的模板同样可被旧版导入（多位置任务退化为首个位置）。
+
+## 安全说明
+
+- API 密钥仅保存在 `settings.json` 的扩展设置中，导出模板、角色卡、世界书均不含密钥
+- 全部请求经由酒馆官方请求服务发出，由酒馆服务端转发，出站请求与正常酒馆生成同形（无独立客户端特征）；浏览器端不存在对模型服务商的直接调用
+- 面板密钥输入框为密码类型，不在界面明文展示
