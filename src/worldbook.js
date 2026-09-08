@@ -8,44 +8,84 @@ export async function getChatBookName() {
     return String(await st('/getchatbook')).trim();
 }
 
-export async function findEntryUidExact(book, exactKey) {
-    if (!book || !exactKey) return null;
+async function loadBookData(bookName) {
+    const c = ctx();
+    if (!bookName || typeof c?.loadWorldInfo !== 'function') return null;
     try {
-        const result = await st(`/findentry file=${q(book)} ${q(exactKey)}`);
-        if (result) {
-            const uid = parseInt(result, 10);
-            if (!isNaN(uid) && uid >= 0) {
-                const actualKey = await st(`/getentryfield file=${q(book)} field=key ${uid}`);
-                const keys = String(actualKey || '').trim().split(',').map((k) => k.trim());
-                if (keys.includes(exactKey)) return uid;
+        return await c.loadWorldInfo(bookName);
+    } catch (e) {
+        warn(`loadWorldInfo failed: ${bookName} - ${e?.message || e}`);
+        return null;
+    }
+}
+
+function entryKeys(entry) {
+    const raw = entry?.key;
+    const list = Array.isArray(raw) ? raw : (raw !== undefined && raw !== null ? [raw] : []);
+    const keys = [];
+    for (const item of list) {
+        const s = String(item ?? '').trim();
+        if (!s) continue;
+        keys.push(s);
+        if (s.includes(',')) {
+            for (const part of s.split(',')) {
+                const p = part.trim();
+                if (p) keys.push(p);
             }
         }
-    } catch (e) {
-        warn(`findEntry failed: ${exactKey}`);
+    }
+    return keys;
+}
+
+/**
+ * 精确查找条目：直接遍历世界书数据，key 数组元素逐一比对。
+ * 不经斜杠命令（/getentryfield 的返回值是 JSON 序列化字符串，
+ * 直接 String() 会带上中括号导致匹配失败），读取结果与 UI 数据一致。
+ */
+export async function findEntry(book, exactKey) {
+    if (!book || !exactKey) return null;
+    const data = await loadBookData(book);
+    if (!data?.entries || typeof data.entries !== 'object') return null;
+    const target = String(exactKey).trim();
+    if (!target) return null;
+    for (const [uid, entry] of Object.entries(data.entries)) {
+        if (entryKeys(entry).includes(target)) {
+            return { uid: parseInt(uid, 10), entry, data };
+        }
     }
     return null;
+}
+
+const substitute = (text) => {
+    const c = ctx();
+    const s = String(text ?? '');
+    if (typeof c?.substituteParams !== 'function') return s;
+    try {
+        return String(c.substituteParams(s));
+    } catch {
+        return s;
+    }
+};
+
+async function readEntryFrom(book, key) {
+    const found = await findEntry(book, key);
+    if (!found) return '';
+    const content = found.entry?.content;
+    if (content === undefined || content === null) return '';
+    return substitute(content).trim();
 }
 
 export async function readEntry(charBook, chatBook, key, preferChat = false) {
     if (!key) return '';
     try {
         if (preferChat && chatBook) {
-            const uid = await findEntryUidExact(chatBook, key);
-            if (uid !== null) {
-                return String(await st(`/getentryfield file=${q(chatBook)} field=content ${uid}`)).trim();
-            }
+            const chat = await readEntryFrom(chatBook, key);
+            if (chat) return chat;
         }
-        if (charBook) {
-            const uid = await findEntryUidExact(charBook, key);
-            if (uid !== null) {
-                return String(await st(`/getentryfield file=${q(charBook)} field=content ${uid}`)).trim();
-            }
-        }
+        const char = await readEntryFrom(charBook, key);
+        if (char) return char;
         if (chatBook && !preferChat) {
-            const uid = await findEntryUidExact(chatBook, key);
-            if (uid !== null) {
-                return String(await st(`/getentryfield file=${q(chatBook)} field=content ${uid}`)).trim();
-            }
+            return await readEntryFrom(chatBook, key);
         }
         return '';
     } catch (e) {
@@ -55,15 +95,15 @@ export async function readEntry(charBook, chatBook, key, preferChat = false) {
 }
 
 export async function entryExists(book, key) {
-    return (await findEntryUidExact(book, key)) !== null;
+    return (await findEntry(book, key)) !== null;
 }
 
 export async function disableCharEntry(charBook, entryKey) {
     if (!charBook || !entryKey) return;
     try {
-        const uid = await findEntryUidExact(charBook, entryKey);
-        if (uid !== null) {
-            await st(`/setentryfield file=${q(charBook)} uid=${uid} field=disable 1`);
+        const found = await findEntry(charBook, entryKey);
+        if (found) {
+            await st(`/setentryfield file=${q(charBook)} uid=${found.uid} field=disable 1`);
             log(`char book entry disabled: ${entryKey}`);
         }
     } catch (e) {
@@ -79,16 +119,20 @@ export async function writeOutputEntry(chatBook, options) {
     } = options;
     if (!chatBook || !key) throw new Error('chat book or output key missing');
 
-    let uid = await findEntryUidExact(chatBook, key);
-    const extraKeysList = String(extraKeys || '').split(',').map((k) => k.trim()).filter(Boolean);
-    const allKeys = [key, ...extraKeysList].join(', ');
-
-    if (uid === null) {
+    let uid;
+    const found = await findEntry(chatBook, key);
+    if (found) {
+        uid = found.uid;
+        log(`output entry found, updating: ${key} (uid ${uid})`);
+    } else {
         const uidRaw = await st(`/createentry file=${q(chatBook)} key=${q(key)} ""`);
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${key}`);
         log(`output entry created: ${key}`);
     }
+
+    const extraKeysList = String(extraKeys || '').split(',').map((k) => k.trim()).filter(Boolean);
+    const allKeys = [key, ...extraKeysList].join(', ');
 
     if (extraKeysList.length > 0) {
         const varName = `_ruby_key_${Date.now()}`;
