@@ -65,6 +65,36 @@ const makeDefaultUi = () => ({
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
+/**
+ * 生成参数清洗：只保留合法值，其余一律剔除（不发送，交由酒馆预设/服务商默认）。
+ * 顶层 enabled 标志默认关闭——关闭时引擎完全不传采样参数。
+ */
+export function sanitizeGenParams(gen) {
+    const src = (gen && typeof gen === 'object') ? gen : {};
+    const rules = {
+        temperature: { min: 0, max: 2 },
+        top_p: { min: 0, max: 1, exclusiveMin: true },
+        top_k: { min: 1, max: 1000 },
+        presence_penalty: { min: -2, max: 2 },
+        frequency_penalty: { min: -2, max: 2 },
+    };
+    const out = {};
+    for (const [key, rule] of Object.entries(rules)) {
+        const n = Number(src[key]);
+        if (!Number.isFinite(n)) continue;
+        if (n < rule.min || n > rule.max) continue;
+        if (rule.exclusiveMin && n <= rule.min) continue;
+        out[key] = n;
+    }
+    const mt = Number(src.max_tokens);
+    if (Number.isFinite(mt) && mt >= 1) out.max_tokens = mt;
+    if (['low', 'medium', 'high'].includes(String(src.reasoning_effort))) {
+        out.reasoning_effort = String(src.reasoning_effort);
+    }
+    if (src.enabled === true) out.enabled = true;
+    return out;
+}
+
 export function getSettings() {
     const c = ctx();
     if (!c) return null;
@@ -103,7 +133,7 @@ export function normalizeConfigData(raw) {
         result.activePresetId = result.presets[0].id;
     }
     result.jailbreak = data.jailbreak || null;
-    result.gen = (data.gen && typeof data.gen === 'object') ? data.gen : {};
+    result.gen = sanitizeGenParams(data.gen);
     return result;
 }
 

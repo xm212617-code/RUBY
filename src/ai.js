@@ -1,4 +1,5 @@
 import { ctx, log, warn } from './env.js';
+import { sanitizeGenParams } from './config.js';
 
 const REQUEST_TIMEOUT_MS = 600000;
 
@@ -30,18 +31,14 @@ function buildGenerationPayload({ apiCfg, genParams, messages }) {
         proxy_password: apiCfg.key || '',
         stream: apiCfg.stream !== false,
     };
-    const pushNum = (k, v) => {
-        const n = Number(v);
-        if (Number.isFinite(n)) payload[k] = n;
-    };
-    pushNum('temperature', genParams.temperature);
-    pushNum('top_p', genParams.top_p);
-    pushNum('top_k', genParams.top_k);
-    pushNum('presence_penalty', genParams.presence_penalty);
-    pushNum('frequency_penalty', genParams.frequency_penalty);
-    pushNum('max_tokens', genParams.max_tokens);
-    if (genParams.reasoning_effort) {
-        payload.reasoning_effort = String(genParams.reasoning_effort);
+    // 仅发送玩家显式启用且通过合法性清洗的参数；其余不进入请求体，
+    // 由上游使用默认值（杜绝 top_k=0 之类的非法值抵达供应商）
+    const gen = sanitizeGenParams(genParams);
+    for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty', 'max_tokens']) {
+        if (gen[key] !== undefined) payload[key] = gen[key];
+    }
+    if (gen.reasoning_effort) {
+        payload.reasoning_effort = gen.reasoning_effort;
     }
     return payload;
 }
@@ -190,12 +187,12 @@ async function callMainApi({ genParams, messages }) {
         options.responseLength = maxLength;
     }
 
+    const sanitized = sanitizeGenParams(genParams);
     const patchable = {};
     for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty']) {
-        const v = Number(genParams[key]);
-        if (Number.isFinite(v)) patchable[key] = v;
+        if (sanitized[key] !== undefined) patchable[key] = sanitized[key];
     }
-    if (genParams.reasoning_effort) patchable.reasoning_effort = String(genParams.reasoning_effort);
+    if (sanitized.reasoning_effort) patchable.reasoning_effort = sanitized.reasoning_effort;
 
     let hook = null;
     const detach = () => {

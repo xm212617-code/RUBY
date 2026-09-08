@@ -254,7 +254,8 @@ export async function runPipeline(taskBatch) {
     const startupTask = preset.startupTask;
     const tasks = preset.tasks;
     const referencePool = preset.referencePool;
-    const genParams = cfgData.gen || {};
+    // 生成参数默认不启用：未开启时传空对象，主API沿用酒馆预设采样、自定义端点沿用服务商默认
+    const genParams = cfgData.gen?.enabled === true ? cfgData.gen : {};
     const customTags = cfgData.customContentTags || [];
     const charName = cfgData.charName || c.name2 || c.characters?.[c.characterId]?.name || '角色';
     const apiCfg = config.getApiConfig();

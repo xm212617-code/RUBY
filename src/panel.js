@@ -291,22 +291,30 @@ function buildShellHtml() {
                     <div class="form-section">
                         <div class="form-header red">■ 生成参数</div>
                         <div class="form-body">
-                            <div class="form-row"><span class="form-label">Temperature</span><input id="ra_gen_temp" class="w100" type="number" step="0.01" min="0" max="2" placeholder="未设"></div>
-                            <div class="form-row"><span class="form-label">Top P</span><input id="ra_gen_top_p" class="w100" type="number" step="0.01" min="0" max="1" placeholder="未设"></div>
-                            <div class="form-row"><span class="form-label">Top K</span><input id="ra_gen_top_k" class="w100" type="number" step="1" min="1" placeholder="未设"></div>
-                            <div class="form-row"><span class="form-label">存在惩罚</span><input id="ra_gen_pp" class="w100" type="number" step="0.01" min="-2" max="2" placeholder="未设"></div>
-                            <div class="form-row"><span class="form-label">频率惩罚</span><input id="ra_gen_fp" class="w100" type="number" step="0.01" min="-2" max="2" placeholder="未设"></div>
+                            <div class="tip" style="margin-top:0;margin-bottom:10px;">
+                                💡 <strong>默认不发送任何生成参数</strong>：主API沿用酒馆当前预设的采样设置，自定义端点沿用服务商默认值。<br>
+                                有自定义需求时勾选下方开关；<u>留空的参数依然不会发送</u>。
+                            </div>
+                            <div class="form-row">
+                                <span class="form-label">参数开关</span>
+                                <label class="inline"><input type="checkbox" id="ra_gen_enable"> 启用自定义生成参数</label>
+                            </div>
+                            <div class="form-row"><span class="form-label">Temperature</span><input id="ra_gen_temp" class="w100" type="number" step="0.01" min="0" max="2" placeholder="不发送"></div>
+                            <div class="form-row"><span class="form-label">Top P</span><input id="ra_gen_top_p" class="w100" type="number" step="0.01" min="0.01" max="1" placeholder="不发送"></div>
+                            <div class="form-row"><span class="form-label">Top K</span><input id="ra_gen_top_k" class="w100" type="number" step="1" min="1" placeholder="不发送"></div>
+                            <div class="form-row"><span class="form-label">存在惩罚</span><input id="ra_gen_pp" class="w100" type="number" step="0.01" min="-2" max="2" placeholder="不发送"></div>
+                            <div class="form-row"><span class="form-label">频率惩罚</span><input id="ra_gen_fp" class="w100" type="number" step="0.01" min="-2" max="2" placeholder="不发送"></div>
                             <div class="form-row">
                                 <span class="form-label">推理力度</span>
                                 <select id="ra_gen_effort" class="w150">
-                                    <option value="">不指定</option>
+                                    <option value="">不发送</option>
                                     <option value="low">low</option>
                                     <option value="medium">medium</option>
                                     <option value="high">high</option>
                                 </select>
                             </div>
                             <div class="btn-row" style="border-top:none;padding-top:0;">
-                                <button id="ra_gen_reset" class="btn outline small">清空参数</button>
+                                <button id="ra_gen_reset" class="btn outline small">清空参数（恢复默认）</button>
                             </div>
                         </div>
                     </div>
@@ -945,6 +953,15 @@ function loadApiTab(data) {
     $('ra_gen_fp').value = gen.frequency_penalty ?? '';
     $('ra_gen_effort').value = gen.reasoning_effort || '';
 
+    const genInputs = ['ra_gen_temp', 'ra_gen_top_p', 'ra_gen_top_k', 'ra_gen_pp', 'ra_gen_fp', 'ra_gen_effort'];
+    const syncGenEnabled = () => {
+        const enabled = !!$('ra_gen_enable').checked;
+        genInputs.forEach((id) => { $(id).disabled = !enabled; });
+    };
+    $('ra_gen_enable').checked = gen.enabled === true;
+    syncGenEnabled();
+    $('ra_gen_enable').onchange = syncGenEnabled;
+
     const syncProviderUi = () => {
         const isCustom = providerSel.value === 'custom';
         $('ra_api_url_wrap').classList.toggle('hidden', !isCustom);
@@ -1004,7 +1021,9 @@ function wirePlayerSections() {
             if (el) el.value = '';
         });
         $('ra_gen_effort').value = '';
-        window.toastr?.success?.('已清空生成参数');
+        $('ra_gen_enable').checked = false;
+        $('ra_gen_enable').onchange?.();
+        window.toastr?.success?.('已清空，恢复默认（不发送生成参数，跟随酒馆/服务商设置）');
     });
 
     on($('ra_api_save'), 'click', () => {
@@ -1033,6 +1052,7 @@ function wirePlayerSections() {
             };
             withConfigData((d) => {
                 d.gen = {
+                    enabled: !!$('ra_gen_enable').checked,
                     temperature: num('ra_gen_temp'),
                     top_p: num('ra_gen_top_p'),
                     top_k: num('ra_gen_top_k'),
