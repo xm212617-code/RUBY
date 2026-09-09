@@ -1,6 +1,7 @@
 import { ctx, log, warn } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
 import { ensureOrb } from './src/orb.js';
+import { initSettingsDrawer } from './src/settings.js';
 import { openPanel } from './src/panel.js';
 
 let commandRegistered = false;
@@ -117,6 +118,7 @@ function bootstrap() {
     registerRubyCommand();
     initEngine();
     ensureOrb();
+    initSettingsDrawer();
     log('RUBY Analyzer extension loaded (independent edition)');
 }
 

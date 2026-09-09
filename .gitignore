@@ -10,3 +10,6 @@ Desktop.ini
 # local junk
 node_modules/
 *.log
+
+# design workspace (source image / preview html, not shipped)
+design/

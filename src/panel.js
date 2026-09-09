@@ -1070,6 +1070,7 @@ function wirePlayerSections() {
                 notify: !!$('ra_notify').checked,
                 orbHidden: !$('ra_orb_show').checked,
             });
+            window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
 
             const num = (id) => {
                 const v = parseFloat($(id)?.value);
