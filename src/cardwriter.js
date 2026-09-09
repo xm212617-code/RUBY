@@ -69,6 +69,7 @@ export function getSettings() {
     const ui = config.getUi() || {};
     return {
         enabled: !!ui[uiKey()]?.enabled,
+        mode: ui[uiKey()]?.mode === 'dialogue' ? 'dialogue' : 'fast',
         draftToBook: ui[uiKey()]?.draftToBook !== false,
         showGuide: ui[uiKey()]?.showGuide !== false,
     };
@@ -198,11 +199,58 @@ async function setupBaseEntries(book) {
     log('[cardwriter] base entries ready (rules/persona @ depth0 order999, appendix disabled)');
 }
 
+const HOLD_KEY = 'RUBY写卡_继续聊聊';
+const LEGACY_STEP_IDS = ['Step6.5'];
+
+/** 进入某步骤时需要清除的历史步骤（条目+说明+草稿），避免世界书冗杂 */
+const CLEANUP_ON_ENTER = {
+    Step4: ['Step1', 'Step2'], // Step3 已整合进主角卡，灵魂/活人化草稿作废
+    Step8: ['Step7'],          // 分析规划已被提示词取代
+};
+
+/** 各步骤草稿条目键 */
+function draftKeyOf(stepId) {
+    return stepId === 'Step6' ? 'ruby草稿_人物速览' : `ruby草稿_${stepId}`;
+}
+
+/** 从已加载的世界书数据中删除一组条目（按 key 精确匹配） */
+function deleteEntriesByKeys(entries, keys) {
+    const keySet = new Set(keys);
+    let removed = 0;
+    for (const [uid, e] of Object.entries(entries)) {
+        if (Array.isArray(e?.key) && e.key.some((k) => keySet.has(k))) {
+            delete entries[uid];
+            removed++;
+        }
+    }
+    return removed;
+}
+
+/** 收集某步骤的全部关联键：注入条目、说明条目、草稿条目 */
+function stepArtifactKeys(stepId) {
+    const sk = `RUBY写卡_${stepId.replace('.', '_')}`;
+    return [sk, `${sk}_说明`, draftKeyOf(stepId)];
+}
+
 async function setStepEntries(book, stepId) {
     const c = ctx();
     const data = await c.loadWorldInfo(book);
     if (!data?.entries) throw new Error(`world book not found: ${book}`);
     const entries = data.entries;
+
+    // 切换即清除"继续聊聊"临时注入（下一阶段切换时清除）
+    const holdRemoved = deleteEntriesByKeys(entries, [HOLD_KEY]);
+
+    // 清理废弃步骤（Step6.5 已从流程移除）的遗留条目与草稿
+    const legacyKeys = LEGACY_STEP_IDS.flatMap(stepArtifactKeys);
+    const legacyRemoved = deleteEntriesByKeys(entries, legacyKeys);
+
+    // 进入目标步骤时清除历史步骤工件（条目+说明+草稿），避免世界书冗杂
+    let cleanupRemoved = 0;
+    if (stepId && CLEANUP_ON_ENTER[stepId]) {
+        const keys = CLEANUP_ON_ENTER[stepId].flatMap(stepArtifactKeys);
+        cleanupRemoved = deleteEntriesByKeys(entries, keys);
+    }
 
     // 关闭全部步骤条目（含说明条目）
     for (const s of CARDWRITER_DATA.steps) {
@@ -238,6 +286,9 @@ async function setStepEntries(book, stepId) {
     }
 
     await saveBook(book, data);
+    if (holdRemoved || legacyRemoved || cleanupRemoved) {
+        log(`[cardwriter] cleanup on switch -> ${stepId || 'none'}: hold=${holdRemoved} legacy=${legacyRemoved} stepArtifacts=${cleanupRemoved}`);
+    }
 
     // 验证日志：控制台核对注入状态（constant+enabled+atDepth 即会随每轮注入）
     const verify = [];
@@ -252,26 +303,65 @@ async function setStepEntries(book, stepId) {
 // ---------- 完成标记检测 ----------
 
 const FINISH_MARKERS = {
-    Step0: /<step0_aesthetic_summary>[\s\S]*?```yaml[\s\S]*?```[\s\S]*?<\/step0_aesthetic_summary>/,
-    Step1: /<step1_soul_exploration>[\s\S]*?```yaml[\s\S]*?```[\s\S]*?<\/step1_soul_exploration>/,
-    Step2: /<step2_living_character>[\s\S]*?```yaml[\s\S]*?```[\s\S]*?<\/step2_living_character>/,
-    Step3: /<character>\s*```yaml[\s\S]*?```[\s\S]*?<\/character>/,
-    Step4: /<NSFW档案>\s*```yaml[\s\S]*?```[\s\S]*?<\/NSFW档案>/,
+    Step0: /<step0_aesthetic_summary>[\s\S]*?<\/step0_aesthetic_summary>/,
+    Step1: /<step1_soul_exploration>[\s\S]*?<\/step1_soul_exploration>/,
+    Step2: /<step2_living_character>[\s\S]*?<\/step2_living_character>/,
+    Step3: /<character>[\s\S]*?<\/character>/,
+    Step4: /<NSFW档案>[\s\S]*?<\/NSFW档案>/,
+};
+
+// 每步 yaml 总结的必需字段：全部命中才算"完整yaml"，防止把 Ruby 展示的草稿片段误判为完成
+const REQUIRED_YAML_KEYS = {
+    Step0: ['故事还原'],
+    Step1: ['人生经历', '内在张力'],
+    Step2: ['角色核心', '对话示例'],
+    Step3: ['character:', '角色核心', '写作基准'],
+    Step4: ['nsfw_profile', '特质'],
 };
 
 // 无 XML 包裹、以 ```yaml 代码块为完成标记的步骤
-const PLAIN_YAML_STEPS = new Set(['Step5', 'Step6', 'Step6.5']);
+const PLAIN_YAML_STEPS = new Set(['Step5', 'Step6']);
 
-/** 提取本步骤的完成产物，返回 '' 表示未完成 */
+// 总览收尾标记：yaml 内含「玩家已完成」
+const OVERVIEW_MARKER = /```yaml[\s\S]*?玩家已完成[\s\S]*?```/;
+
+function yamlBlocks(text) {
+    return [...String(text || '').matchAll(/```yaml[ \t]*\r?\n([\s\S]*?)```/g)]
+        .map((m) => m[1])
+        .filter(Boolean);
+}
+
+function hasAllKeys(yamlBody, keys) {
+    const s = String(yamlBody || '');
+    return keys.every((k) => s.includes(k));
+}
+
+/** 提取本步骤的完成产物，返回 '' 表示未完成（或仅是草稿展示） */
 export function extractCompletion(stepId, text) {
     const s = String(text || '');
+
+    if (stepId === 'Overview') {
+        const m = s.match(OVERVIEW_MARKER);
+        return m ? m[0].trim() : '';
+    }
+
     const re = FINISH_MARKERS[stepId];
     if (re) {
         const m = s.match(re);
-        return m ? m[0].trim() : '';
+        if (!m) return '';
+        const blocks = yamlBlocks(m[0]);
+        if (blocks.length === 0) return '';
+        // 合并块体做完整性校验；要求块数与必需字段同时满足
+        const merged = blocks.join('\n');
+        const required = REQUIRED_YAML_KEYS[stepId];
+        if (required && !hasAllKeys(merged, required)) {
+            log(`[cardwriter] ${stepId} yaml incomplete (missing required keys), treating as draft display`);
+            return '';
+        }
+        return m[0].trim();
     }
     if (PLAIN_YAML_STEPS.has(stepId)) {
-        const blocks = [...s.matchAll(/```yaml[ \t]*\r?\n([\s\S]*?)```/g)].map((m) => m[1].trim()).filter(Boolean);
+        const blocks = yamlBlocks(s);
         if (blocks.length === 0) return '';
         return blocks.map((b) => '```yaml\n' + b + '\n```').join('\n\n');
     }
@@ -485,15 +575,11 @@ export async function endSession({ keepDrafts = true } = {}) {
         const data = await c.loadWorldInfo(book);
         if (data?.entries) {
             if (!keepDrafts) {
-                // 删除草稿书中 RUBY 创建的全部条目（步骤/说明/常驻/草稿）
-                const deleteKeys = new Set(['ruby草稿_人物速览', RULES_KEY, PERSONA_KEY, APPENDIX_KEY]);
-                for (const s of CARDWRITER_DATA.steps) {
-                    deleteKeys.add(stepKey(s));
-                    deleteKeys.add(`${stepKey(s)}_说明`);
-                    deleteKeys.add(`ruby草稿_${s.id}`);
-                }
+                // 删除草稿书中 RUBY 创建的全部条目（步骤/说明/常驻/草稿/临时注入/遗留）
                 for (const [uid, e] of Object.entries(data.entries)) {
-                    if (Array.isArray(e?.key) && e.key.some((k) => deleteKeys.has(k))) {
+                    const k = Array.isArray(e?.key) ? e.key[0] : '';
+                    if (k === RULES_KEY || k === PERSONA_KEY || k === APPENDIX_KEY || k === HOLD_KEY ||
+                        k.startsWith(STEP_PREFIX) || k.startsWith('ruby草稿_')) {
                         delete data.entries[uid];
                     }
                 }
@@ -545,6 +631,98 @@ function lastAiMessage() {
     return null;
 }
 
+// ---------- 对话模式：确认弹窗与"继续聊聊"临时注入 ----------
+
+/** 注入"继续聊聊"临时条目：告知 Ruby 创作者不满意，继续讨论直到满意才输出完整 yaml */
+async function injectHoldEntry(book, stepId) {
+    const c = ctx();
+    const data = await c.loadWorldInfo(book);
+    if (!data?.entries) throw new Error(`world book not found: ${book}`);
+    const entries = data.entries;
+    const step = getStep(stepId);
+    const entry = await ensureEntryIn(book, entries, HOLD_KEY);
+    Object.assign(entry, {
+        content: [
+            `【创作者反馈】创作者对当前步骤【${stepId} ${step?.name || ''}】的产出不完全满意。`,
+            '要求：',
+            '- 不要随意下结论，不要急着输出最终yaml总结',
+            '- 继续针对当前步骤与创作者讨论、修改、完善',
+            '- 直到创作者明确表示满意后，才能输出完整的yaml总结',
+        ].join('\n'),
+        comment: 'RUBY写卡·继续聊聊（临时注入）',
+        position: POS_AT_DEPTH, depth: 1, order: 550,
+        role: ROLE_SYSTEM, constant: true, disable: false,
+    });
+    await saveBook(book, data);
+    log('[cardwriter] hold entry injected (creator wants to keep chatting)');
+}
+
+/** 对话模式确认弹窗：切换下一步 / 我还想聊聊。返回 Promise<'switch'|'chat'> */
+function showStepConfirm(stepId) {
+    return new Promise((resolve) => {
+        const step = getStep(stepId);
+        const next = nextStepOf(stepId);
+        const overlay = document.createElement('div');
+        overlay.id = 'ruby_cw_confirm';
+        overlay.innerHTML = `
+            <div class="cw-confirm-card">
+                <div class="cw-confirm-title">✋ ${stepId} ${step?.name || ''} 检测到完成标记</div>
+                <div class="cw-confirm-body">
+                    Ruby 输出了完整的 yaml 总结。${next ? `确认后将写入草稿并切换到 <b>${next} ${getStep(next)?.name || ''}</b>。` : '确认后将写入草稿。'}
+                    想继续纠正/打磨这一步，选"我还想聊聊"。
+                </div>
+                <div class="cw-confirm-actions">
+                    <button class="cw-btn cw-btn-green" data-choice="switch">✅ 确认${next ? `，切换 ${next}` : ''}</button>
+                    <button class="cw-btn cw-btn-outline" data-choice="chat">💬 我还想聊聊</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const done = (choice) => {
+            overlay.remove();
+            document.removeEventListener('keydown', onKey);
+            resolve(choice);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') done('chat');
+        };
+        document.addEventListener('keydown', onKey);
+        overlay.querySelector('[data-choice="switch"]')?.addEventListener('click', () => done('switch'));
+        overlay.querySelector('[data-choice="chat"]')?.addEventListener('click', () => done('chat'));
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) done('chat');
+        });
+    });
+}
+
+// ---------- 总览收尾：最终清理 ----------
+
+/** 总览完成：只保留 美学/角色/NSFW/分析提示词 草稿，清除其余全部 RUBY 条目 */
+async function finalCleanup() {
+    const book = await ensureDraftBook();
+    const c = ctx();
+    const data = await c.loadWorldInfo(book);
+    if (!data?.entries) throw new Error(`world book not found: ${book}`);
+    const entries = data.entries;
+
+    // 保留的产出草稿：美学设定、角色设定、NSFW设定、分析提示词
+    const KEEP_DRAFTS = new Set(['ruby草稿_Step0', 'ruby草稿_Step3', 'ruby草稿_Step4', 'ruby草稿_Step8']);
+    const removedKeys = new Set();
+    for (const [uid, e] of Object.entries(entries)) {
+        if (!Array.isArray(e?.key)) continue;
+        const k = e.key[0];
+        const isRuby =
+            k === RULES_KEY || k === PERSONA_KEY || k === APPENDIX_KEY || k === HOLD_KEY ||
+            k.startsWith(STEP_PREFIX) || k.startsWith('ruby草稿_');
+        if (isRuby && !KEEP_DRAFTS.has(k)) {
+            delete entries[uid];
+            removedKeys.add(k);
+        }
+    }
+    await saveBook(book, data);
+    log(`[cardwriter] final cleanup: removed ${removedKeys.size} entries (${[...removedKeys].join(', ')}), kept: ${[...KEEP_DRAFTS].filter((k) => findEntryIn(entries, k)).join(', ')}`);
+    return { removed: removedKeys.size, kept: [...KEEP_DRAFTS].filter((k) => findEntryIn(entries, k)) };
+}
+
 async function handleGenerationEnded() {
     if (!state.active || state.busy) return;
     const last = lastAiMessage();
@@ -556,12 +734,56 @@ async function handleGenerationEnded() {
     const stepId = state.stepId;
     if (!stepId) return;
 
-    // 步骤被手动切换后（lastStepId 与 stepId 不同步由 switchStep 维护，这里只处理当前）
     const completion = extractCompletion(stepId, text);
     if (!completion) {
         state.lastAction = `收到回复（${stepId} 未检测到完成标记）`;
         emitState();
         return;
+    }
+
+    // 总览收尾：检测到「玩家已完成」yaml → 最终清理并结束会话
+    if (stepId === 'Overview') {
+        state.busy = true;
+        try {
+            const result = await finalCleanup();
+            Object.assign(state, {
+                active: false,
+                stepId: null,
+                lastStepId: null,
+                lastHandledMessage: -1,
+                lastAction: `总览完成 → 已清理 ${result.removed} 个冗余条目，保留：${result.kept.join('、')}`,
+            });
+            clearProgress();
+            notify('success', `RUBY写卡：收尾完成！已清理 ${result.removed} 个过程条目，保留美学/角色/NSFW设定与分析提示词`, { timeOut: 8000 });
+        } catch (e) {
+            state.lastError = e.message;
+            warn(`[cardwriter] finalCleanup failed: ${e.message}`);
+            notify('error', `RUBY写卡：收尾清理失败（${e.message}）`);
+        } finally {
+            state.busy = false;
+            emitState();
+        }
+        return;
+    }
+
+    // 对话模式：非累积步骤检测到完成标记时，先弹确认（长期纠正 Ruby 的机会；
+    // 累积型步骤 Step5/Step8 靠手动切换，天然具备纠正机会，不弹窗）
+    const settings = getSettings();
+    const APPEND_STEPS = new Set(['Step5', 'Step8']);
+    if (settings.mode === 'dialogue' && !APPEND_STEPS.has(stepId)) {
+        const choice = await showStepConfirm(stepId);
+        if (choice === 'chat') {
+            try {
+                const book = await ensureDraftBook();
+                await injectHoldEntry(book, stepId);
+                state.lastAction = `${stepId} 完成标记检测到 → 创作者选择继续聊聊（已注入继续聊聊条目）`;
+            } catch (e) {
+                state.lastError = e.message;
+                warn(`[cardwriter] injectHoldEntry failed: ${e.message}`);
+            }
+            emitState();
+            return;
+        }
     }
 
     state.busy = true;
@@ -588,9 +810,9 @@ async function handleGenerationEnded() {
                 const book = await ensureDraftBook();
                 await setStepEntries(book, null);
                 state.stepId = null;
-                state.lastAction = `${stepId} 完成 → 草稿已存 → 写卡流程完成`;
+                state.lastAction = `${stepId} 完成 → 草稿已存 → 写卡流程完成（可手动进入总览收尾）`;
                 await writeProgress({ stepId: null, done: true });
-                notify('success', `RUBY写卡：${stepId} 完成，全部草稿已写入《${DRAFT_BOOK}》，写卡流程完成`);
+                notify('success', `RUBY写卡：${stepId} 完成，全部草稿已写入《${DRAFT_BOOK}》。写卡流程完成，可在写卡页手动进入「总览」收尾`, { timeOut: 7000 });
             }
         }
         if (spec) {
@@ -626,9 +848,9 @@ export function initCardWriter() {
             state.lastHandledMessage = -1;
             state.lastError = null;
             state.draftCount = 0;
-            // 从聊天元数据恢复进度（此聊天曾开启过写卡会话即恢复）
+            // 从聊天元数据恢复进度（此聊天曾开启过写卡会话即恢复；未知步骤视为遗留不恢复）
             const progress = readProgress();
-            if (progress?.stepId) {
+            if (progress?.stepId && getStep(progress.stepId)) {
                 state.active = true;
                 state.stepId = progress.stepId;
                 state.lastStepId = progress.stepId;

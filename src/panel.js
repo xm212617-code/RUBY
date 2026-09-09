@@ -640,8 +640,17 @@ function buildShellHtml() {
                         <div class="form-section">
                             <div class="form-header blue">■ 写卡选项</div>
                             <div class="form-body">
+                                <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;">
+                                    <label class="checkbox_label"><input type="radio" name="ra_cw_mode" value="fast" checked> ⚡ 快速模式（检测到完成标记自动切换）</label>
+                                    <label class="checkbox_label"><input type="radio" name="ra_cw_mode" value="dialogue"> 💬 对话模式（切换前弹确认，可选"我还想聊聊"继续纠正）</label>
+                                </div>
                                 <label class="checkbox_label"><input id="ra_cw_draft" type="checkbox" checked> 完成时自动写入《ruby写卡初稿》世界书</label>
                                 <label class="checkbox_label"><input id="ra_cw_guide" type="checkbox" checked> 注入步骤说明（对应气泡文本）</label>
+                                <div class="tip" style="margin-top:8px;">
+                                    💬 对话模式下检测到完成标记会弹出确认框：确认切换 / 我还想聊聊（后者注入"创作者不完全满意、继续讨论"的临时条目，切换下一阶段时自动清除）。<br>
+                                    🧹 进入 Step4 自动清理 Step1/2 的条目与草稿；进入 Step8 自动清理 Step7；Step6.5 已从流程移除。<br>
+                                    🏁 全部完成后手动点「总览」进入收尾：Ruby 返回含「玩家已完成」的 yaml 后，自动只保留美学/角色/NSFW设定与分析提示词，其余 RUBY 条目全部清除。
+                                </div>
                             </div>
                         </div>
                         <div class="form-section">
@@ -2398,11 +2407,12 @@ function renderCardWriterTab() {
     const s = cardwriter.getState();
     const statusEl = $('ra_cw_status');
     if (statusEl) {
+        const modeLabel = cardwriter.getSettings().mode === 'dialogue' ? '💬 对话模式' : '⚡ 快速模式';
         const stepLine = s.active
             ? `当前步骤：<strong>${h(s.stepId || '—')}</strong> ${s.stepId ? `（${h(s.stepName)}）` : ''}`
             : '未激活';
         statusEl.innerHTML = `
-            <div>${s.active ? '<span class="status-ok">🟢 写卡会话进行中</span>' : '<span class="status-warn">⚪ 未激活</span>'}</div>
+            <div>${s.active ? '<span class="status-ok">🟢 写卡会话进行中</span>' : '<span class="status-warn">⚪ 未激活</span>'} · ${modeLabel}</div>
             <div style="margin-top:6px;">${stepLine}</div>
             <div style="margin-top:6px;font-size:12px;color:#666;">
                 草稿数：${s.draftCount} · 最近操作：${h(s.lastAction || '无')}${s.lastError ? `<br><span class="status-err">错误：${h(s.lastError)}</span>` : ''}
@@ -2415,8 +2425,8 @@ function renderCardWriterTab() {
         stepsEl.innerHTML = steps.map((st) => {
             const isCur = s.active && s.stepId === st.id;
             const cls = isCur ? 'cw-step cur' : 'cw-step';
-            const tag = st.tool ? '🔧工具' : (st.optional ? '◇可选' : '');
-            return `<button class="${cls}" data-step="${h(st.id)}" title="切换到 ${h(st.id)} ${h(st.name)}">${isCur ? '✦ ' : ''}${h(st.id)} ${h(st.name)}${tag ? ` <span class="cw-tag">${tag}</span>` : ''}</button>`;
+            const tag = st.id === 'Overview' ? '🏁收尾' : (st.tool ? '🔧工具' : (st.optional ? '◇可选' : ''));
+            return `<button class="${cls}" data-step="${h(st.id)}" title="切换到 ${h(st.id)} ${h(st.name)}">${isCur ? '✦ ' : ''}${h(st.id === 'Overview' ? '' : st.id + ' ')}${h(st.name)}${tag ? ` <span class="cw-tag">${tag}</span>` : ''}</button>`;
         }).join('');
         stepsEl.querySelectorAll('.cw-step').forEach((btn) => {
             btn.addEventListener('click', async () => {
@@ -2440,6 +2450,18 @@ function wireCardWriterControls() {
     const guideEl = $('ra_cw_guide');
     if (draftEl) draftEl.checked = settings.draftToBook;
     if (guideEl) guideEl.checked = settings.showGuide;
+    const modeFast = document.querySelector('#ra_panel input[name="ra_cw_mode"][value="fast"]');
+    const modeDialogue = document.querySelector('#ra_panel input[name="ra_cw_mode"][value="dialogue"]');
+    if (modeFast) modeFast.checked = settings.mode !== 'dialogue';
+    if (modeDialogue) modeDialogue.checked = settings.mode === 'dialogue';
+    const modeRadios = [modeFast, modeDialogue].filter(Boolean);
+    for (const radio of modeRadios) {
+        radio.addEventListener('change', () => {
+            if (!radio.checked) return;
+            cardwriter.saveSettings({ mode: radio.value });
+            cwPushLog(`模式切换：${radio.value === 'dialogue' ? '对话模式' : '快速模式'}`);
+        });
+    }
 
     on($('ra_cw_start'), 'click', async () => {
         if (await cardwriter.startSession('Step0')) {

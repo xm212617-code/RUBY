@@ -94,7 +94,7 @@ function showStepBubble(stepId) {
     bubbleEl.id = 'ruby_cw_bubble';
     bubbleEl.innerHTML = `
         <span class="cw-bubble-close">✕</span>
-        <div class="cw-bubble-title">✍️ ${stepId} · ${step.name}</div>
+        <div class="cw-bubble-title">${stepId === 'Overview' ? '🏁' : '✍️'} ${stepId === 'Overview' ? '' : stepId + ' · '}${step.name}</div>
         <div class="cw-bubble-body">${guideToHtml(step.guide)}</div>`;
     document.body.appendChild(bubbleEl);
 
