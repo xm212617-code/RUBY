@@ -213,14 +213,15 @@
 #ruby_cw_bubble {
     position: fixed;
     z-index: 10002;
-    max-width: 300px;
+    min-width: 340px;
+    max-width: 560px;
     background: #FFFEF8;
     border: 2px solid #2C5530;
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
-    padding: 10px 12px;
-    font-size: 12.5px;
-    line-height: 1.5;
+    border-radius: 10px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, .3);
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.65;
     color: #1a1a1a;
     font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', sans-serif;
     display: none;
@@ -229,29 +230,36 @@
 #ruby_cw_bubble .cw-bubble-title {
     font-weight: 700;
     color: #2C5530;
-    margin-bottom: 6px;
+    font-size: 15px;
+    margin-bottom: 8px;
     padding-right: 18px;
 }
 #ruby_cw_bubble .cw-bubble-close {
     position: absolute;
-    top: 6px;
-    right: 8px;
+    top: 8px;
+    right: 10px;
     cursor: pointer;
     color: #999;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
 }
 #ruby_cw_bubble .cw-bubble-close:hover { color: #333; }
-#ruby_cw_bubble .cw-bubble-body { max-height: 200px; overflow-y: auto; }
+#ruby_cw_bubble .cw-bubble-body { max-height: 320px; overflow-y: auto; }
 #ruby_cw_bubble details summary { cursor: pointer; font-weight: 600; color: #e67e22; }
-#ruby_cw_bubble details pre {
+#ruby_cw_bubble details { margin: 4px 0; }
+#ruby_cw_bubble details[open] summary { margin-bottom: 4px; }
+/* 源文本代码块被硬换行成竖排短行：pre-wrap 让长行横向自动折行 */
+#ruby_cw_bubble pre {
     white-space: pre-wrap;
-    font-size: 12px;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
     background: #f4f4ec;
-    padding: 8px;
+    padding: 10px 12px;
     border-radius: 6px;
-    margin: 6px 0 0;
+    margin: 6px 0;
 }
+#ruby_cw_bubble code { font-size: 13px; }
 
 #ra_panel .sub-tabs { display: flex; gap: 0; border-bottom: 1px solid #999; background: #e8e8e0; padding: 0 16px; }
 #ra_panel .sub-tab {

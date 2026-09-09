@@ -69,6 +69,20 @@ function setStatus(orb, engineState) {
 
 // ---------- 写卡步骤说明气泡 ----------
 
+/** 源说明文本 → HTML：``` 围栏块转 <pre>（横向自动折行），普通行保留换行 */
+function guideToHtml(guide) {
+    const parts = String(guide || '').split(/```/);
+    // 偶数索引 = 普通文本（含内建 HTML 标签），奇数索引 = 围栏块内容
+    return parts.map((part, i) => {
+        if (i % 2 === 1) {
+            let body = part.replace(/^[a-zA-Z]*\r?\n/, '');
+            body = body.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+            return `<pre>${body.trim()}</pre>`;
+        }
+        return part.split(/\r?\n/).join('<br>');
+    }).join('');
+}
+
 function showStepBubble(stepId) {
     const step = cardwriter.getStep(stepId);
     if (!step || !step.guide) return;
@@ -81,7 +95,7 @@ function showStepBubble(stepId) {
     bubbleEl.innerHTML = `
         <span class="cw-bubble-close">✕</span>
         <div class="cw-bubble-title">✍️ ${stepId} · ${step.name}</div>
-        <div class="cw-bubble-body">${step.guide}</div>`;
+        <div class="cw-bubble-body">${guideToHtml(step.guide)}</div>`;
     document.body.appendChild(bubbleEl);
 
     const orbRect = orb.getBoundingClientRect();
