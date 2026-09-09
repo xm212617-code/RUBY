@@ -113,6 +113,13 @@ export function reinit() {
 
     const { data, layer } = config.resolveConfig();
     state.layer = layer;
+    if (layer !== 'character') {
+        state.armed = false;
+        state.cycleLength = 0;
+        log(`engine standby: config not bound to a character card (layer=${layer}); bind via panel to arm`);
+        emitState();
+        return;
+    }
     const preset = config.getActivePreset(data);
     const len = scheduler.cycleLength(preset.startupTask, preset.tasks);
 
@@ -148,7 +155,13 @@ async function tick() {
     const aiCount = reader.countAiReplies(c.chat);
     if (aiCount <= state.baseline) return;
 
-    const { data } = config.resolveConfig();
+    const { data, layer } = config.resolveConfig();
+    if (layer !== 'character') {
+        state.armed = false;
+        state.cycleLength = 0;
+        emitState();
+        return;
+    }
     const preset = config.getActivePreset(data);
     const startupTask = preset.startupTask;
     const tasks = preset.tasks;
@@ -203,7 +216,8 @@ export async function forceRun(kind, taskId) {
     state.identity = config.getCharacterIdentity();
     if (!state.identity) throw new Error('请先打开一个角色对话');
 
-    const { data } = config.resolveConfig();
+    const { data, layer } = config.resolveConfig();
+    if (layer !== 'character') throw new Error('当前配置未绑定角色卡：请先在面板中绑定到当前角色卡');
     const preset = config.getActivePreset(data);
     const aiCount = reader.countAiReplies(c.chat);
     const len = scheduler.cycleLength(preset.startupTask, preset.tasks) || 1;
@@ -327,6 +341,8 @@ export async function runPipeline(taskBatch) {
                     }
                 }
 
+                // 关键词扫描作用于完整增量正文（含将被截断的尾部），
+                // 防止截断机制吞掉最新楼层里的触发关键词
                 const keywordScan = current.source === 'force'
                     ? { run: true, keywords: [], matched: [] }
                     : scheduler.shouldRunByKeywordScan(taskConfig, inc.text);
@@ -336,6 +352,16 @@ export async function runPipeline(taskBatch) {
                 }
                 if (taskConfig?.keywordScanEnabled && keywordScan.matched.length > 0) {
                     log(`keyword scan hit: ${keywordScan.matched.join(', ')}`);
+                }
+
+                // 20万字符上限：只截断对话正文（保留靠前部分、抛弃后续剩余正文）。
+                // 参考条目池与历史分析输出在下方组装阶段追加，从不参与此上限，绝不因截断丢失。
+                const capped = reader.capText(inc.text);
+                if (capped.truncated > 0) {
+                    warn(`body exceeds ${reader.MAX_INPUT_CHARS} chars: ${inc.text.length} chars, discarding last ${capped.truncated} chars of chat text (references unaffected)`);
+                    inc.text = capped.text;
+                    inc.truncatedChars = capped.truncated;
+                    notify('warning', `RUBY：${taskDisplayName} 正文超过20万字符上限，末尾 ${capped.truncated} 字符已截断抛弃`);
                 }
 
                 const promptKey = taskConfig.promptKey;
@@ -370,7 +396,10 @@ export async function runPipeline(taskBatch) {
                 const refSections = [];
 
                 if (!hasRecentMessagesPlaceholder && inc.text) {
-                    bodySections.push(`【本次正文（增量，第${inc.startFloor}楼至第${inc.endFloor}楼，共${inc.count}楼）】\n${inc.text}\n\n（硬性约束：分析输出必须取材于上方正文的实际剧情；后文任务指令中的"示范/示例"仅用于说明格式与颗粒度，禁止把示例中的具体部位、项目、情节、数值当作分析结果输出）`);
+                    const truncNote = inc.truncatedChars
+                        ? `\n\n（⚠️ 本次正文超过20万字符上限，末尾约 ${inc.truncatedChars} 字符已被截断抛弃，仅上方保留部分为有效分析素材）`
+                        : '';
+                    bodySections.push(`【本次正文（增量，第${inc.startFloor}楼至第${inc.endFloor}楼，共${inc.count}楼${inc.truncatedChars ? '，已截断' : ''}）】\n${inc.text}${truncNote}\n\n（硬性约束：分析输出必须取材于上方正文的实际剧情；后文任务指令中的"示范/示例"仅用于说明格式与颗粒度，禁止把示例中的具体部位、项目、情节、数值当作分析结果输出）`);
                 }
 
                 for (const varName of useRefs) {

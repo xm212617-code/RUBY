@@ -35,7 +35,7 @@ function setStatus(orb, engineState) {
         orb.title = `RUBY 运行中 · ${engineState.charName} · AI回复 ${engineState.aiCount} · 周期位置 ${pos}（点击打开面板）`;
     } else {
         dot.classList.add('idle');
-        orb.title = 'RUBY 待机（无角色或未配置任务）— 点击打开面板';
+        orb.title = 'RUBY 待机（无角色、未配置任务或未绑定角色卡）— 点击打开面板';
     }
 }
 

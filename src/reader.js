@@ -2,6 +2,13 @@ import { ctx, log } from './env.js';
 
 const BOOKMARK_NS = 'RubyAnalyzer';
 export const MAX_READ_FLOORS = 20;
+export const MAX_INPUT_CHARS = 200000;
+
+export function capText(text, limit = MAX_INPUT_CHARS) {
+    const s = String(text || '');
+    if (s.length <= limit) return { text: s, truncated: 0 };
+    return { text: s.slice(0, limit), truncated: s.length - limit };
+}
 
 export function isSystemHiddenMsg(m) {
     if (!m) return false;

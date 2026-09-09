@@ -216,14 +216,89 @@ export function getCharacterIdentity() {
     return { avatar: String(ch.avatar || ''), name: String(ch.name || '') };
 }
 
+/**
+ * 角色卡内嵌配置：存于角色卡 JSON 的 data.extensions.RubyAnalyzer 字段，
+ * 随卡片导出/分享。读取直接走当前已加载的角色对象。
+ */
+function findCharacterByIdentity(identity) {
+    const c = ctx();
+    if (!c || !identity?.avatar) return null;
+    return (c.characters || []).find((x) => x?.avatar === identity.avatar) || null;
+}
+
+function getCardConfigRaw(identity) {
+    const ch = findCharacterByIdentity(identity);
+    const raw = ch?.data?.extensions?.[SETTINGS_KEY];
+    return (raw && typeof raw === 'object') ? raw : null;
+}
+
+function setCardConfigInMemory(identity, value) {
+    const ch = findCharacterByIdentity(identity);
+    if (!ch) return false;
+    ch.data ||= {};
+    ch.data.extensions ||= {};
+    if (value === null) delete ch.data.extensions[SETTINGS_KEY];
+    else ch.data.extensions[SETTINGS_KEY] = value;
+    return true;
+}
+
+function canWriteCard() {
+    return typeof ctx()?.writeExtensionField === 'function';
+}
+
+let cardPersistTimer = null;
+let pendingCardPersist = null;
+const CARD_PERSIST_DELAY_MS = 2500;
+
+async function flushCardPersist() {
+    const job = pendingCardPersist;
+    pendingCardPersist = null;
+    cardPersistTimer = null;
+    if (!job) return;
+    const c = ctx();
+    const chid = (c?.characters || []).findIndex((x) => x?.avatar === job.identity.avatar);
+    if (chid < 0 || typeof c?.writeExtensionField !== 'function') {
+        warn('card persist skipped: character not found or writeExtensionField unavailable');
+        return;
+    }
+    try {
+        await c.writeExtensionField(chid, SETTINGS_KEY, job.value);
+        log(`card config persisted for ${job.identity.name} (${job.value === null ? 'removed' : 'updated'})`);
+    } catch (e) {
+        warn(`card persist failed: ${e?.message || e}`);
+        window.toastr?.error?.(`RUBY：角色卡配置写入失败（${e?.message || e}）`, '', { timeOut: 6000 });
+    }
+}
+
+function scheduleCardPersist(identity, value) {
+    pendingCardPersist = { identity, value };
+    if (cardPersistTimer) return;
+    cardPersistTimer = setTimeout(flushCardPersist, CARD_PERSIST_DELAY_MS);
+}
+
+/** 立即写卡（跳过防抖等待）；显式操作（绑定/解绑/导入）后调用 */
+export async function flushCardPersistNow() {
+    if (cardPersistTimer) {
+        clearTimeout(cardPersistTimer);
+        cardPersistTimer = null;
+    }
+    await flushCardPersist();
+}
+
 export function resolveConfig() {
     const store = getSettings();
-    if (!store) return { data: makeDefaultConfigData(), layer: 'unavailable', identity: null };
+    if (!store) return { data: makeDefaultConfigData(), layer: 'unavailable', source: 'unavailable', identity: null };
     const identity = getCharacterIdentity();
-    if (identity && store.characterConfigs[identity.avatar]) {
-        return { data: normalizeConfigData(store.characterConfigs[identity.avatar]), layer: 'character', identity };
+    if (identity) {
+        const cardRaw = getCardConfigRaw(identity);
+        if (cardRaw) {
+            return { data: normalizeConfigData(cardRaw), layer: 'character', source: 'card', identity };
+        }
+        if (store.characterConfigs[identity.avatar]) {
+            return { data: normalizeConfigData(store.characterConfigs[identity.avatar]), layer: 'character', source: 'local', identity };
+        }
     }
-    return { data: store.global, layer: 'global', identity };
+    return { data: store.global, layer: 'global', source: 'global', identity };
 }
 
 export function saveConfigData(data) {
@@ -231,9 +306,17 @@ export function saveConfigData(data) {
     if (!store) return;
     const normalized = normalizeConfigData(data);
     const identity = getCharacterIdentity();
-    if (identity && store.characterConfigs[identity.avatar]) {
+    if (identity && canWriteCard()) {
+        // 卡片中心模型：打开角色时任何保存默认写入当前角色卡
+        // （首次保存即自动绑定，旧本地绑定随之迁移为卡片内嵌）
+        setCardConfigInMemory(identity, normalized);
+        scheduleCardPersist(identity, normalized);
+        delete store.characterConfigs[identity.avatar];
+    } else if (identity && store.characterConfigs[identity.avatar]) {
+        // 写卡 API 不可用环境的回退：维持旧本地绑定
         store.characterConfigs[identity.avatar] = normalized;
     } else {
+        // 未打开角色：暂存全局层（面板会提示打开角色卡，不随卡导出）
         store.global = normalized;
     }
     persist();
@@ -244,46 +327,48 @@ export function getActivePreset(configData) {
     return data.presets.find((p) => p.id === data.activePresetId) || data.presets[0] || makeDefaultPreset();
 }
 
+/**
+ * 绑定当前生效配置到当前角色：写入角色卡 data.extensions 字段（随卡导出）。
+ * 旧版本地绑定会自动迁移为卡片内嵌；未绑定时等效于把全局配置复制进卡。
+ */
 export function bindToCharacter() {
     const store = getSettings();
     const identity = getCharacterIdentity();
     if (!store || !identity) return false;
-    store.characterConfigs[identity.avatar] = clone(store.global);
-    persist();
-    log(`config bound to character: ${identity.name}`);
-    return true;
-}
-
-export function unbindCharacter() {
-    const store = getSettings();
-    const identity = getCharacterIdentity();
-    if (!store || !identity) return false;
-    if (!store.characterConfigs[identity.avatar]) return false;
-    delete store.characterConfigs[identity.avatar];
-    persist();
-    log(`config unbound from character: ${identity.name}`);
-    return true;
-}
-
-export function copyCharacterToGlobal() {
-    const store = getSettings();
-    const identity = getCharacterIdentity();
-    if (!store || !identity) return false;
-    const bound = store.characterConfigs[identity.avatar];
-    if (!bound) return false;
-    store.global = clone(bound);
+    const source = resolveConfig();
+    const configData = clone(source.data);
+    if (canWriteCard()) {
+        setCardConfigInMemory(identity, configData);
+        scheduleCardPersist(identity, configData);
+        delete store.characterConfigs[identity.avatar];
+        flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
+        log(`config embedded into character card: ${identity.name}`);
+    } else {
+        store.characterConfigs[identity.avatar] = configData;
+        log(`config bound to local settings (card API unavailable): ${identity.name}`);
+    }
     persist();
     return true;
 }
 
 export function getBoundCharacters() {
     const store = getSettings();
-    if (!store) return [];
     const c = ctx();
-    return Object.keys(store.characterConfigs).map((avatar) => {
+    const result = [];
+    const seen = new Set();
+    for (const ch of (c?.characters || [])) {
+        const raw = ch?.data?.extensions?.[SETTINGS_KEY];
+        if (ch?.avatar && raw && typeof raw === 'object') {
+            result.push({ avatar: ch.avatar, name: ch.name || ch.avatar, source: 'card' });
+            seen.add(ch.avatar);
+        }
+    }
+    for (const avatar of Object.keys(store?.characterConfigs || {})) {
+        if (seen.has(avatar)) continue;
         const ch = (c?.characters || []).find((x) => x?.avatar === avatar);
-        return { avatar, name: ch?.name || avatar };
-    });
+        result.push({ avatar, name: ch?.name || avatar, source: 'local' });
+    }
+    return result;
 }
 
 export function getApiConfig() {

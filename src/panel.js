@@ -94,6 +94,7 @@ function withConfigData(mutator) {
     const { data } = config.resolveConfig();
     mutator(data);
     config.saveConfigData(data);
+    config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
 }
 
 function getEditingPreset(data) {
@@ -123,14 +124,14 @@ function closePanel() {
 }
 
 function refreshAll() {
-    const { data, layer } = config.resolveConfig();
+    const { data, layer, source } = config.resolveConfig();
     if (!ui.editingPresetId || !data.presets.some((p) => p.id === ui.editingPresetId)) {
         ui.editingPresetId = data.activePresetId || data.presets[0]?.id;
     }
-    renderStatus(layer);
-    renderPresetDisplay(data);
-    renderManualButtons(data);
-    renderSchedule(data);
+    renderStatus(layer, source);
+    renderPresetDisplay(data, layer);
+    renderManualButtons(data, layer);
+    renderSchedule(data, layer);
     checkEntryStatus(data);
     renderPresetList(data);
     loadApiTab(data);
@@ -319,7 +320,7 @@ function buildShellHtml() {
                         </div>
                     </div>
 
-                    <div class="tip">💡 生成参数随当前配置层（全局/角色绑定）保存；API凭据只保存在本地。</div>
+                    <div class="tip">💡 生成参数随当前配置层（角色卡内嵌/全局暂存）保存；API凭据只保存在本地。</div>
                     <div class="btn-row"><button id="ra_api_save" class="btn red">💾 保存API设置</button></div>
                 </div>
 
@@ -387,13 +388,14 @@ function buildShellHtml() {
                         <div class="form-header blue">■ 系统内置变量</div>
                         <div class="form-body">
                             <div class="status-box">
-                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼</div>
+                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼；单次正文上限<strong>20万字符</strong>，超出部分末尾截断抛弃</div>
                                 <div><code>{{CHAR_NAME}}</code> → 上方配置的角色名称</div>
                                 <div style="margin-top:8px;color:#333;">任务输出变量：{{task_任务ID_Output}}（如 {{task_1_Output}}）</div>
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>增量阅读机制</strong>：每个分析任务各自维护"已读书签"（存于聊天元数据）。<br>
                                 每次触发时只读上次之后<u>新楼层</u>（含被酒馆隐藏的正文），读过的不重读，每次最多阅读最近20楼。<br>
+                                ⚠️ 单次输入正文超过<strong>20万字符</strong>时停止，后续剩余正文直接抛弃（保留靠前部分）；上限只作用于对话正文——参考条目与历史分析输出完整保留，绝不因截断丢失。<br>
                                 退出再进会从书签续读；新聊天时读最近20楼。各任务书签互不影响。
                             </div>
                         </div>
@@ -475,14 +477,13 @@ function buildShellHtml() {
                         <div class="form-body">
                             <div id="ra_binding_status" class="status-box"></div>
                             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
-                                <button id="ra_bind_btn" class="btn green">🔗 绑定当前配置到此角色</button>
-                                <button id="ra_unbind_btn" class="btn red">✂️ 解除绑定（回退全局）</button>
-                                <button id="ra_copy_to_global_btn" class="btn outline">📤 复制角色配置到全局</button>
+                                <button id="ra_bind_btn" class="btn green">📇 绑定配置到此角色卡</button>
                             </div>
                             <div class="tip" style="margin-top:12px;">
-                                💡 <strong>绑定</strong>：把当前配置（方案、任务、参考池、破限、生成参数）复制一份独立绑定到当前角色。之后该角色的改动只影响自己，其他角色继续用全局配置。<br>
-                                💡 <strong>每个任务还可以单独绑定角色</strong>：在任务配置卡片里填写"绑定角色"，留空则对所有角色生效。<br>
-                                🔒 API密钥是全局本地的，与绑定无关，任何情况下都不会被导出。
+                                💡 <strong>卡片中心模型</strong>：RUBY 任务配置只随角色卡存在（写入卡内 <code>data.extensions</code> 字段）。打开角色卡后，导入模板或新建/修改任务会<strong>自动绑定并写入当前角色卡</strong>，导出/分享卡片即携带，其他环境导入即生效。<br>
+                                💡 <strong>每个任务还可以单独限定角色</strong>：在任务配置卡片里填写"绑定角色"，留空则对所有角色生效。<br>
+                                ⚠️ 未打开角色卡时配置只能暂存于全局层（不随卡导出），请打开角色卡后再配置；引擎只执行已绑定角色卡的配置。<br>
+                                🔒 API密钥是全局本地的，与绑定无关，任何情况下都不会被导出或写入角色卡。
                             </div>
                         </div>
                     </div>
@@ -508,7 +509,7 @@ function buildShellHtml() {
                             </div>
                             <input type="file" id="ra_preset_file_input" accept=".json" style="display:none;">
                             <div class="tip" style="margin-top:16px;">
-                                ⚠️ 导入会<u>覆盖</u>当前配置层的<strong>所有配置方案</strong>；世界书条目（提示词、输出条目）需要在角色世界书中存在。
+                                ⚠️ 导入会写入<strong>当前角色卡</strong>并覆盖卡内已有方案（未打开角色卡时无法导入）；世界书条目（提示词、输出条目）需要在角色世界书中存在。
                             </div>
                         </div>
                     </div>
@@ -730,21 +731,27 @@ function wireGlobalInteractions() {
     }, { passive: false });
 }
 
-function renderStatus(layer) {
+function renderStatus(layer, source) {
     const el = $('ra_status');
     if (!el) return;
     const es = engine.getEngineState();
     const identity = config.getCharacterIdentity();
-    const layerText = layer === 'character' ? '角色绑定配置' : '全局配置';
+    const layerText = layer === 'character'
+        ? (source === 'card' ? '角色卡内嵌配置 📇' : '角色绑定（本地旧版存储）')
+        : '全局（未绑定角色卡 ⚠️）';
 
     if (!identity) {
-        el.innerHTML = '<span class="status-warn">⚠ 未打开角色对话（或为群聊），引擎待机</span>';
+        el.innerHTML = `
+            <span class="status-warn">⚠ 未打开角色对话（或为群聊），引擎待机</span><br>
+            <span class="status-warn">RUBY 配置保存在角色卡内——请打开角色卡后再配置任务，保存时自动绑定到当前卡</span>`;
         return;
     }
 
     const engineLine = es.armed
         ? `<span class="status-ok">🟢 后台监听运行中</span>`
-        : '<span class="status-warn">🟡 待机：当前配置层没有启用的任务</span>';
+        : (layer === 'character'
+            ? '<span class="status-warn">🟡 待机：当前配置层没有启用的任务</span>'
+            : '<span class="status-warn">🟡 待机：配置未绑定角色卡——保存修改将自动写入当前卡，或到"角色绑定"页立即绑定</span>');
 
     el.innerHTML = `
         <span class="status-ok">✓ 系统就绪</span>（配置层：${layerText} · ${h(identity.name)}）<br>
@@ -753,7 +760,7 @@ function renderStatus(layer) {
         ${es.lastError ? `<br><span class="status-err">上次错误：${h(es.lastError)}</span>` : ''}`;
 }
 
-function renderPresetDisplay(data) {
+function renderPresetDisplay(data, layer) {
     const el = $('ra_current_preset');
     if (!el) return;
     const preset = config.getActivePreset(data);
@@ -761,7 +768,7 @@ function renderPresetDisplay(data) {
     el.innerHTML = `
         <div style="flex:1;">
             <div style="font-weight:700;font-size:16px;color:#1E4B8E;">📌 ${h(preset.name || '默认方案')}</div>
-            <div style="font-size:12px;color:#666;margin-top:4px;">${taskCount > 0 ? `${taskCount}个分析任务` : '暂无任务配置'}</div>
+            <div style="font-size:12px;color:#666;margin-top:4px;">${taskCount > 0 ? `${taskCount}个分析任务` : '暂无任务配置'}${layer !== 'character' ? ' · <span style="color:#8B4513;">⚠️ 未绑定角色卡</span>' : ''}</div>
         </div>
         <button class="btn outline small ra-switch-btn">🔄 切换方案</button>`;
     on(el.querySelector('.ra-switch-btn'), 'click', () => {
@@ -773,11 +780,20 @@ function renderPresetDisplay(data) {
     });
 }
 
-function renderManualButtons(data) {
+function renderManualButtons(data, layer) {
     const el = $('ra_manual_buttons');
     if (!el) return;
     const preset = config.getActivePreset(data);
     const identity = config.getCharacterIdentity();
+
+    if (!identity) {
+        el.innerHTML = '<span style="color:#1a1a1a;font-size:14px;">请先打开角色对话</span>';
+        return;
+    }
+    if (layer !== 'character') {
+        el.innerHTML = '<span class="status-warn">⚠ 配置未绑定角色卡——到创作者版面"角色绑定"页绑定后执行（保存修改也会自动绑定到当前卡）</span>';
+        return;
+    }
 
     const buttons = [];
     if (preset.startupTask?.enabled) {
@@ -807,12 +823,21 @@ function renderManualButtons(data) {
     });
 }
 
-function renderSchedule(data) {
+function renderSchedule(data, layer) {
     const el = $('ra_schedule');
     if (!el) return;
     const preset = config.getActivePreset(data);
     const identity = config.getCharacterIdentity();
     const lines = [];
+
+    if (!identity) {
+        el.innerHTML = '<span style="color:#1a1a1a;">请先打开角色对话</span>';
+        return;
+    }
+    if (layer !== 'character') {
+        el.innerHTML = '<span class="status-warn">⚠ 配置未绑定角色卡，任务不会自动执行——保存修改将自动绑定到当前角色卡</span>';
+        return;
+    }
 
     if (preset.startupTask?.enabled && scheduler.taskMatchesCharacter(preset.startupTask, identity)) {
         const positions = scheduler.startupPositions(preset.startupTask).join(',');
@@ -1381,6 +1406,7 @@ function wireRefPoolControls() {
                 renderTaskSlots();
             }
             await saveCurrentSchemeFromUI();
+            config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
             window.toastr?.success?.(`✅ 已保存 ${ui.refs.length} 个参考条目（仅保留勾选项）`);
         } catch (e) {
             window.toastr?.error?.('保存失败: ' + e.message);
@@ -1953,6 +1979,9 @@ function triggerAutoSave() {
 
 function wireTaskControls() {
     on($('ra_add_task_area'), 'click', () => {
+        if (!config.getCharacterIdentity()) {
+            window.toastr?.warning?.('⚠️ 未打开角色卡：任务将暂存于全局层，不会随角色卡导出。建议打开角色卡后再配置');
+        }
         ui.tasks = collectTasksFromUI();
         const newTask = config.normalizeTask({
             id: ui.nextTaskId++,
@@ -1974,7 +2003,11 @@ function wireTaskControls() {
 
     on($('ra_tasks_save'), 'click', async () => {
         try {
+            if (!config.getCharacterIdentity()) {
+                window.toastr?.warning?.('⚠️ 未打开角色卡：配置保存在全局层，不会随角色卡导出');
+            }
             await saveCurrentSchemeFromUI();
+            config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
             window.toastr?.success?.('已保存当前方案配置');
             engine.reinit();
             refreshAll();
@@ -2061,16 +2094,22 @@ function renderBindingTab(layer) {
 
     const identity = config.getCharacterIdentity();
     if (!identity) {
-        statusEl.innerHTML = '<span class="status-warn">⚠ 请先打开一个角色对话再进行绑定操作</span>';
+        statusEl.innerHTML = '<span class="status-warn">⚠ 请先打开一个角色对话（角色卡）——RUBY 配置保存在角色卡内，未打开角色卡无法绑定</span>';
     } else {
+        const { source } = config.resolveConfig();
         const bound = layer === 'character';
+        const layerLabel = !bound
+            ? '<span class="status-warn">全局（未绑定角色卡 ⚠️）——保存修改将自动绑定到当前角色卡，或点击下方按钮立即绑定</span>'
+            : (source === 'card'
+                ? '<span class="status-ok">角色卡内嵌 ✓（配置已写入角色卡 data.extensions，随卡片导出/分享）</span>'
+                : '<span class="status-warn">本地旧版存储（仅存于本机 settings.json）——保存修改将自动迁移写入角色卡</span>');
         statusEl.innerHTML = `
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span style="font-size:22px;">${bound ? '🔗' : '🌍'}</span>
+                <span style="font-size:22px;">${bound ? (source === 'card' ? '📇' : '🔗') : '🌍'}</span>
                 <div>
                     <div style="font-weight:700;font-size:15px;">当前角色：${h(identity.name)}</div>
                     <div style="font-size:13px;margin-top:4px;">
-                        配置层：<strong>${bound ? `<span class="status-ok">角色绑定（独立配置）</span>` : '<span style="color:#1E4B8E;">全局（所有未绑定角色共用）</span>'}</strong>
+                        配置层：<strong>${layerLabel}</strong>
                     </div>
                 </div>
             </div>`;
@@ -2079,7 +2118,7 @@ function renderBindingTab(layer) {
     if (listEl) {
         const boundChars = config.getBoundCharacters();
         listEl.innerHTML = boundChars.length > 0
-            ? boundChars.map((c) => `<div style="padding:6px 0;border-bottom:1px dashed #ddd;">🔗 ${h(c.name)} <span style="color:#999;font-size:12px;">(${h(c.avatar)})</span></div>`).join('')
+            ? boundChars.map((c) => `<div style="padding:6px 0;border-bottom:1px dashed #ddd;">${c.source === 'card' ? '📇' : '💾'} ${h(c.name)} <span style="color:#999;font-size:12px;">(${c.source === 'card' ? '角色卡内嵌' : '本地旧版'})</span></div>`).join('')
             : '<span style="color:#666;">暂无角色绑定，所有角色使用全局配置</span>';
     }
 }
@@ -2087,38 +2126,13 @@ function renderBindingTab(layer) {
 function wireBindingControls() {
     on($('ra_bind_btn'), 'click', () => {
         if (!config.getCharacterIdentity()) {
-            window.toastr?.warning?.('请先打开一个角色对话');
+            window.toastr?.warning?.('请先打开一个角色对话（角色卡）');
             return;
         }
         if (config.bindToCharacter()) {
-            window.toastr?.success?.('已将当前配置绑定到此角色');
+            window.toastr?.success?.('已将当前配置写入角色卡并绑定（随卡片导出）');
             engine.reinit();
             refreshAll();
-        }
-    });
-    on($('ra_unbind_btn'), 'click', () => {
-        if (!config.getCharacterIdentity()) {
-            window.toastr?.warning?.('请先打开一个角色对话');
-            return;
-        }
-        if (config.unbindCharacter()) {
-            window.toastr?.success?.('已解除绑定，此角色回退使用全局配置');
-            engine.reinit();
-            refreshAll();
-        } else {
-            window.toastr?.info?.('当前角色没有绑定配置');
-        }
-    });
-    on($('ra_copy_to_global_btn'), 'click', () => {
-        if (!config.getCharacterIdentity()) {
-            window.toastr?.warning?.('请先打开一个角色对话');
-            return;
-        }
-        if (config.copyCharacterToGlobal()) {
-            window.toastr?.success?.('已将此角色的配置复制到全局');
-            refreshAll();
-        } else {
-            window.toastr?.info?.('当前角色没有绑定配置');
         }
     });
 }
@@ -2208,11 +2222,16 @@ function wirePresetIoControls() {
     on($('ra_preset_file_input'), 'change', async (e) => {
         const file = e.target?.files?.[0];
         if (!file) return;
+        if (!config.getCharacterIdentity()) {
+            window.toastr?.warning?.('请先打开角色卡：导入的配置将自动绑定到当前角色卡');
+            e.target.value = '';
+            return;
+        }
         try {
             const text = await file.text();
             const raw = JSON.parse(text);
             const parsed = config.parseImportTemplate(raw);
-            if (!window.confirm(`确定导入"${file.name}"吗？（来源版本 ${parsed.sourceVersion}，含 ${parsed.presetCount} 个方案、${parsed.taskCount} 个任务）当前配置层的所有方案将被覆盖。`)) return;
+            if (!window.confirm(`确定导入"${file.name}"吗？（来源版本 ${parsed.sourceVersion}，含 ${parsed.presetCount} 个方案、${parsed.taskCount} 个任务）导入后配置将自动绑定到当前角色卡，卡内已有方案将被覆盖。`)) return;
 
             withConfigData((d) => {
                 d.charName = parsed.charName;
@@ -2222,6 +2241,7 @@ function wirePresetIoControls() {
                 d.presets = parsed.presets;
                 d.activePresetId = parsed.activePresetId;
             });
+            config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
 
             ui.importedTemplateName = file.name;
             $('ra_template_info').innerHTML = `
