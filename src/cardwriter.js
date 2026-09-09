@@ -3,10 +3,8 @@
 import { ctx, st, q, log, warn } from './env.js';
 import * as config from './config.js';
 import { CARDWRITER_DATA } from './cardwriter-data.js';
-import * as worldbook from './worldbook.js';
 
 const DRAFT_BOOK = CARDWRITER_DATA.draftBook;
-const DEEP_ROLE = 'system';
 const DEEP_DEPTH = 0;
 const DEEP_ORDER = 999;
 const GUIDE_ORDER = 500;
@@ -67,10 +65,6 @@ function uiKey() {
     return 'cardwriter';
 }
 
-export function isEnabled() {
-    return !!config.getUi()?.[uiKey()]?.enabled;
-}
-
 export function getSettings() {
     const ui = config.getUi() || {};
     return {
@@ -118,7 +112,13 @@ function clearProgress() {
     try { if (typeof c.saveMetadata === 'function') c.saveMetadata(); } catch { /* ignore */ }
 }
 
-// ---------- 世界书条目操作（走酒馆原生通道） ----------
+// ---------- 世界书条目操作（直接 API，绕过斜杠命令解析器） ----------
+// 指令文本含 {{user}}/{{recentMessages}}/``` 等，走 /setvar 管道会触发宏替换或闭包解析；
+// 因此统一用 loadWorldInfo → 改对象 → saveWorldInfo 直写，文本零损耗。
+// role/position/depth/order 均为 number 字段（role: 0=system 1=user 2=assistant）。
+
+const ROLE_SYSTEM = 0;
+const POS_AT_DEPTH = 4;
 
 function stepKey(step) {
     return `${STEP_PREFIX}_${step.id.replace('.', '_')}`;
@@ -135,95 +135,118 @@ async function ensureDraftBook() {
     return String(await st('/getchatbook create=true')).trim();
 }
 
-/** 在聊天附加世界书中查找/创建条目，返回 uid */
-async function ensureEntry(book, key, comment) {
-    const found = await worldbook.findEntryPublic(book, key);
-    if (found) return found.uid;
+function findEntryIn(entries, key) {
+    for (const e of Object.values(entries)) {
+        if (Array.isArray(e?.key) && e.key.includes(key)) return e;
+    }
+    return null;
+}
+
+/** 在已加载的 entries 里找条目；不存在则 /createentry 创建（key 为安全短标识） */
+async function ensureEntryIn(book, entries, key) {
+    const found = findEntryIn(entries, key);
+    if (found) return found;
     const uidRaw = await st(`/createentry file=${q(book)} key=${q(key)} ""`);
     const uid = parseInt(uidRaw, 10);
     if (isNaN(uid)) throw new Error(`create entry failed: ${key}`);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=comment ${q(comment || key)}`);
-    log(`[cardwriter] entry created: ${key}`);
-    return uid;
+    const c = ctx();
+    const fresh = await c.loadWorldInfo(book);
+    const e = fresh?.entries?.[uid];
+    if (!e) throw new Error(`entry missing after create: ${key}`);
+    if (!entries[uid]) entries[uid] = e;
+    return e;
 }
 
-async function setEntryContent(book, uid, content) {
-    const varName = `_ruby_cw_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    await st(`/setvar key=${varName} ${q(String(content || '').trim())}`);
-    await st(`/getvar ${varName} | /setentryfield file=${q(book)} uid=${uid} field=content`);
-}
-
-async function setEntryEnabled(book, uid, enabled) {
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=disable ${enabled ? 0 : 1}`);
+async function saveBook(book, data) {
+    const c = ctx();
+    await c.saveWorldInfo(book, data, true);
 }
 
 async function setupBaseEntries(book) {
-    // 规则 + 人设 + 附录：d0/999 深度常驻强调
-    const rules = await ensureEntry(book, RULES_KEY, 'RUBY写卡·步骤规则（常驻）');
-    await setEntryContent(book, rules, CARDWRITER_DATA.rules);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=position 4`);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=depth ${DEEP_DEPTH}`);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=order ${DEEP_ORDER}`);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=role ${DEEP_ROLE}`);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=constant 1`);
-    await st(`/setentryfield file=${q(book)} uid=${rules} field=disable 0`);
+    const c = ctx();
+    const data = await c.loadWorldInfo(book);
+    if (!data?.entries) throw new Error(`world book not found: ${book}`);
+    const entries = data.entries;
 
-    const persona = await ensureEntry(book, PERSONA_KEY, 'RUBY写卡·人设（常驻）');
-    await setEntryContent(book, persona, CARDWRITER_DATA.persona);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=position 4`);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=depth ${DEEP_DEPTH}`);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=order ${DEEP_ORDER - 1}`);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=role ${DEEP_ROLE}`);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=constant 1`);
-    await st(`/setentryfield file=${q(book)} uid=${persona} field=disable 0`);
+    // 规则 + 人设：d0/999 深度常驻强调
+    const rules = await ensureEntryIn(book, entries, RULES_KEY);
+    Object.assign(rules, {
+        content: CARDWRITER_DATA.rules,
+        comment: 'RUBY写卡·步骤规则（常驻）',
+        position: POS_AT_DEPTH, depth: DEEP_DEPTH, order: DEEP_ORDER,
+        role: ROLE_SYSTEM, constant: true, disable: false,
+    });
+
+    const persona = await ensureEntryIn(book, entries, PERSONA_KEY);
+    Object.assign(persona, {
+        content: CARDWRITER_DATA.persona,
+        comment: 'RUBY写卡·人设（常驻）',
+        position: POS_AT_DEPTH, depth: DEEP_DEPTH, order: DEEP_ORDER - 1,
+        role: ROLE_SYSTEM, constant: true, disable: false,
+    });
 
     // 附录默认关闭（可手动开）
-    const appendix = await ensureEntry(book, APPENDIX_KEY, 'RUBY写卡·分析器原理附录（按需）');
-    await setEntryContent(book, appendix, CARDWRITER_DATA.appendix);
-    await st(`/setentryfield file=${q(book)} uid=${appendix} field=position 4`);
-    await st(`/setentryfield file=${q(book)} uid=${appendix} field=depth 1`);
-    await st(`/setentryfield file=${q(book)} uid=${appendix} field=order 100`);
-    await st(`/setentryfield file=${q(book)} uid=${appendix} field=constant 1`);
-    await st(`/setentryfield file=${q(book)} uid=${appendix} field=disable 1`);
+    const appendix = await ensureEntryIn(book, entries, APPENDIX_KEY);
+    Object.assign(appendix, {
+        content: CARDWRITER_DATA.appendix,
+        comment: 'RUBY写卡·分析器原理附录（按需）',
+        position: POS_AT_DEPTH, depth: 4, order: 100,
+        role: ROLE_SYSTEM, constant: true, disable: true,
+    });
+
+    await saveBook(book, data);
     log('[cardwriter] base entries ready (rules/persona @ depth0 order999, appendix disabled)');
 }
 
 async function setStepEntries(book, stepId) {
+    const c = ctx();
+    const data = await c.loadWorldInfo(book);
+    if (!data?.entries) throw new Error(`world book not found: ${book}`);
+    const entries = data.entries;
+
     // 关闭全部步骤条目（含说明条目）
     for (const s of CARDWRITER_DATA.steps) {
         const key = stepKey(s);
         for (const k of [key, `${key}_说明`]) {
-            const found = await worldbook.findEntryPublic(book, k);
-            if (found) await setEntryEnabled(book, found.uid, false);
+            const e = findEntryIn(entries, k);
+            if (e) e.disable = true;
         }
     }
-    if (!stepId) return;
-    const step = getStep(stepId);
-    if (!step) return;
+    if (stepId) {
+        const step = getStep(stepId);
+        if (step) {
+            const key = stepKey(step);
+            const entry = await ensureEntryIn(book, entries, key);
+            Object.assign(entry, {
+                content: step.instruction,
+                comment: `RUBY写卡·${step.id} ${step.name}`,
+                position: POS_AT_DEPTH, depth: 1, order: 600,
+                role: ROLE_SYSTEM, constant: true, disable: false,
+            });
 
-    const key = stepKey(step);
-    const uid = await ensureEntry(book, key, `RUBY写卡·${step.id} ${step.name}`);
-    await setEntryContent(book, uid, step.instruction);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=position 4`);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=depth 1`);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=order 600`);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=role ${DEEP_ROLE}`);
-    await st(`/setentryfield file=${q(book)} uid=${uid} field=constant 1`);
-    await setEntryEnabled(book, uid, true);
-
-    // 步骤说明（可开关）：紧跟指令之后
-    if (getSettings().showGuide && step.guide) {
-        const gKey = `${key}_说明`;
-        const gUid = await ensureEntry(book, gKey, `RUBY写卡·${step.id} 说明（气泡同步）`);
-        await setEntryContent(book, gUid, step.guide);
-        await st(`/setentryfield file=${q(book)} uid=${gUid} field=position 4`);
-        await st(`/setentryfield file=${q(book)} uid=${gUid} field=depth 1`);
-        await st(`/setentryfield file=${q(book)} uid=${gUid} field=order ${GUIDE_ORDER}`);
-        await st(`/setentryfield file=${q(book)} uid=${gUid} field=role ${DEEP_ROLE}`);
-        await st(`/setentryfield file=${q(book)} uid=${gUid} field=constant 1`);
-        await setEntryEnabled(book, gUid, true);
+            // 步骤说明（可开关）：紧跟指令之后
+            if (getSettings().showGuide && step.guide) {
+                const gEntry = await ensureEntryIn(book, entries, `${key}_说明`);
+                Object.assign(gEntry, {
+                    content: step.guide,
+                    comment: `RUBY写卡·${step.id} 说明（气泡同步）`,
+                    position: POS_AT_DEPTH, depth: 1, order: GUIDE_ORDER,
+                    role: ROLE_SYSTEM, constant: true, disable: false,
+                });
+            }
+        }
     }
-    log(`[cardwriter] step entries active: ${step.id} ${step.name}`);
+
+    await saveBook(book, data);
+
+    // 验证日志：控制台核对注入状态（constant+enabled+atDepth 即会随每轮注入）
+    const verify = [];
+    for (const e of Object.values(data.entries)) {
+        if (Array.isArray(e?.key) && e.key.some((k) => String(k).startsWith(STEP_PREFIX) || k === RULES_KEY || k === PERSONA_KEY)) {
+            if (!e.disable) verify.push(`${e.key[0]}(constant=${e.constant},pos=${e.position},depth=${e.depth},role=${e.role},order=${e.order},${String(e.content || '').length}ch)`);
+        }
+    }
+    log(`[cardwriter] step entries active: ${stepId || 'none'} | injecting: ${verify.join(' | ') || 'nothing'}`);
 }
 
 // ---------- 完成标记检测 ----------
@@ -344,32 +367,29 @@ async function writeDraft(yamlText, stepId) {
     const book = await ensureDraftBook();
     const spec = draftEntrySpec(stepId, yamlText);
 
-    let content = yamlText;
-    let extraKeys = spec.keys || '';
-    if (spec.append) {
-        // 累积型条目（NPC/提示词）：合并已有内容与关键词
-        const found = await worldbook.findEntryPublic(book, spec.key);
-        if (found?.entry?.content) {
-            content = `${found.entry.content}\n\n${yamlText}`;
-            const prevKeys = worldbook.extractEntryKeywords(found.entry).join(', ');
-            if (prevKeys) extraKeys = [...new Set([...prevKeys.split(', ').map((k) => k.trim()).filter(Boolean), ...extraKeys.split(', ').map((k) => k.trim()).filter(Boolean)])].join(', ');
-        }
-    }
+    const c = ctx();
+    const data = await c.loadWorldInfo(book);
+    if (!data?.entries) throw new Error(`world book not found: ${book}`);
+    const entries = data.entries;
+    const entry = await ensureEntryIn(book, entries, spec.key);
 
-    await worldbook.writeOutputEntry(book, {
-        key: spec.key,
-        comment: spec.comment,
-        extraKeys,
-        content,
-        constant: !!spec.constant,
-        disable: !!spec.disable,
-        noRecursion: true,
-        position: spec.position,
-        order: spec.order,
-    });
-    await worldbook.persistBook(book);
+    // 关键词合并（草稿键 + 附加键，如角色名/NPC名）
+    const extraKeys = String(spec.keys || '').split(',').map((k) => k.trim()).filter(Boolean);
+    entry.key = [...new Set([spec.key, ...extraKeys])];
+    entry.comment = spec.comment;
+    entry.content = spec.append && entry.content
+        ? `${entry.content}\n\n${yamlText}`
+        : yamlText;
+    entry.constant = !!spec.constant;
+    entry.disable = !!spec.disable;
+    entry.position = spec.position;
+    entry.order = spec.order;
+    entry.excludeRecursion = true;
+    entry.preventRecursion = true;
+
+    await saveBook(book, data);
     state.draftCount++;
-    log(`[cardwriter] draft written: ${spec.key} -> ${book}`);
+    log(`[cardwriter] draft written: ${spec.key} -> ${book} (keys: ${entry.key.join(', ')})`);
     return { ...spec, key: spec.key };
 }
 
@@ -460,28 +480,35 @@ export async function endSession({ keepDrafts = true } = {}) {
     if (state.busy) return false;
     state.busy = true;
     try {
-        if (!keepDrafts) {
-            // 删除草稿书中 RUBY 创建的条目（步骤/说明/常驻/草稿）
-            const book = await ensureDraftBook();
-            const deleteKeys = [];
-            for (const s of CARDWRITER_DATA.steps) {
-                deleteKeys.push(stepKey(s), `${stepKey(s)}_说明`, `ruby草稿_${s.id}`);
+        const book = await ensureDraftBook();
+        const c = ctx();
+        const data = await c.loadWorldInfo(book);
+        if (data?.entries) {
+            if (!keepDrafts) {
+                // 删除草稿书中 RUBY 创建的全部条目（步骤/说明/常驻/草稿）
+                const deleteKeys = new Set(['ruby草稿_人物速览', RULES_KEY, PERSONA_KEY, APPENDIX_KEY]);
+                for (const s of CARDWRITER_DATA.steps) {
+                    deleteKeys.add(stepKey(s));
+                    deleteKeys.add(`${stepKey(s)}_说明`);
+                    deleteKeys.add(`ruby草稿_${s.id}`);
+                }
+                for (const [uid, e] of Object.entries(data.entries)) {
+                    if (Array.isArray(e?.key) && e.key.some((k) => deleteKeys.has(k))) {
+                        delete data.entries[uid];
+                    }
+                }
+            } else {
+                // 只关掉步骤/规则/人设条目，草稿保留
+                const offKeys = new Set([RULES_KEY, PERSONA_KEY]);
+                for (const s of CARDWRITER_DATA.steps) {
+                    offKeys.add(stepKey(s));
+                    offKeys.add(`${stepKey(s)}_说明`);
+                }
+                for (const e of Object.values(data.entries)) {
+                    if (Array.isArray(e?.key) && e.key.some((k) => offKeys.has(k))) e.disable = true;
+                }
             }
-            deleteKeys.push('ruby草稿_人物速览', RULES_KEY, PERSONA_KEY, APPENDIX_KEY);
-            for (const key of [...new Set(deleteKeys)]) {
-                const found = await worldbook.findEntryPublic(book, key);
-                if (found) await st(`/deleteentry file=${q(book)} uid=${found.uid}`);
-            }
-            await worldbook.persistBook(book);
-        } else {
-            // 只关掉步骤/规则条目，草稿保留
-            const book = await ensureDraftBook();
-            await setStepEntries(book, null);
-            for (const key of [RULES_KEY, PERSONA_KEY]) {
-                const found = await worldbook.findEntryPublic(book, key);
-                if (found) await setEntryEnabled(book, found.uid, false);
-            }
-            await worldbook.persistBook(book);
+            await saveBook(book, data);
         }
         Object.assign(state, {
             active: false,
@@ -599,9 +626,9 @@ export function initCardWriter() {
             state.lastHandledMessage = -1;
             state.lastError = null;
             state.draftCount = 0;
-            // 从聊天元数据恢复进度
+            // 从聊天元数据恢复进度（此聊天曾开启过写卡会话即恢复）
             const progress = readProgress();
-            if (progress?.stepId && isEnabled()) {
+            if (progress?.stepId) {
                 state.active = true;
                 state.stepId = progress.stepId;
                 state.lastStepId = progress.stepId;
