@@ -1,5 +1,6 @@
 import * as config from './config.js';
 import * as engine from './engine.js';
+import * as cardwriter from './cardwriter.js';
 import { openPanel } from './panel.js';
 import { ORB_AVATAR_DATA_URI } from './orb-avatar.js';
 
@@ -12,9 +13,13 @@ const BADGE_ICONS = {
     armed: '<svg viewBox="0 0 24 24" fill="none" stroke="#14161f" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 6.5"/></svg>',
     working: '<svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="6"/></svg>',
     error: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    cardwriting: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
 };
 
 let dragState = null;
+let bubbleEl = null;
+let bubbleTimer = null;
+let lastBubbleStep = null;
 
 function defaultPosition() {
     return {
@@ -30,8 +35,11 @@ function applyPosition(orb, pos) {
 }
 
 function badgeState(engineState) {
+    const cw = cardwriter.getState();
+    if (cw.active && cw.busy) return 'cardwriting';
     if (engineState.running) return 'working';
-    if (engineState.lastError) return 'error';
+    if (engineState.lastError || cw.lastError) return 'error';
+    if (cw.active) return 'cardwriting';
     if (engineState.armed) return 'armed';
     return 'idle';
 }
@@ -39,18 +47,68 @@ function badgeState(engineState) {
 function setStatus(orb, engineState) {
     const badge = orb.querySelector('.ruby-orb-badge');
     if (!badge) return;
+    const cw = cardwriter.getState();
     const state = badgeState(engineState);
     badge.dataset.state = state;
     badge.innerHTML = BADGE_ICONS[state] || BADGE_ICONS.idle;
-    if (engineState.running) {
+    if (cw.active && cw.busy) {
+        orb.title = `RUBY写卡中… ${cw.stepId || ''}（正在处理完成标记/切换步骤）`;
+    } else if (cw.active) {
+        orb.title = `RUBY写卡会话 · 当前步骤 ${cw.stepId || '—'} ${cw.stepName || ''}（点击打开写卡面板）`;
+    } else if (engineState.running) {
         orb.title = `RUBY 分析中… ${engineState.charName}`;
-    } else if (engineState.lastError) {
-        orb.title = `RUBY 错误：${engineState.lastError}`;
+    } else if (engineState.lastError || cw.lastError) {
+        orb.title = `RUBY 错误：${engineState.lastError || cw.lastError}`;
     } else if (engineState.armed) {
         const pos = engineState.cycleLength > 0 ? `${engineState.position}/${engineState.cycleLength}` : '-';
         orb.title = `RUBY 运行中 · ${engineState.charName} · AI回复 ${engineState.aiCount} · 周期位置 ${pos}（点击打开面板）`;
     } else {
         orb.title = 'RUBY 待机（无角色、未配置任务或未绑定角色卡）— 点击打开面板';
+    }
+}
+
+// ---------- 写卡步骤说明气泡 ----------
+
+function showStepBubble(stepId) {
+    const step = cardwriter.getStep(stepId);
+    if (!step || !step.guide) return;
+    hideStepBubble();
+    const orb = document.getElementById(ORB_ID);
+    if (!orb) return;
+
+    bubbleEl = document.createElement('div');
+    bubbleEl.id = 'ruby_cw_bubble';
+    bubbleEl.innerHTML = `
+        <span class="cw-bubble-close">✕</span>
+        <div class="cw-bubble-title">✍️ ${stepId} · ${step.name}</div>
+        <div class="cw-bubble-body">${step.guide}</div>`;
+    document.body.appendChild(bubbleEl);
+
+    const orbRect = orb.getBoundingClientRect();
+    const bubbleRect = bubbleEl.getBoundingClientRect();
+    let left = orbRect.right + 12;
+    let top = orbRect.top - 8;
+    if (left + bubbleRect.width > window.innerWidth - 10) {
+        left = Math.max(10, orbRect.left - bubbleRect.width - 12);
+    }
+    if (top + bubbleRect.height > window.innerHeight - 10) {
+        top = Math.max(10, window.innerHeight - bubbleRect.height - 10);
+    }
+    bubbleEl.style.left = `${left}px`;
+    bubbleEl.style.top = `${top}px`;
+    bubbleEl.style.display = 'block';
+
+    bubbleEl.querySelector('.cw-bubble-close')?.addEventListener('click', hideStepBubble);
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(hideStepBubble, 60000);
+}
+
+function hideStepBubble() {
+    clearTimeout(bubbleTimer);
+    bubbleTimer = null;
+    if (bubbleEl) {
+        bubbleEl.remove();
+        bubbleEl = null;
     }
 }
 
@@ -105,7 +163,12 @@ export function ensureOrb() {
         if (moved) {
             config.saveUi({ orbX: pos.x, orbY: pos.y });
         } else {
-            openPanel();
+            // 写卡会话激活时点击直达写卡页签，否则开主面板
+            if (cardwriter.getState().active) {
+                openPanel('cardwriter');
+            } else {
+                openPanel();
+            }
         }
     });
 
@@ -116,6 +179,7 @@ export function ensureOrb() {
     window.addEventListener('resize', () => {
         const el = document.getElementById(ORB_ID);
         if (el) applyPosition(el, { x: parseFloat(el.style.left), y: parseFloat(el.style.top) });
+        hideStepBubble();
     });
 
     // 面板保存 UI 配置时事件驱动刷新（替代轮询）
@@ -125,5 +189,14 @@ export function ensureOrb() {
     engine.onStateChange((engineState) => {
         const el = document.getElementById(ORB_ID);
         if (el) setStatus(el, engineState);
+    });
+    cardwriter.onStateChange((s) => {
+        const el = document.getElementById(ORB_ID);
+        if (el) setStatus(el, engine.getEngineState());
+        // 步骤切换时弹出说明气泡（可关闭，60秒自动收起）
+        if (s.active && s.stepId && s.stepId !== lastBubbleStep) {
+            lastBubbleStep = s.stepId;
+            showStepBubble(s.stepId);
+        }
     });
 }

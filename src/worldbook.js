@@ -98,6 +98,11 @@ export async function entryExists(book, key) {
     return (await findEntry(book, key)) !== null;
 }
 
+/** 按 key 精确查找条目（公开接口：传入书名或数据对象），返回 { uid, entry } 或 null */
+export async function findEntryPublic(book, key) {
+    return findEntry(book, key);
+}
+
 export async function disableCharEntry(charBook, entryKey) {
     if (!charBook || !entryKey) return;
     try {
@@ -113,7 +118,7 @@ export async function disableCharEntry(charBook, entryKey) {
 
 export async function writeOutputEntry(chatBook, options) {
     const {
-        key, extraKeys = '', content, constant = false, disable = false,
+        key, extraKeys = '', content, comment = '', constant = false, disable = false,
         noRecursion = false, position = 0, depth = 4, order = 100,
         selective = false, selectiveKeys = [],
     } = options;
@@ -129,6 +134,10 @@ export async function writeOutputEntry(chatBook, options) {
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${key}`);
         log(`output entry created: ${key}`);
+    }
+
+    if (comment) {
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=comment ${q(String(comment).trim())}`);
     }
 
     const extraKeysList = String(extraKeys || '').split(',').map((k) => k.trim()).filter(Boolean);

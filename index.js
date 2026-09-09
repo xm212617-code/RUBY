@@ -1,5 +1,6 @@
 import { ctx, log, warn } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
+import { initCardWriter, startSession, endSession, getState as getCwState } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
 import { initSettingsDrawer } from './src/settings.js';
 import { openPanel } from './src/panel.js';
@@ -13,6 +14,21 @@ async function rubyCommandCallback(args, text) {
         if (sub === 'panel' || sub === 'open') {
             openPanel();
             return 'panel opened';
+        }
+        if (sub === 'cardwriter' || sub === 'cw') {
+            const action = String(args?.action || '').trim().toLowerCase();
+            if (action === 'start') {
+                return await startSession(String(args?.step || 'Step0')) ? 'cardwriter session started' : 'cardwriter session start failed';
+            }
+            if (action === 'end') {
+                return await endSession({ keepDrafts: true }) ? 'cardwriter session ended (drafts kept)' : 'cardwriter session end failed';
+            }
+            const cw = getCwState();
+            if (action === 'status') {
+                return `active: ${cw.active} | step: ${cw.stepId || 'none'} | drafts: ${cw.draftCount} | lastAction: ${cw.lastAction || 'none'}${cw.lastError ? ` | error: ${cw.lastError}` : ''}`;
+            }
+            openPanel('cardwriter');
+            return 'cardwriter panel opened';
         }
         if (sub === 'status') {
             const es = getEngineState();
@@ -117,6 +133,7 @@ function bootstrap() {
     }
     registerRubyCommand();
     initEngine();
+    initCardWriter();
     ensureOrb();
     initSettingsDrawer();
     log('RUBY Analyzer extension loaded (independent edition)');

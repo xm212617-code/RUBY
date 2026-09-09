@@ -5,6 +5,7 @@ import * as jailbreak from './jailbreak.js';
 import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
+import * as cardwriter from './cardwriter.js';
 import { countAiReplies } from './reader.js';
 
 const PANEL_ID = 'ra_panel';
@@ -110,11 +111,16 @@ function activePositionsOf(task) {
     return raw.filter((n) => n > 0);
 }
 
-export function openPanel() {
+export function openPanel(mode) {
     buildPanel();
     const root = $(PANEL_ID);
     if (!root) return;
+    if (mode) {
+        const tab = root.querySelector(`.mode-tab[data-mode="${mode}"]`);
+        if (tab) tab.click();
+    }
     refreshAll();
+    if (mode === 'cardwriter') renderCardWriterTab();
     root.style.display = 'flex';
 }
 
@@ -166,6 +172,7 @@ function buildPanel() {
     wireTaskControls();
     wireBindingControls();
     wirePresetIoControls();
+    wireCardWriterControls(root);
 
     on($('ra_close'), 'click', closePanel);
     root.querySelector('.ra-mask')?.addEventListener('click', closePanel);
@@ -185,7 +192,8 @@ function buildShellHtml() {
 
         <div class="mode-tabs">
             <div class="mode-tab player active" data-mode="player">🎮 玩家版面</div>
-            <div class="mode-tab creator" data-mode="creator">🛠️ 创作者版面</div>
+            <div class="mode-tab creator active" data-mode="creator">🛠️ 创作者版面</div>
+            <div class="mode-tab cardwriter" data-mode="cardwriter">✍️ 写卡</div>
         </div>
 
         <div class="body">
@@ -594,6 +602,67 @@ function buildShellHtml() {
                         </div>
                     </div>
                 </div>
+
+                <div class="panel-content" data-panel="cardwriter">
+                    <div class="sub-tabs">
+                        <div class="sub-tab active" data-sub="cw-main">🖊️ 写卡控制台</div>
+                    </div>
+                    <div class="sub-content active" data-subcontent="cw-main" style="padding:16px;">
+                        <div class="form-section">
+                            <div class="form-header blue">■ 写卡模式状态</div>
+                            <div class="form-body"><div id="ra_cw_status" class="status-box">加载中...</div></div>
+                        </div>
+                        <div class="form-section">
+                            <div class="form-header blue">■ 会话控制</div>
+                            <div class="form-body">
+                                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                    <button id="ra_cw_start" class="btn green">▶️ 开始写卡会话（Step0）</button>
+                                    <button id="ra_cw_end" class="btn red">⏹️ 结束会话</button>
+                                    <button id="ra_cw_end_clear" class="btn red">🧹 结束并清空写卡条目</button>
+                                    <button id="ra_cw_open_book" class="btn outline">📖 打开《ruby写卡初稿》</button>
+                                </div>
+                                <div class="tip" style="margin-top:10px;">
+                                    开始会话后，RUBY 会在聊天附加世界书注入规则/人设（深度0、排序999强调）与当前步骤指令；
+                                    你用自己的预设和 API 正常对话，RUBY 只监听。检测到步骤的 yaml 完成标记后自动存草稿并切换下一步骤。
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <div class="form-header blue">■ 步骤管理</div>
+                            <div class="form-body">
+                                <div id="ra_cw_steps" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+                                <div class="tip" style="margin-top:8px;">
+                                    点击步骤卡可手动切换（跳转/回退）。✦=当前步骤。可选/工具步骤按需切换。
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <div class="form-header blue">■ 写卡选项</div>
+                            <div class="form-body">
+                                <label class="checkbox_label"><input id="ra_cw_draft" type="checkbox" checked> 完成时自动写入《ruby写卡初稿》世界书</label>
+                                <label class="checkbox_label"><input id="ra_cw_guide" type="checkbox" checked> 注入步骤说明（对应气泡文本）</label>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <div class="form-header blue">■ 活动日志</div>
+                            <div class="form-body">
+                                <div id="ra_cw_log" class="status-box" style="max-height:180px;overflow-y:auto;font-size:12px;"></div>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <div class="form-header blue">■ 工作原理</div>
+                            <div class="form-body">
+                                <div class="status-box">
+                                    ① 注入：步骤指令经聊天附加世界书注入，走酒馆原生生成通道（你的预设/API），RUBY 不代发消息。<br>
+                                    ② 监听：每条 AI 回复后检测当前步骤的完成标记（XML 包裹的 yaml 代码块）。<br>
+                                    ③ 草稿：检测到标记 → yaml 提取 → 写入《ruby写卡初稿》：角色内容按顺序排在角色后（order 100+）、世界/NPC/速览排在角色前、分析提示词放入关闭条目并按角色名设置关键词。<br>
+                                    ④ 切换：当前步骤条目自动关闭，下一步骤条目自动开启，进度存于聊天元数据（换聊天不串进度）。<br>
+                                    ⑤ 结束：草稿保留在《ruby写卡初稿》，可一键打开检查。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>`;
@@ -650,6 +719,7 @@ function wireTabs(root) {
     applyMode(ui.mode);
     applySub(root.querySelector('.panel-content[data-panel="player"]'), ui.playerSub);
     applySub(root.querySelector('.panel-content[data-panel="creator"]'), ui.creatorSub);
+    applySub(root.querySelector('.panel-content[data-panel="cardwriter"]'), root.querySelector('.panel-content[data-panel="cardwriter"] .sub-tab')?.dataset.sub);
 }
 
 function wireGlobalInteractions() {
@@ -2309,4 +2379,106 @@ function wirePresetIoControls() {
             resultEl.innerHTML = `<span class="status-err">校验失败：${h(err.message)}</span>`;
         }
     });
+}
+
+// ---------- 写卡模式页签 ----------
+
+const cwLogLines = [];
+
+function cwPushLog(text) {
+    const time = new Date().toTimeString().slice(0, 8);
+    cwLogLines.unshift(`[${time}] ${text}`);
+    if (cwLogLines.length > 60) cwLogLines.pop();
+    const el = $('ra_cw_log');
+    if (el) el.innerHTML = cwLogLines.map((l) => h(l)).join('<br>');
+}
+
+function renderCardWriterTab() {
+    const s = cardwriter.getState();
+    const statusEl = $('ra_cw_status');
+    if (statusEl) {
+        const stepLine = s.active
+            ? `当前步骤：<strong>${h(s.stepId || '—')}</strong> ${s.stepId ? `（${h(s.stepName)}）` : ''}`
+            : '未激活';
+        statusEl.innerHTML = `
+            <div>${s.active ? '<span class="status-ok">🟢 写卡会话进行中</span>' : '<span class="status-warn">⚪ 未激活</span>'}</div>
+            <div style="margin-top:6px;">${stepLine}</div>
+            <div style="margin-top:6px;font-size:12px;color:#666;">
+                草稿数：${s.draftCount} · 最近操作：${h(s.lastAction || '无')}${s.lastError ? `<br><span class="status-err">错误：${h(s.lastError)}</span>` : ''}
+            </div>`;
+    }
+
+    const stepsEl = $('ra_cw_steps');
+    if (stepsEl) {
+        const steps = cardwriter.getSteps();
+        stepsEl.innerHTML = steps.map((st) => {
+            const isCur = s.active && s.stepId === st.id;
+            const cls = isCur ? 'cw-step cur' : 'cw-step';
+            const tag = st.tool ? '🔧工具' : (st.optional ? '◇可选' : '');
+            return `<button class="${cls}" data-step="${h(st.id)}" title="切换到 ${h(st.id)} ${h(st.name)}">${isCur ? '✦ ' : ''}${h(st.id)} ${h(st.name)}${tag ? ` <span class="cw-tag">${tag}</span>` : ''}</button>`;
+        }).join('');
+        stepsEl.querySelectorAll('.cw-step').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                if (!cardwriter.getState().active) {
+                    window.toastr?.warning?.('请先开始写卡会话');
+                    return;
+                }
+                const ok = await cardwriter.switchStep(btn.dataset.step, { manual: true });
+                if (ok) {
+                    cwPushLog(`手动切换步骤 → ${btn.dataset.step}`);
+                    renderCardWriterTab();
+                }
+            });
+        });
+    }
+}
+
+function wireCardWriterControls() {
+    const settings = cardwriter.getSettings();
+    const draftEl = $('ra_cw_draft');
+    const guideEl = $('ra_cw_guide');
+    if (draftEl) draftEl.checked = settings.draftToBook;
+    if (guideEl) guideEl.checked = settings.showGuide;
+
+    on($('ra_cw_start'), 'click', async () => {
+        if (await cardwriter.startSession('Step0')) {
+            cwPushLog('写卡会话开始 → Step0');
+            renderCardWriterTab();
+        }
+    });
+    on($('ra_cw_end'), 'click', async () => {
+        if (await cardwriter.endSession({ keepDrafts: true })) {
+            cwPushLog('会话结束（草稿保留）');
+            renderCardWriterTab();
+        }
+    });
+    on($('ra_cw_end_clear'), 'click', async () => {
+        if (!window.confirm('确定清空写卡条目吗？将删除聊天世界书中 RUBY 创建的步骤条目与草稿（其他条目不动）。')) return;
+        if (await cardwriter.endSession({ keepDrafts: false })) {
+            cwPushLog('会话结束（条目清空）');
+            renderCardWriterTab();
+        }
+    });
+    on($('ra_cw_open_book'), 'click', async () => {
+        await cardwriter.openDraftBook();
+        cwPushLog('打开《ruby写卡初稿》世界书');
+    });
+    on(draftEl, 'change', () => {
+        cardwriter.saveSettings({ draftToBook: !!draftEl.checked });
+        cwPushLog(`草稿写入：${draftEl.checked ? '开' : '关'}`);
+    });
+    on(guideEl, 'change', () => {
+        cardwriter.saveSettings({ showGuide: !!guideEl.checked });
+        cwPushLog(`步骤说明注入：${guideEl.checked ? '开' : '关'}`);
+    });
+
+    cardwriter.onStateChange((s) => {
+        cwPushLog(s.lastAction || s.stepId || '状态更新');
+        renderCardWriterTab();
+    });
+    window.addEventListener('ruby:cardwriter-draft', (e) => {
+        cwPushLog(`草稿写入：${e.detail?.stepId} → ${e.detail?.key}`);
+    });
+
+    renderCardWriterTab();
 }

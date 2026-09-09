@@ -66,6 +66,12 @@
     animation: ruby-orb-pulse 1s ease-in-out infinite;
 }
 
+/* 写卡模式：紫色（会话激活）/ 深紫处理中 */
+#ruby_analyzer_orb .ruby-orb-badge[data-state="cardwriting"] {
+    background: #8e44ad;
+    animation: ruby-orb-pulse 1.6s ease-in-out infinite;
+}
+
 @keyframes ruby-orb-pulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.22); }
@@ -175,10 +181,77 @@
 
 #ra_panel .mode-tab.player { border-bottom: 3px solid transparent; }
 #ra_panel .mode-tab.creator { border-bottom: 3px solid transparent; }
+#ra_panel .mode-tab.cardwriter { border-bottom: 3px solid transparent; }
 #ra_panel .mode-tab.player:hover { background: rgba(196, 30, 58, .1); }
 #ra_panel .mode-tab.creator:hover { background: rgba(30, 75, 142, .1); }
+#ra_panel .mode-tab.cardwriter:hover { background: rgba(44, 85, 48, .12); }
 #ra_panel .mode-tab.player.active { background: rgba(196, 30, 58, .15); border-bottom-color: #C41E3A; color: #8B0000; }
 #ra_panel .mode-tab.creator.active { background: rgba(30, 75, 142, .15); border-bottom-color: #1E4B8E; color: #00008B; }
+#ra_panel .mode-tab.cardwriter.active { background: rgba(44, 85, 48, .15); border-bottom-color: #2C5530; color: #1A3A1E; }
+
+/* 写卡模式步骤卡 */
+#ra_panel .cw-step {
+    padding: 8px 12px;
+    border: 1.5px solid #bbb;
+    border-radius: 6px;
+    background: #f7f7f2;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+    transition: all .15s;
+}
+#ra_panel .cw-step:hover { border-color: #2C5530; background: #eef3ee; }
+#ra_panel .cw-step.cur {
+    border-color: #2C5530;
+    background: #2C5530;
+    color: #fff;
+}
+#ra_panel .cw-step .cw-tag { font-size: 11px; opacity: .75; font-weight: 400; }
+
+/* 步骤说明气泡（写卡模式切换时在悬浮球旁弹出） */
+#ruby_cw_bubble {
+    position: fixed;
+    z-index: 10002;
+    max-width: 300px;
+    background: #FFFEF8;
+    border: 2px solid #2C5530;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #1a1a1a;
+    font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    display: none;
+    pointer-events: auto;
+}
+#ruby_cw_bubble .cw-bubble-title {
+    font-weight: 700;
+    color: #2C5530;
+    margin-bottom: 6px;
+    padding-right: 18px;
+}
+#ruby_cw_bubble .cw-bubble-close {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    cursor: pointer;
+    color: #999;
+    font-size: 14px;
+    line-height: 1;
+}
+#ruby_cw_bubble .cw-bubble-close:hover { color: #333; }
+#ruby_cw_bubble .cw-bubble-body { max-height: 200px; overflow-y: auto; }
+#ruby_cw_bubble details summary { cursor: pointer; font-weight: 600; color: #e67e22; }
+#ruby_cw_bubble details pre {
+    white-space: pre-wrap;
+    font-size: 12px;
+    background: #f4f4ec;
+    padding: 8px;
+    border-radius: 6px;
+    margin: 6px 0 0;
+}
 
 #ra_panel .sub-tabs { display: flex; gap: 0; border-bottom: 1px solid #999; background: #e8e8e0; padding: 0 16px; }
 #ra_panel .sub-tab {
