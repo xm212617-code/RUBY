@@ -602,8 +602,9 @@ function buildShellHtml() {
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="panel-content" data-panel="cardwriter">
+            <div class="panel-content" data-panel="cardwriter">
                     <div class="sub-tabs">
                         <div class="sub-tab active" data-sub="cw-main">🖊️ 写卡控制台</div>
                     </div>
@@ -665,7 +666,7 @@ function buildShellHtml() {
                 </div>
             </div>
         </div>
-    </div>`;
+    `;
 }
 
 function wireTabs(root) {
