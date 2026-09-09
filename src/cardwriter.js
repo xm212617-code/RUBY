@@ -302,38 +302,27 @@ async function setStepEntries(book, stepId) {
 
 // ---------- 完成标记检测 ----------
 
+// XML 标签 + 锚点字段双校验：标签界定完成产物范围，锚点字段防草稿误判。
+// 锚点缺失或标签不存在时返回 ''（不识别），但只有一个锚点词——不过度严格。
 const FINISH_MARKERS = {
-    Step0: /<step0_aesthetic_summary>[\s\S]*?<\/step0_aesthetic_summary>/,
-    Step1: /<step1_soul_exploration>[\s\S]*?<\/step1_soul_exploration>/,
-    Step2: /<step2_living_character>[\s\S]*?<\/step2_living_character>/,
-    Step3: /<character>[\s\S]*?<\/character>/,
-    Step4: /<NSFW档案>[\s\S]*?<\/NSFW档案>/,
+    Step0: { tag: 'step0_aesthetic_summary', matchKey: '故事还原' },
+    Step1: { tag: 'step1_soul_exploration', matchKey: '人生经历' },
+    Step2: { tag: 'step2_living_character', matchKey: '角色核心' },
+    Step3: { tag: 'character', matchKey: 'character:' },
+    Step4: { tag: 'NSFW档案', matchKey: 'nsfw_profile' },
+    Step5: { tag: 'step5_npc_design', matchKey: 'NPC' },
+    Step6: { tag: 'step6_quickview', matchKey: '关系' },
+    Step7: { tag: 'step7_analysis_plan', matchKey: '任务' },
+    Step8: { tag: 'step8_analysis_prompts', matchKey: '任务' },
 };
-
-// 每步 yaml 总结的必需字段：全部命中才算"完整yaml"，防止把 Ruby 展示的草稿片段误判为完成
-const REQUIRED_YAML_KEYS = {
-    Step0: ['故事还原'],
-    Step1: ['人生经历', '内在张力'],
-    Step2: ['角色核心', '对话示例'],
-    Step3: ['character:', '角色核心', '写作基准'],
-    Step4: ['nsfw_profile', '特质'],
-};
-
-// 无 XML 包裹、以 ```yaml 代码块为完成标记的步骤
-const PLAIN_YAML_STEPS = new Set(['Step5', 'Step6']);
 
 // 总览收尾标记：yaml 内含「玩家已完成」
-const OVERVIEW_MARKER = /```yaml[\s\S]*?玩家已完成[\s\S]*?```/;
+const OVERVIEW_MARKER = /<ruby_overview>[\s\S]*?<\/ruby_overview>/;
 
 function yamlBlocks(text) {
     return [...String(text || '').matchAll(/```yaml[ \t]*\r?\n([\s\S]*?)```/g)]
         .map((m) => m[1])
         .filter(Boolean);
-}
-
-function hasAllKeys(yamlBody, keys) {
-    const s = String(yamlBody || '');
-    return keys.every((k) => s.includes(k));
 }
 
 /** 提取本步骤的完成产物，返回 '' 表示未完成（或仅是草稿展示） */
@@ -342,34 +331,27 @@ export function extractCompletion(stepId, text) {
 
     if (stepId === 'Overview') {
         const m = s.match(OVERVIEW_MARKER);
-        return m ? m[0].trim() : '';
+        if (!m) return '';
+        return /玩家已完成/.test(m[0]) ? m[0].trim() : '';
     }
 
-    const re = FINISH_MARKERS[stepId];
-    if (re) {
+    const marker = FINISH_MARKERS[stepId];
+    if (marker) {
+        // 兼容旧格式：Step5/Step6 旧版无 XML 包裹，用纯 yaml 块识别
+        if ((stepId === 'Step5' || stepId === 'Step6') && !s.includes(`<${marker.tag}>`)) {
+            const blocks = yamlBlocks(s);
+            if (blocks.length === 0) return '';
+            return blocks.map((b) => '```yaml\n' + b + '\n```').join('\n\n');
+        }
+        const re = new RegExp(`<${marker.tag}>[\\s\\S]*?<\\/${marker.tag}>`);
         const m = s.match(re);
         if (!m) return '';
-        const blocks = yamlBlocks(m[0]);
-        if (blocks.length === 0) return '';
-        // 合并块体做完整性校验；要求块数与必需字段同时满足
-        const merged = blocks.join('\n');
-        const required = REQUIRED_YAML_KEYS[stepId];
-        if (required && !hasAllKeys(merged, required)) {
-            log(`[cardwriter] ${stepId} yaml incomplete (missing required keys), treating as draft display`);
+        // 锚点字段校验：yaml 体内必须含锚点（唯一稳定核心词）
+        if (!m[0].includes(marker.matchKey)) {
+            log(`[cardwriter] ${stepId} completion missing anchor key "${marker.matchKey}", treating as draft`);
             return '';
         }
         return m[0].trim();
-    }
-    if (PLAIN_YAML_STEPS.has(stepId)) {
-        const blocks = yamlBlocks(s);
-        if (blocks.length === 0) return '';
-        return blocks.map((b) => '```yaml\n' + b + '\n```').join('\n\n');
-    }
-    if (stepId === 'Step8') {
-        // 分析提示词特征：任务声明 + 双阶段结构/XML输出标签
-        const hasTask = /任务\s*[:：]/.test(s);
-        const hasTrait = /(输出边界声明|第一阶段_思考链|<[^<>\s]{1,24}_[^<>\s]{1,24}>)/.test(s);
-        return (hasTask && hasTrait) ? s.trim() : '';
     }
     return '';
 }
