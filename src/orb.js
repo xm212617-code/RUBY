@@ -118,6 +118,10 @@ function showStepBubble(stepId) {
         <span class="cw-bubble-close">✕</span>
         <div class="cw-bubble-title">${stepId === 'Overview' ? '🏁' : '✍️'} ${stepId === 'Overview' ? '' : stepId + ' · '}${step.name}</div>
         <div class="cw-bubble-body">${guideToHtml(step.guide)}</div>`;
+    // 先渲染但保持不可见，以便测量真实尺寸（display:none 下 getBoundingClientRect 全为 0，
+    // 之前的边缘钳制因此从未生效，气泡显示后才会飞出屏幕）
+    bubbleEl.style.display = 'block';
+    bubbleEl.style.visibility = 'hidden';
     document.body.appendChild(bubbleEl);
 
     // 定位：优先悬浮球右侧，其次左侧、上方、下方；全程做视口边缘钳制，
@@ -157,7 +161,15 @@ function showStepBubble(stepId) {
     }
     bubbleEl.style.left = `${pos.l}px`;
     bubbleEl.style.top = `${pos.t}px`;
-    bubbleEl.style.display = 'block';
+    bubbleEl.style.visibility = 'visible';
+
+    // details 展开/收起后高度变化：重新钳制在视口内（捕获 toggle，它不冒泡）
+    bubbleEl.addEventListener('toggle', () => {
+        const r = bubbleEl?.getBoundingClientRect();
+        if (!r) return;
+        if (r.bottom > vh - MARGIN) bubbleEl.style.top = `${Math.max(MARGIN, vh - r.height - MARGIN)}px`;
+        if (r.right > vw - MARGIN) bubbleEl.style.left = `${Math.max(MARGIN, vw - r.width - MARGIN)}px`;
+    }, true);
 
     // 安全设定：点击气泡任意位置关闭（✕按钮同样有效），防误触与遮挡。
     // 例外：展开/收起 details、拖动选中文本时不关。
@@ -220,7 +232,10 @@ export function ensureOrb() {
         const dx = e.clientX - dragState.startX;
         const dy = e.clientY - dragState.startY;
         if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-        dragState.moved = true;
+        if (!dragState.moved) {
+            dragState.moved = true;
+            hideStepBubble(); // 拖动时收起说明气泡，避免残影与遮挡
+        }
         applyPosition(orb, { x: dragState.originX + dx, y: dragState.originY + dy });
     });
 
