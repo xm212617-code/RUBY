@@ -6,7 +6,28 @@ import { ORB_AVATAR_DATA_URI } from './orb-avatar.js';
 
 const ORB_ID = 'ruby_analyzer_orb';
 const DRAG_THRESHOLD = 6;
-const ORB_SIZE = 60;
+const ORB_DEFAULT_SIZE = 60;
+
+function getOrbSize() {
+    return config.clampOrbSize(config.getUi()?.orbSize ?? ORB_DEFAULT_SIZE);
+}
+
+/** 按设置应用悬浮球尺寸（徽章与描边按比例缩放） */
+function applySize(orb) {
+    const size = getOrbSize();
+    orb.style.width = `${size}px`;
+    orb.style.height = `${size}px`;
+    const badge = orb.querySelector('.ruby-orb-badge');
+    if (badge) {
+        const badgeSize = Math.max(14, Math.round(size * 0.37));
+        const border = size < 44 ? 2 : 3;
+        badge.style.width = `${badgeSize}px`;
+        badge.style.height = `${badgeSize}px`;
+        badge.style.borderWidth = `${border}px`;
+        const svg = badge.querySelector('svg');
+        if (svg) svg.style.width = svg.style.height = `${Math.max(8, Math.round(badgeSize * 0.5))}px`;
+    }
+}
 
 const BADGE_ICONS = {
     idle: '<svg viewBox="0 0 24 24" fill="#14161f"><circle cx="12" cy="12" r="5"/></svg>',
@@ -22,14 +43,15 @@ let bubbleTimer = null;
 let lastBubbleStep = null;
 
 function defaultPosition() {
+    const size = getOrbSize();
     return {
-        x: Math.max(12, window.innerWidth - ORB_SIZE - 24),
+        x: Math.max(12, window.innerWidth - size - 24),
         y: Math.min(window.innerHeight - 180, Math.max(120, window.innerHeight * 0.55)),
     };
 }
 
 function applyPosition(orb, pos) {
-    const pad = ORB_SIZE + 8;
+    const pad = getOrbSize() + 8;
     orb.style.left = `${Math.max(4, Math.min(window.innerWidth - pad, pos.x))}px`;
     orb.style.top = `${Math.max(4, Math.min(window.innerHeight - pad, pos.y))}px`;
 }
@@ -142,6 +164,7 @@ export function ensureOrb() {
         <span class="ruby-orb-badge" data-state="idle">${BADGE_ICONS.idle}</span>
     `;
     document.body.appendChild(orb);
+    applySize(orb);
 
     const ui = config.getUi();
     applyPosition(orb, (Number.isFinite(ui.orbX) && Number.isFinite(ui.orbY)) ? { x: ui.orbX, y: ui.orbY } : defaultPosition());
@@ -196,8 +219,12 @@ export function ensureOrb() {
         hideStepBubble();
     });
 
-    // 面板保存 UI 配置时事件驱动刷新（替代轮询）
-    window.addEventListener('ruby:ui-changed', refreshVisibility);
+    // 面板保存 UI 配置时事件驱动刷新（替代轮询）：显隐 + 尺寸
+    window.addEventListener('ruby:ui-changed', () => {
+        const el = document.getElementById(ORB_ID);
+        if (el) applySize(el);
+        refreshVisibility();
+    });
 
     setStatus(orb, engine.getEngineState());
     engine.onStateChange((engineState) => {

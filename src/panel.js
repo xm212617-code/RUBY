@@ -876,7 +876,7 @@ function renderManualButtons(data, layer) {
     }
 
     const buttons = [];
-    if (preset.startupTask?.enabled) {
+    if (preset.startupTask?.enabled && scheduler.taskMatchesCharacter(preset.startupTask, identity)) {
         buttons.push(`<button class="btn green" data-run="startup">${h(preset.startupTask.displayName || '开局分析')}</button>`);
     }
     for (const task of preset.tasks || []) {
@@ -886,6 +886,18 @@ function renderManualButtons(data, layer) {
     }
     if (buttons.length > 1) {
         buttons.push(`<button class="btn blue" data-run="all">▶ 全部执行</button>`);
+    }
+
+    // 有启用任务但全部绑定到其他角色：明确提示原因（热插拔模板常见——任务自带characters绑定）
+    if (buttons.length === 0) {
+        const enabledTasks = (preset.tasks || []).filter((t) => t.enabled);
+        const boundNames = [...new Set(enabledTasks.flatMap((t) => Array.isArray(t.characters) ? t.characters : []))];
+        if (enabledTasks.length > 0 && boundNames.length > 0) {
+            const shown = boundNames.slice(0, 6).map((n) => h(n)).join('、');
+            el.innerHTML = `<span class="status-warn">⚠ 当前方案有 ${enabledTasks.length} 个启用任务，但都绑定了其他角色（${shown}${boundNames.length > 6 ? ' 等' : ''}），当前角色「${h(identity.name)}」不在其中，不执行。</span><br>
+                <span style="font-size:12px;color:#666;">任务绑定的角色名来自导出模板。如需在当前角色卡上执行，到创作者版面打开任务卡，清空"绑定角色"输入框（留空=对所有角色生效）后保存。</span>`;
+            return;
+        }
     }
 
     el.innerHTML = buttons.join('') || '<span style="color:#1a1a1a;font-size:14px;">暂无启用的任务</span>';
@@ -927,6 +939,14 @@ function renderSchedule(data, layer) {
     enabled.sort((a, b) => (activePositionsOf(a)[0] || 0) - (activePositionsOf(b)[0] || 0));
     for (const task of enabled) {
         lines.push(`<div>📌 位置<strong>${activePositionsOf(task).join(',') || '?'}</strong> → ${h(task.displayName || `任务#${task.id}`)}</div>`);
+    }
+    if (lines.length === 0) {
+        const allEnabled = (preset.tasks || []).filter((t) => t.enabled);
+        const boundNames = [...new Set(allEnabled.flatMap((t) => Array.isArray(t.characters) ? t.characters : []))];
+        if (allEnabled.length > 0 && boundNames.length > 0) {
+            const shown = boundNames.slice(0, 6).map((n) => h(n)).join('、');
+            lines.push(`<span class="status-warn">⚠ ${allEnabled.length} 个启用任务全部绑定到其他角色（${shown}${boundNames.length > 6 ? ' 等' : ''}），当前角色「${h(identity.name)}」无自动任务。到创作者版面清空任务卡里的"绑定角色"可对当前角色生效。</span>`);
+        }
     }
     el.innerHTML = lines.length ? lines.join('') : '<span style="color:#1a1a1a;">暂无任务配置</span>';
 }

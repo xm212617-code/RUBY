@@ -58,10 +58,18 @@ const makeDefaultApi = () => ({
 
 const makeDefaultUi = () => ({
     orbHidden: false,
+    orbSize: 60,
     orbX: null,
     orbY: null,
     notify: true,
 });
+
+/** 悬浮球尺寸取值范围：当前悬浮窗 60px 为上限，可逐步缩小 */
+export function clampOrbSize(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return 60;
+    return Math.max(32, Math.min(60, Math.round(v)));
+}
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
