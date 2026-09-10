@@ -352,15 +352,16 @@ async function setStepEntries(book, stepId) {
 // ---------- 完成标记检测 ----------
 
 // XML 标签 + 锚点字段双校验：标签界定完成产物范围，锚点字段防草稿误判。
-// 锚点缺失或标签不存在时返回 ''（不识别），但只有一个锚点词——不过度严格。
+// lenient: true 的步骤（Step5/6 产物以人名等任意键开头，无稳定锚点词）在降级
+// 分支里放宽为"任意非空 yaml 块即接受"。
 const FINISH_MARKERS = {
     Step0: { tag: 'step0_aesthetic_summary', matchKey: '故事还原' },
     Step1: { tag: 'step1_soul_exploration', matchKey: '人生经历' },
     Step2: { tag: 'step2_living_character', matchKey: '角色核心' },
     Step3: { tag: 'character', matchKey: 'character:' },
     Step4: { tag: 'NSFW档案', matchKey: 'nsfw_profile' },
-    Step5: { tag: 'step5_npc_design', matchKey: 'NPC' },
-    Step6: { tag: 'step6_quickview', matchKey: '关系' },
+    Step5: { tag: 'step5_npc_design', matchKey: '', lenient: true },
+    Step6: { tag: 'step6_quickview', matchKey: '关系', lenient: true },
     Step7: { tag: 'step7_analysis_plan', matchKey: '任务' },
     Step8: { tag: 'step8_analysis_prompts', matchKey: '任务' },
 };
@@ -374,7 +375,12 @@ function yamlBlocks(text) {
         .filter(Boolean);
 }
 
-/** 提取本步骤的完成产物，返回 '' 表示未完成（或仅是草稿展示） */
+/** 提取本步骤的完成产物，返回 '' 表示未完成（或仅是草稿展示）。
+ *  分级识别（宽进严出）：
+ *  A. 标准格式：XML标签 + yaml块 + 锚点字段 → 直接接受
+ *  B. 降级格式：AI 忘了 XML 标签（Step4-6 常见）→ yaml块 + 锚点命中也接受，
+ *     存储时自动补规范标签，保持草稿条目格式统一
+ */
 export function extractCompletion(stepId, text) {
     const s = String(text || '');
 
@@ -385,24 +391,43 @@ export function extractCompletion(stepId, text) {
     }
 
     const marker = FINISH_MARKERS[stepId];
-    if (marker) {
-        // 兼容旧格式：Step5/Step6 旧版无 XML 包裹，用纯 yaml 块识别
-        if ((stepId === 'Step5' || stepId === 'Step6') && !s.includes(`<${marker.tag}>`)) {
-            const blocks = yamlBlocks(s);
-            if (blocks.length === 0) return '';
-            return blocks.map((b) => '```yaml\n' + b + '\n```').join('\n\n');
-        }
-        const re = new RegExp(`<${marker.tag}>[\\s\\S]*?<\\/${marker.tag}>`);
-        const m = s.match(re);
-        if (!m) return '';
-        // 锚点字段校验：yaml 体内必须含锚点（唯一稳定核心词）
-        if (!m[0].includes(marker.matchKey)) {
+    if (!marker) return '';
+
+    // A. 标准格式：XML 标签包裹（含成对闭合才有效，防草稿里单独提及标签名）
+    const re = new RegExp(`<${marker.tag}>[\\s\\S]*?<\\/${marker.tag}>`);
+    const m = s.match(re);
+    if (m) {
+        if (marker.matchKey && !m[0].includes(marker.matchKey) && !marker.lenient) {
             log(`[cardwriter] ${stepId} completion missing anchor key "${marker.matchKey}", treating as draft`);
             return '';
         }
         return m[0].trim();
     }
-    return '';
+
+    // B. 降级格式：AI 忘了 XML 标签（Step4-6 常见）。
+    //    正文出现其他步骤的完成标签时说明这是别的步骤的定稿/回显，不降级处理；
+    //    仅当没有任何完成标签时才接受裸 yaml。
+    if (/<\/(step\d[\w]*|character|NSFW档案|ruby_overview)>/.test(s)) {
+        log(`[cardwriter] ${stepId} other step's completion tag present, skipping lenient match`);
+        return '';
+    }
+    const blocks = yamlBlocks(s);
+    if (blocks.length === 0) return '';
+    let anchored = marker.matchKey
+        ? blocks.filter((b) => b.includes(marker.matchKey))
+        : blocks; // 无锚点步骤：任意非空块
+    if (anchored.length === 0) {
+        // lenient 步骤（Step5/6）：锚点未命中也接受全部块（产物常以人名开头，无固定词）
+        if (!marker.lenient) {
+            log(`[cardwriter] ${stepId} bare yaml blocks found but none contains anchor "${marker.matchKey}", ignoring`);
+            return '';
+        }
+        anchored = blocks;
+        log(`[cardwriter] ${stepId} lenient step: anchor "${marker.matchKey}" not found, accepting all bare yaml blocks`);
+    }
+    const body = anchored.map((b) => '```yaml\n' + b + '\n```').join('\n');
+    log(`[cardwriter] ${stepId} completion accepted without XML tag (lenient mode), wrapping with <${marker.tag}>`);
+    return `<${marker.tag}>\n${body}\n</${marker.tag}>`;
 }
 
 // ---------- 草稿写入：ruby写卡初稿 ----------

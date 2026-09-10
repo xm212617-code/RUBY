@@ -19,8 +19,9 @@ const MODE_NOTE = `
 
 【RUBY写卡模式·自动切换说明】
 当前处于RUBY写卡模式的对话中：各步骤条目的开启/关闭由RUBY自动管理。
-RUBY检测到本步骤的完成标记（规定的yaml总结输出）后，会自动关闭当前步骤条目、开启下一步骤条目，创作者无需手动去世界书切换，结束语中也不必强调手动切换世界书。
-若创作者想手动跳转/回退步骤，让TA打开RUBY面板的"写卡"页签操作即可。`;
+RUBY检测到本步骤的完成标志（步骤指令末尾【完成输出协议】规定的 XML+yaml代码块 组合）后，会自动关闭当前步骤条目、开启下一步骤条目，创作者无需手动去世界书切换，结束语中也不必强调手动切换世界书。
+若创作者想手动跳转/回退步骤，让TA打开RUBY面板的"写卡"页签操作即可。
+当创作者明确表示要完成/定稿当前步骤时，你必须严格按照该协议的完整格式输出结束yaml——这是切换发生的唯一依据。`;
 
 // 过时表述清洗：源文本写作时步骤需手动开关世界书条目，现在由RUBY代管。
 // 逐行替换/删除这些指令，保持与当前环境一致。
@@ -67,14 +68,16 @@ function sanitizeLines(text, rules) {
 // 完成输出协议：每个步骤完成时必须输出 XML 标签包裹的 ```yaml 代码块。
 // MATCH_KEY 是 RUBY 识别完成的锚点字段——必须出现在 yaml 内（防草稿误判），
 // 但只有一个稳定核心词，不做多重校验（不能太严格）。
+// lenient 步骤（Step5/6）产物以人名等任意键开头、没有稳定锚点词：协议里
+// 不强调锚点字段，识别端放宽为任意非空 yaml 块。
 const COMPLETION_PROTOCOLS = {
     Step0: { tag: 'step0_aesthetic_summary', matchKey: '故事还原' },
     Step1: { tag: 'step1_soul_exploration', matchKey: '人生经历' },
     Step2: { tag: 'step2_living_character', matchKey: '角色核心' },
     Step3: { tag: 'character', matchKey: 'character:' },
     Step4: { tag: 'NSFW档案', matchKey: 'nsfw_profile' },
-    Step5: { tag: 'step5_npc_design', matchKey: 'NPC' },
-    Step6: { tag: 'step6_quickview', matchKey: '关系' },
+    Step5: { tag: 'step5_npc_design', matchKey: '' },
+    Step6: { tag: 'step6_quickview', matchKey: '' },
     Step7: { tag: 'step7_analysis_plan', matchKey: '任务' },
     Step8: { tag: 'step8_analysis_prompts', matchKey: '任务:' },
 };
@@ -82,26 +85,34 @@ const COMPLETION_PROTOCOLS = {
 function completionProtocolNote(stepId) {
     const p = COMPLETION_PROTOCOLS[stepId];
     if (!p) return '';
+    const sampleHead = p.matchKey === 'character:'
+        ? 'character: [角色全名]'
+        : (p.matchKey ? `${p.matchKey}:` : '[人物名/条目名]:');
+    const anchorLine = p.matchKey
+        ? `3. yaml内容必须包含"${p.matchKey}"字段（RUBY识别完成的锚点，不可省略、不可改名）`
+        : '3. yaml以人物名/条目名为顶层键，内容完整（RUBY按整体格式识别完成）';
     return `
 
-【完成输出协议（RUBY自动识别依赖）】
-⚠️ 本步骤完成时，你必须输出一个唯一的完成产物，格式严格如下：
-1. 用XML标签 <${p.tag}> ... </${p.tag}> 整体包裹，标签独占一行
-2. 标签内有且仅有一个 \`\`\`yaml 代码块：第一行是 \`\`\`yaml，最后一行是 \`\`\`（三个反引号），中间是纯yaml文本
-3. yaml内容中必须包含"${p.matchKey}"字段（这是RUBY识别完成的锚点，不可省略、不可改名）
-4. 所有字段必须完整填写真实内容——禁止用"..."、"省略"、"等等"占位
-5. 代码块内禁止再出现三个反引号，禁止嵌套代码块
+【完成输出协议（RUBY自动识别依赖，最高优先级）】
+本步骤的完成以你输出"完成标志"为准——它必须严格遵循以下格式，一个字符都不能错：
 
-格式示例：
 <${p.tag}>
 \`\`\`yaml
-${p.matchKey === 'character:' ? 'character: [角色全名]' : `${p.matchKey}:`}
+${sampleHead}
   [完整内容...]
 \`\`\`
 </${p.tag}>
 
-⚠️ 平时讨论、展示草稿时禁止使用这个XML标签——它是完成信号，只在本步骤最终总结时输出。
-⚠️ 输出协议的yaml必须完整，但不必完美，创作者确认前可以继续修改。`;
+格式硬性要求：
+1. XML标签 <${p.tag}> 与 </${p.tag}> 必须成对出现，各占一行，包裹整个代码块
+2. 标签内有且仅有一个 \`\`\`yaml 代码块：第一行是 \`\`\`yaml，最后一行是 \`\`\`（三个反引号）
+${anchorLine}
+4. 所有字段填写真实完整内容——禁止用"..."、"省略"、"等等"占位
+5. 代码块内禁止再出现三个反引号，禁止嵌套代码块
+
+⚠️ 这是本步骤路线完成的唯一标志。当创作者表示"可以了/满意了/就这样定稿/进入下一步"时，你必须立即以上述完整格式输出结束yaml——不可以只输出yaml不带标签，不可以只说"已完成"而不输出，不可以把标签写成别的名字。
+⚠️ 平时讨论、展示草稿、中途预览时严禁使用这个XML标签与完整组合——它是完成信号，只在本步骤定稿总结时输出一次。
+⚠️ 输出的yaml必须完整，但不必完美，创作者仍可要求你修改后重新定稿。`;
 }
 
 const steps = [
