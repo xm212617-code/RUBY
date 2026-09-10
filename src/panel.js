@@ -465,7 +465,7 @@ function buildShellHtml() {
                                     <div class="tip" style="margin-top:0;margin-bottom:12px;">
                                         <strong>周期位置</strong>：表示在每个周期的第几次AI回复时触发（支持多个，逗号分隔，如 5,10,15）。周期长度 = 所有任务里最大的那个数。<br>
                                         💡 <strong>额外关键词</strong>：可为输出条目添加额外触发词（如角色名），与输出条目关键词合并。<br>
-                                        🔗 <strong>绑定角色</strong>：填写角色名（逗号分隔）后，任务只对这些角色生效；留空 = 对所有角色生效。
+                                        📄 <strong>任务归属</strong>：整份配置保存在角色卡内，任务只随这张卡生效，无需单独指定角色。
                                     </div>
                                     <div id="ra_task_slots"></div>
                                     <div id="ra_add_task_area" class="add-task-btn">➕ 添加新任务</div>
@@ -489,7 +489,7 @@ function buildShellHtml() {
                             </div>
                             <div class="tip" style="margin-top:12px;">
                                 💡 <strong>卡片中心模型</strong>：RUBY 任务配置只随角色卡存在（写入卡内 <code>data.extensions</code> 字段）。打开角色卡后，导入模板或新建/修改任务会<strong>自动绑定并写入当前角色卡</strong>，导出/分享卡片即携带，其他环境导入即生效。<br>
-                                💡 <strong>每个任务还可以单独限定角色</strong>：在任务配置卡片里填写"绑定角色"，留空则对所有角色生效。<br>
+                                💡 <strong>任务归属</strong>：配置整体保存在角色卡的 <code>data.extensions</code> 字段，任务只随这张卡生效，无需为任务单独指定角色。<br>
                                 ⚠️ 未打开角色卡时配置只能暂存于全局层（不随卡导出），请打开角色卡后再配置；引擎只执行已绑定角色卡的配置。<br>
                                 🔒 API密钥是全局本地的，与绑定无关，任何情况下都不会被导出或写入角色卡。
                             </div>
@@ -888,18 +888,6 @@ function renderManualButtons(data, layer) {
         buttons.push(`<button class="btn blue" data-run="all">▶ 全部执行</button>`);
     }
 
-    // 有启用任务但全部绑定到其他角色：明确提示原因（热插拔模板常见——任务自带characters绑定）
-    if (buttons.length === 0) {
-        const enabledTasks = (preset.tasks || []).filter((t) => t.enabled);
-        const boundNames = [...new Set(enabledTasks.flatMap((t) => Array.isArray(t.characters) ? t.characters : []))];
-        if (enabledTasks.length > 0 && boundNames.length > 0) {
-            const shown = boundNames.slice(0, 6).map((n) => h(n)).join('、');
-            el.innerHTML = `<span class="status-warn">⚠ 当前方案有 ${enabledTasks.length} 个启用任务，但都绑定了其他角色（${shown}${boundNames.length > 6 ? ' 等' : ''}），当前角色「${h(identity.name)}」不在其中，不执行。</span><br>
-                <span style="font-size:12px;color:#666;">任务绑定的角色名来自导出模板。如需在当前角色卡上执行，到创作者版面打开任务卡，清空"绑定角色"输入框（留空=对所有角色生效）后保存。</span>`;
-            return;
-        }
-    }
-
     el.innerHTML = buttons.join('') || '<span style="color:#1a1a1a;font-size:14px;">暂无启用的任务</span>';
     el.querySelectorAll('[data-run]').forEach((btn) => {
         on(btn, 'click', async () => {
@@ -939,14 +927,6 @@ function renderSchedule(data, layer) {
     enabled.sort((a, b) => (activePositionsOf(a)[0] || 0) - (activePositionsOf(b)[0] || 0));
     for (const task of enabled) {
         lines.push(`<div>📌 位置<strong>${activePositionsOf(task).join(',') || '?'}</strong> → ${h(task.displayName || `任务#${task.id}`)}</div>`);
-    }
-    if (lines.length === 0) {
-        const allEnabled = (preset.tasks || []).filter((t) => t.enabled);
-        const boundNames = [...new Set(allEnabled.flatMap((t) => Array.isArray(t.characters) ? t.characters : []))];
-        if (allEnabled.length > 0 && boundNames.length > 0) {
-            const shown = boundNames.slice(0, 6).map((n) => h(n)).join('、');
-            lines.push(`<span class="status-warn">⚠ ${allEnabled.length} 个启用任务全部绑定到其他角色（${shown}${boundNames.length > 6 ? ' 等' : ''}），当前角色「${h(identity.name)}」无自动任务。到创作者版面清空任务卡里的"绑定角色"可对当前角色生效。</span>`);
-        }
     }
     el.innerHTML = lines.length ? lines.join('') : '<span style="color:#1a1a1a;">暂无任务配置</span>';
 }
@@ -1532,9 +1512,6 @@ function collectTasksFromUI() {
             .split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n > 0);
         const firstPos = cyclePosRaw.length > 0 ? cyclePosRaw[0] : 0;
 
-        const characters = (card.querySelector(`.task-characters[data-id="${id}"]`)?.value || '')
-            .split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-
         tasks.push(config.normalizeTask({
             id,
             enabled: !!card.querySelector(`.task-enabled[data-id="${id}"]`)?.checked,
@@ -1555,7 +1532,6 @@ function collectTasksFromUI() {
             position: insertPosition,
             depth,
             order,
-            characters,
             useReferences: useRefs,
             useOutputs: useOutputs,
         }));
@@ -1649,10 +1625,6 @@ function renderTaskSlots() {
                 <div class="form-row">
                     <span class="form-label">额外关键词</span>
                     <input class="task-extrakeys w250" data-id="${task.id}" value="${h(task.extraKeys || '')}" placeholder="角色名等，逗号分隔">
-                </div>
-                <div class="form-row">
-                    <span class="form-label">绑定角色</span>
-                    <input class="task-characters w250" data-id="${task.id}" value="${h((task.characters || []).join(','))}" placeholder="角色名，逗号分隔；留空=全部角色">
                 </div>
                 <div class="form-row">
                     <span class="form-label">正文扫描</span>

@@ -37,12 +37,13 @@ export function positionFor(aiReplyCount, len) {
     return ((aiReplyCount - 1) % len) + 1;
 }
 
-export function taskMatchesCharacter(task, identity) {
-    const list = Array.isArray(task?.characters) ? task.characters : [];
-    if (list.length === 0) return true;
-    if (!identity) return false;
-    const names = new Set(list.map((s) => String(s || '').trim()).filter(Boolean));
-    return names.has(identity.name) || names.has(identity.avatar);
+/**
+ * 任务级角色过滤已移除：该比对拿"当前打开的角色卡名"匹配，容易被误解为正文检索，
+ * 且多卡场景毫无必要——配置本身已按角色卡绑定，卡内任务天然只在该卡生效。
+ * 函数保留为恒真占位以兼容调用方；导入旧模板携带的 characters 字段在读取时静默丢弃。
+ */
+export function taskMatchesCharacter() {
+    return true;
 }
 
 export function collectTasksAtPosition(startupTask, tasks, position, identity) {

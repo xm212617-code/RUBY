@@ -201,7 +201,7 @@ export function normalizeTask(raw) {
                 : []),
         useReferences: Array.isArray(t.useReferences) ? t.useReferences.map(String) : [],
         useOutputs: Array.isArray(t.useOutputs) ? t.useOutputs.map(String) : [],
-        characters: Array.isArray(t.characters) ? t.characters.map(String).filter(Boolean) : [],
+        // characters（任务级角色绑定）已废弃：读取时静默丢弃，避免误过滤
     };
     task.cyclePosition = task.cyclePositions[0] || 0;
     task.triggerFloor = task.cyclePosition;
