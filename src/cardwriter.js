@@ -200,6 +200,7 @@ async function setupBaseEntries(book) {
 }
 
 const HOLD_KEY = 'RUBY写卡_继续聊聊';
+const ROADMAP_KEY = 'RUBY写卡_路线图';
 const LEGACY_STEP_IDS = ['Step6.5'];
 
 /** 进入某步骤时需要清除的历史步骤（条目+说明+草稿），避免世界书冗杂 */
@@ -230,6 +231,51 @@ function deleteEntriesByKeys(entries, keys) {
 function stepArtifactKeys(stepId) {
     const sk = `RUBY写卡_${stepId.replace('.', '_')}`;
     return [sk, `${sk}_说明`, draftKeyOf(stepId)];
+}
+
+/**
+ * 内置写卡路线图（常驻注入，约300 token）：完整流程简表 + 当前位置 + 一句话指引。
+ * 让 AI 每一轮都清楚整体流程、当前在哪一步、接下来做什么。
+ */
+function buildRoadmapContent(stepId) {
+    const mainSteps = CARDWRITER_DATA.steps.filter((s) => s.id !== 'Overview' && s.id !== 'StepX');
+    const overview = CARDWRITER_DATA.steps.find((s) => s.id === 'Overview');
+    const lines = ['【RUBY写卡·流程路线图】（本条目由RUBY自动维护，禁止在回复中复述整个路线图）', '完整写卡流程：'];
+    mainSteps.forEach((s, i) => {
+        lines.push(`${i + 1}. ${s.id} ${s.name}——${s.brief}`);
+    });
+    lines.push(`终. ${overview.id} ${overview.name}——${overview.brief}（只能在创作者手动进入后触发）`, '');
+    const cur = getStep(stepId);
+    if (!cur) {
+        lines.push('当前：无活跃步骤。');
+    } else {
+        const idx = mainSteps.findIndex((s) => s.id === stepId);
+        const total = mainSteps.length;
+        if (cur.id === 'Overview') {
+            lines.push(`当前：收尾阶段（${overview.name}）。${overview.brief}。`);
+        } else if (idx >= 0) {
+            const next = mainSteps[idx + 1];
+            lines.push(`当前：第${idx + 1}/${total}步——${cur.id} ${cur.name}，${cur.brief}。`);
+            if (next) {
+                lines.push(`下一步：${next.id} ${next.name}（${next.brief}）。本步骤完成并输出完成标记后由RUBY自动切换，你现在只需专注当前步骤。`);
+            } else {
+                lines.push('本步骤是主流程最后一步，完成后由创作者手动进入总览收尾。');
+            }
+        } else {
+            lines.push(`当前：${cur.id} ${cur.name}——${cur.brief}（工具步骤，不在主流程序列中）。`);
+        }
+    }
+    return lines.join('\n');
+}
+
+async function refreshRoadmapEntry(book, entries, stepId) {
+    const entry = await ensureEntryIn(book, entries, ROADMAP_KEY);
+    Object.assign(entry, {
+        content: buildRoadmapContent(stepId),
+        comment: 'RUBY写卡·流程路线图（自动维护）',
+        position: POS_AT_DEPTH, depth: 1, order: 450,
+        role: ROLE_SYSTEM, constant: true, disable: false,
+    });
 }
 
 async function setStepEntries(book, stepId) {
@@ -284,6 +330,9 @@ async function setStepEntries(book, stepId) {
             }
         }
     }
+
+    // 流程路线图：常驻注入，随当前步骤刷新
+    await refreshRoadmapEntry(book, entries, stepId);
 
     await saveBook(book, data);
     if (holdRemoved || legacyRemoved || cleanupRemoved) {
@@ -566,8 +615,8 @@ export async function endSession({ keepDrafts = true } = {}) {
                     }
                 }
             } else {
-                // 只关掉步骤/规则/人设条目，草稿保留
-                const offKeys = new Set([RULES_KEY, PERSONA_KEY]);
+                // 只关掉步骤/规则/人设/路线图条目，草稿保留
+                const offKeys = new Set([RULES_KEY, PERSONA_KEY, ROADMAP_KEY]);
                 for (const s of CARDWRITER_DATA.steps) {
                     offKeys.add(stepKey(s));
                     offKeys.add(`${stepKey(s)}_说明`);
@@ -686,8 +735,8 @@ async function finalCleanup() {
     if (!data?.entries) throw new Error(`world book not found: ${book}`);
     const entries = data.entries;
 
-    // 保留的产出草稿：美学设定、角色设定、NSFW设定、分析提示词
-    const KEEP_DRAFTS = new Set(['ruby草稿_Step0', 'ruby草稿_Step3', 'ruby草稿_Step4', 'ruby草稿_Step8']);
+    // 保留的产出草稿：美学设定、角色设定、NSFW设定、NPC设定、人物速览、分析提示词
+    const KEEP_DRAFTS = new Set(['ruby草稿_Step0', 'ruby草稿_Step3', 'ruby草稿_Step4', 'ruby草稿_Step5', 'ruby草稿_人物速览', 'ruby草稿_Step8']);
     const removedKeys = new Set();
     for (const [uid, e] of Object.entries(entries)) {
         if (!Array.isArray(e?.key)) continue;

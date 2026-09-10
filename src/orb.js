@@ -120,20 +120,53 @@ function showStepBubble(stepId) {
         <div class="cw-bubble-body">${guideToHtml(step.guide)}</div>`;
     document.body.appendChild(bubbleEl);
 
+    // 定位：优先悬浮球右侧，其次左侧、上方、下方；全程做视口边缘钳制，
+    // 且避免覆盖悬浮球本身（否则气泡挡住球导致"卡死"）
+    const MARGIN = 10;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
     const orbRect = orb.getBoundingClientRect();
     const bubbleRect = bubbleEl.getBoundingClientRect();
-    let left = orbRect.right + 12;
-    let top = orbRect.top - 8;
-    if (left + bubbleRect.width > window.innerWidth - 10) {
-        left = Math.max(10, orbRect.left - bubbleRect.width - 12);
+    const fits = (l, t) =>
+        l >= MARGIN && t >= MARGIN &&
+        l + bubbleRect.width <= vw - MARGIN &&
+        t + bubbleRect.height <= vh - MARGIN;
+    const overlapsOrb = (l, t) =>
+        l < orbRect.right && l + bubbleRect.width > orbRect.left &&
+        t < orbRect.bottom && t + bubbleRect.height > orbRect.top;
+
+    const candidates = [
+        { l: orbRect.right + 12, t: orbRect.top - 8 },              // 右侧
+        { l: orbRect.left - bubbleRect.width - 12, t: orbRect.top - 8 }, // 左侧
+        { l: orbRect.left, t: orbRect.top - bubbleRect.height - 12 },    // 上方
+        { l: orbRect.left, t: orbRect.bottom + 12 },               // 下方
+    ];
+    let pos = candidates.find((p) => fits(p.l, p.t) && !overlapsOrb(p.l, p.t));
+    if (!pos) pos = candidates.find((p) => fits(p.l, p.t));
+    if (!pos) {
+        // 视口太小放不下：四角钳制，保证完全在屏幕内
+        pos = {
+            l: Math.max(MARGIN, Math.min(vw - bubbleRect.width - MARGIN, orbRect.right + 12)),
+            t: Math.max(MARGIN, Math.min(vh - bubbleRect.height - MARGIN, orbRect.top - 8)),
+        };
+        // 仍覆盖悬浮球时向上避开
+        if (overlapsOrb(pos.l, pos.t)) {
+            const above = pos.t - bubbleRect.height - 12;
+            if (above >= MARGIN) pos.t = above;
+        }
     }
-    if (top + bubbleRect.height > window.innerHeight - 10) {
-        top = Math.max(10, window.innerHeight - bubbleRect.height - 10);
-    }
-    bubbleEl.style.left = `${left}px`;
-    bubbleEl.style.top = `${top}px`;
+    bubbleEl.style.left = `${pos.l}px`;
+    bubbleEl.style.top = `${pos.t}px`;
     bubbleEl.style.display = 'block';
 
+    // 安全设定：点击气泡任意位置关闭（✕按钮同样有效），防误触与遮挡。
+    // 例外：展开/收起 details、拖动选中文本时不关。
+    bubbleEl.addEventListener('click', (e) => {
+        if (e.target.closest?.('details, details > *, a')) return;
+        if (String(window.getSelection?.() || '') !== '') return;
+        e.stopPropagation();
+        hideStepBubble();
+    });
     bubbleEl.querySelector('.cw-bubble-close')?.addEventListener('click', hideStepBubble);
     clearTimeout(bubbleTimer);
     bubbleTimer = setTimeout(hideStepBubble, 60000);

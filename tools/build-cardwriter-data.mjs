@@ -22,6 +22,48 @@ const MODE_NOTE = `
 RUBY检测到本步骤的完成标记（规定的yaml总结输出）后，会自动关闭当前步骤条目、开启下一步骤条目，创作者无需手动去世界书切换，结束语中也不必强调手动切换世界书。
 若创作者想手动跳转/回退步骤，让TA打开RUBY面板的"写卡"页签操作即可。`;
 
+// 过时表述清洗：源文本写作时步骤需手动开关世界书条目，现在由RUBY代管。
+// 逐行替换/删除这些指令，保持与当前环境一致。
+const INSTRUCTION_LINE_RULES = [
+    // 结束语编号列表里的手动开关注册项：整行删除
+    [/^\s*\d+\.\s*手动切换：.*$/, ''],
+    // "请你手动切换到StepX，然后我会…" → 自动版
+    [/请你手动切换到(Step[\d.]+(?:或Step[\d.]+)?[^\n，。]*?)，然后我会/, 'RUBY检测到完成标记后会自动切换到$1。之后我会'],
+    [/请你手动切换到下一个step。/, 'RUBY检测到完成标记后会自动切换到下一个step。'],
+    [/请你手动切换到(Step[\d.]+)。/, 'RUBY检测到完成标记后会自动切换到$1。'],
+    // 约束条款："要求创作者手动切换到StepX" → 自动
+    [/要求创作者手动切换到(Step[\d.]+(?:或Step[\d.]+)?)/, 'RUBY检测到完成标记后自动切换到$1'],
+    [/完成后要求创作者手动切换到(Step[\d.]+)/, '完成后由RUBY自动切换到$1'],
+    // 边界回应里的指引
+    [/请先完成(Step[\d.-]+)，然后手动切换。/, '请按顺序完成$1，切换由RUBY自动处理。'],
+    [/请手动切换到正确的step。/, '步骤切换由RUBY自动处理，无需手动操作世界书。'],
+    [/请你手动切换到(Step[\d.]+)$/, 'RUBY会自动切换到$1'],
+    // Step7 结束语的整句手动开关指令
+    [/去世界书把(Step[\d.]+_[^\n]+?)关掉，打开(Step[\d.]+_[^\n]+?)。/, 'RUBY检测到完成标记后会自动切换到$2。'],
+];
+
+// 说明文本（气泡）里的过时行：手动开关条目/手动保存世界书 → RUBY 代管
+const GUIDE_LINE_RULES = [
+    [/^\s*-\s*完成Step[\d.]+后，去世界书把「[^」]+」关掉.*$/, '- 完成本步骤后，RUBY会自动切换到下一步骤（无需操作世界书）'],
+    [/^\s*-\s*或者将这个yaml保存到世界书的临时条目中$/, '- yaml总结由RUBY自动捕获并写入《ruby写卡初稿》'],
+    [/^\s*-\s*或者要求Ruby输出总结yaml，保存到世界书的临时条目中$/, '- yaml总结由RUBY自动捕获并写入《ruby写卡初稿》'],
+    [/^\s*-\s*如果对话过长导致[逻辑记忆]力?衰退，可以将Step[\d.]+的yaml结果保存到世界书$/, '- 对话过长也没关系：RUBY会保存每步的yaml总结，不依赖聊天记录'],
+    [/^\s*-\s*在世界书中新建条目，把档案放入（如：角色名_nsfw.yaml）$/, '- 档案yaml由RUBY自动写入《ruby写卡初稿》世界书'],
+];
+
+function sanitizeLines(text, rules) {
+    return text.split('\n').map((line) => {
+        for (const [re, replacement] of rules) {
+            if (re.test(line)) return replacement === '' ? '' : line.replace(re, replacement);
+        }
+        return line;
+    }).filter((line, idx, arr) => {
+        // 去掉被清空后留下的连续空行（保留原有段落分隔的单空行）
+        if (line === '' && arr[idx - 1] === '') return false;
+        return true;
+    }).join('\n');
+}
+
 // 完成输出协议：每个步骤完成时必须输出 XML 标签包裹的 ```yaml 代码块。
 // MATCH_KEY 是 RUBY 识别完成的锚点字段——必须出现在 yaml 内（防草稿误判），
 // 但只有一个稳定核心词，不做多重校验（不能太严格）。
@@ -44,9 +86,11 @@ function completionProtocolNote(stepId) {
 
 【完成输出协议（RUBY自动识别依赖）】
 ⚠️ 本步骤完成时，你必须输出一个唯一的完成产物，格式严格如下：
-1. 用XML标签 <${p.tag}> ... </${p.tag}> 整体包裹
-2. 标签内是一个完整的 \`\`\`yaml 代码块（以 \`\`\`yaml 开始、\`\`\` 结束）
+1. 用XML标签 <${p.tag}> ... </${p.tag}> 整体包裹，标签独占一行
+2. 标签内有且仅有一个 \`\`\`yaml 代码块：第一行是 \`\`\`yaml，最后一行是 \`\`\`（三个反引号），中间是纯yaml文本
 3. yaml内容中必须包含"${p.matchKey}"字段（这是RUBY识别完成的锚点，不可省略、不可改名）
+4. 所有字段必须完整填写真实内容——禁止用"..."、"省略"、"等等"占位
+5. 代码块内禁止再出现三个反引号，禁止嵌套代码块
 
 格式示例：
 <${p.tag}>
@@ -57,7 +101,7 @@ ${p.matchKey === 'character:' ? 'character: [角色全名]' : `${p.matchKey}:`}
 </${p.tag}>
 
 ⚠️ 平时讨论、展示草稿时禁止使用这个XML标签——它是完成信号，只在本步骤最终总结时输出。
-⚠️ 输出协议的yaml必须完整（不许用...代替），但不必完美，创作者确认前可以继续修改。`;
+⚠️ 输出协议的yaml必须完整，但不必完美，创作者确认前可以继续修改。`;
 }
 
 const steps = [
@@ -76,9 +120,27 @@ const steps = [
     name: s.name,
     optional: s.optional,
     tool: s.tool,
-    instruction: read(s.file) + MODE_NOTE + completionProtocolNote(s.id),
-    guide: s.guide ? read(s.guide) : '',
+    instruction: sanitizeLines(read(s.file), INSTRUCTION_LINE_RULES) + MODE_NOTE + completionProtocolNote(s.id),
+    guide: s.guide ? sanitizeLines(read(s.guide), GUIDE_LINE_RULES) : '',
 }));
+
+// 路线图简述：每步一句话，注入常驻「写卡路线图」条目（约300 token），让AI始终知道全流程与当前位置
+const ROADMAP_BRIEFS = {
+    Step0: '还原创作者的故事想法，确定基调与世界概念',
+    Step1: '通过人生经历挖掘角色的渴望、张力与恐惧',
+    Step2: '把设定变成有缺点、有反差的活人',
+    Step3: '整合前3步，产出完整的主角卡yaml',
+    Step4: '为主角撰写独立的NSFW补充档案',
+    Step5: '创作配角/NPC的设定（可多轮产出）',
+    Step6: '浓缩人物速览与关系条目',
+    Step7: '确定游戏期需要哪些自动分析',
+    Step8: '撰写各分析任务的提示词（可多轮产出）',
+    StepX: '检查既有产出的一致性与质量（工具步骤，按需使用）',
+    Overview: '确认全部完成，输出收尾yaml触发最终清理',
+};
+for (const step of steps) {
+    step.brief = ROADMAP_BRIEFS[step.id] || step.name;
+}
 
 // 总览（收尾）：仅手动抵达；Ruby 返回含「玩家已完成」的 yaml 后触发最终清理
 steps.push({
@@ -122,9 +184,10 @@ steps.push({
         'Ruby会输出一个包含「状态: 玩家已完成」的yaml收尾总结。',
         '',
         'RUBY检测到该标记后会自动执行最终清理：',
-        '  保留：美学设定、角色设定、NSFW设定、分析提示词',
-        '  清除：其余全部过程条目（灵魂探索、活人化、NPC、速览、',
-        '        分析规划等草稿与全部步骤注入条目）',
+        '  保留：美学设定、角色设定、NSFW设定、NPC设定、',
+        '        人物速览、分析提示词',
+        '  清除：其余过程条目（灵魂探索、活人化、分析规划等',
+        '        草稿与全部步骤注入条目）',
         '```',
         '',
         '</details>',
