@@ -15,6 +15,7 @@ const state = {
     cycleLength: 0,
     baseline: 0,
     triggered: new Set(),
+    aiSnapshot: [],
     lastError: null,
     lastRunAt: null,
     lastRunSummary: '',
@@ -83,11 +84,7 @@ export function initEngine() {
         setTimeout(() => {
             const cc = ctx();
             if (!cc) return;
-            const aiCount = reader.countAiReplies(cc.chat);
-            if (aiCount < state.baseline) {
-                state.baseline = aiCount;
-                log(`baseline resynced down to ${aiCount} after message deletion`);
-            }
+            handleMessagesDeleted(cc);
         }, 300);
     });
 
@@ -98,6 +95,7 @@ export function initEngine() {
 export function reinit() {
     const c = ctx();
     if (!c) return;
+    state.aiSnapshot = (c.chat || []).filter(reader.isAiReplyMsg);
     state.triggered.clear();
     state.lastError = null;
 
@@ -138,6 +136,48 @@ export function reinit() {
     emitState();
 }
 
+/**
+ * 消息删除后的重同步：删除使后续 AI 楼层序数整体前移，
+ * 各任务书签（楼层序数）与已触发幂等键必须跟着回退，否则：
+ * - 书签之后的未读楼层会跨过书签被永久跳过，删除过多时书签越界、任务永久卡死；
+ * - 删除后重新生成的楼层内容位于旧书签之前且幂等键仍在，永远进不了分析素材。
+ * 被删楼层通过删除前的 AI 消息对象快照按身份比对识别（swipe 为原地修改，不会误判）。
+ */
+function handleMessagesDeleted(cc) {
+    const aiCount = reader.countAiReplies(cc.chat);
+    const snapshot = state.aiSnapshot;
+    const present = new Set(cc.chat.filter((m) => m && typeof m === 'object'));
+    const deletedOrdinals = [];
+    snapshot.forEach((m, i) => {
+        if (!present.has(m)) deletedOrdinals.push(i + 1);
+    });
+    if (deletedOrdinals.length > snapshot.length) {
+        warn('deletion diff inconsistent, skip resync');
+        state.aiSnapshot = (cc.chat || []).filter(reader.isAiReplyMsg);
+        return;
+    }
+    state.aiSnapshot = (cc.chat || []).filter(reader.isAiReplyMsg);
+
+    if (aiCount < state.baseline) {
+        state.baseline = aiCount;
+        log(`baseline resynced down to ${aiCount} after message deletion`);
+    }
+    if (deletedOrdinals.length === 0) return;
+
+    const len = state.cycleLength > 0 ? state.cycleLength : 1;
+    const fromRound = Math.ceil(deletedOrdinals[0] / len);
+    let clearedKeys = 0;
+    for (const key of [...state.triggered]) {
+        const round = parseInt(key.split('_')[0], 10);
+        if (Number.isFinite(round) && round >= fromRound) {
+            state.triggered.delete(key);
+            clearedKeys++;
+        }
+    }
+    const changed = reader.resyncBookmarksAfterDeletion(deletedOrdinals, aiCount);
+    log(`deletion resync: ${deletedOrdinals.length} AI floor(s) removed (first at ordinal ${deletedOrdinals[0]}), triggered keys cleared from round ${fromRound} (${clearedKeys}), bookmarks: ${changed.length > 0 ? changed.join(', ') : 'unchanged'}`);
+}
+
 function scheduleTick() {
     if (tickTimer) clearTimeout(tickTimer);
     tickTimer = setTimeout(tick, TICK_DELAY_MS);
@@ -153,6 +193,7 @@ async function tick() {
     if (!c) return;
 
     const aiCount = reader.countAiReplies(c.chat);
+    state.aiSnapshot = (c.chat || []).filter(reader.isAiReplyMsg);
     if (aiCount <= state.baseline) return;
 
     const { data, layer } = config.resolveConfig();
@@ -369,7 +410,22 @@ export async function runPipeline(taskBatch) {
                     }
                 }
 
-                // 应用总结替代：书签→总结边界之间的楼层换为总结文本，边界之后保持原文
+                // 关键词扫描作用于替换/截断前的完整增量原文：与总结机制解耦
+                // （扫原始楼层而非总结浓缩文本，避免已总结楼层里的关键词被永久漏扫），
+                // 同时防止截断机制吞掉最新楼层里的触发关键词
+                const keywordScan = current.source === 'force'
+                    ? { run: true, keywords: [], matched: [] }
+                    : scheduler.shouldRunByKeywordScan(taskConfig, inc.text);
+                if (!keywordScan.run) {
+                    log(`skip ${taskDisplayName}: keywords not matched in floors ${inc.startFloor}-${inc.endFloor} (${keywordScan.keywords.join(', ')}), bookmark held for rescan`);
+                    continue;
+                }
+                if (taskConfig?.keywordScanEnabled && keywordScan.matched.length > 0) {
+                    log(`keyword scan hit: ${keywordScan.matched.join(', ')}`);
+                }
+
+                // 应用总结替代：书签→总结边界之间的楼层换为总结文本，边界之后保持原文。
+                // 只改注入给AI的分析素材，关键词扫描、楼层计数与书签均不受影响
                 if (providerSummary) {
                     const boundaryOrdinal = reader.ordinalForIndex(c.chat, providerSummary.boundary);
                     if (boundaryOrdinal >= inc.startFloor) {
@@ -390,19 +446,6 @@ export async function runPipeline(taskBatch) {
                     } else {
                         log(`summary boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
                     }
-                }
-
-                // 关键词扫描作用于完整增量正文（含将被截断的尾部），
-                // 防止截断机制吞掉最新楼层里的触发关键词
-                const keywordScan = current.source === 'force'
-                    ? { run: true, keywords: [], matched: [] }
-                    : scheduler.shouldRunByKeywordScan(taskConfig, inc.text);
-                if (!keywordScan.run) {
-                    log(`skip ${taskDisplayName}: keywords not matched in floors ${inc.startFloor}-${inc.endFloor} (${keywordScan.keywords.join(', ')}), bookmark held for rescan`);
-                    continue;
-                }
-                if (taskConfig?.keywordScanEnabled && keywordScan.matched.length > 0) {
-                    log(`keyword scan hit: ${keywordScan.matched.join(', ')}`);
                 }
 
                 // 20万字符上限：只截断对话正文（保留靠前部分、抛弃后续剩余正文）。

@@ -107,6 +107,37 @@ export function resetBookmark(taskKey) {
     if (store) delete store[taskKey];
 }
 
+/**
+ * 消息删除后的书签重同步：deletedOldOrdinals 为被删消息在删除前的 AI 楼层序数。
+ * 删除使后续楼层序数整体前移，书签须减去位于书签位之前（含）的被删楼层数，
+ * 否则书签之后的未读内容会跨过书签被永久跳过，删除过多时书签越界、任务永久卡死。
+ * 返回发生变动的书签描述列表（用于日志）。
+ */
+export function resyncBookmarksAfterDeletion(deletedOldOrdinals, currentAiCount) {
+    const store = bookmarkStore();
+    if (!store || deletedOldOrdinals.length === 0) return [];
+    const changed = [];
+    for (const [taskKey, raw] of Object.entries(store)) {
+        const b = Number(raw);
+        if (!Number.isFinite(b) || b <= 0) continue;
+        let next = b - deletedOldOrdinals.filter((d) => d <= b).length;
+        let note = '';
+        if (next > currentAiCount) {
+            next = 0;
+            note = ' (out of range, reset to rescan)';
+        }
+        if (next !== b) {
+            store[taskKey] = next;
+            changed.push(`${taskKey} ${b}→${next}${note}`);
+        }
+    }
+    if (changed.length > 0) {
+        const c = ctx();
+        if (typeof c?.saveMetadataDebounced === 'function') c.saveMetadataDebounced();
+    }
+    return changed;
+}
+
 export function incrementalRead(taskKey, customTags = [], options = {}) {
     const c = ctx();
     const liveChat = c?.chat || [];
