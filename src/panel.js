@@ -6,7 +6,7 @@ import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
-import { countAiReplies } from './reader.js';
+import { countAiReplies, getLittleWhiteBoxSummary, ordinalForIndex } from './reader.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -145,6 +145,7 @@ function refreshAll() {
     renderJailbreakItems();
     ui.tags = [...(data.customContentTags || [])];
     renderTagsList();
+    renderSummaryProviders(data);
     renderSchemeTabs();
     loadSchemeToUI(ui.editingPresetId);
     ui.refs = getEditingPreset(data).referencePool ? [...getEditingPreset(data).referencePool] : [];
@@ -204,6 +205,7 @@ function buildShellHtml() {
                     <div class="sub-tab" data-sub="api">⚙️ API设置</div>
                     <div class="sub-tab" data-sub="jailbreak">🧩 自定义破限</div>
                     <div class="sub-tab" data-sub="tags">🏷️ 正文标签</div>
+                    <div class="sub-tab" data-sub="summary">📋 总结接口</div>
                 </div>
 
                 <div class="sub-content active" data-subcontent="main" style="padding:16px;">
@@ -365,6 +367,30 @@ function buildShellHtml() {
                         </div>
                     </div>
                     <div class="btn-row"><button id="ra_tags_save" class="btn red">💾 保存标签设置</button></div>
+                </div>
+
+                <div class="sub-content" data-subcontent="summary" style="padding:16px;display:none;">
+                    <div class="form-section">
+                        <div class="form-header red">■ 总结接口</div>
+                        <div class="form-body">
+                            <div class="tip" style="margin-top:0;margin-bottom:12px;">
+                                启用后，分析时<strong>已被总结工具总结过的楼层</strong>用其总结内容替代原文正文注入；总结边界之后的新楼层仍读取原文。周期位置、楼层计数、各任务的已读书签计算<strong>完全不受影响</strong>。
+                            </div>
+                            <div id="ra_summary_providers"></div>
+                        </div>
+                    </div>
+                    <div class="form-section">
+                        <div class="form-header red">■ 工作原理</div>
+                        <div class="form-body">
+                            <div class="status-box">
+                                ① 读取总结工具写入聊天元数据的结构化总结（只读，不修改总结数据）<br>
+                                ② 书签 → 总结边界之间的楼层 → 替换为总结文本（启用时读取窗口不再限制20楼）<br>
+                                ③ 总结边界 → 最新楼层 → 照常读取原文增量<br>
+                                ④ 20万字符上限作用于"总结+新正文"整体；参考条目与分析输出引用不受影响<br>
+                                ⑤ 总结工具未安装或本聊天无总结数据 → 自动回退纯原文模式（控制台提示）
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1357,6 +1383,64 @@ function wireTagControls() {
     });
 }
 
+// ---------- 总结接口（玩家面板） ----------
+
+const SUMMARY_PROVIDERS = [
+    {
+        id: 'littlewhitebox',
+        name: '小白x（LittleWhiteBox）剧情总结',
+        description: '读取小白x故事总结模块写入聊天元数据的结构化总结（事件/人物/事实/剧情阶段），已总结楼层用总结替代原文。',
+    },
+];
+
+function renderSummaryProviders(data) {
+    const el = $('ra_summary_providers');
+    if (!el) return;
+    const enabled = data.summaryProvider || '';
+
+    el.innerHTML = SUMMARY_PROVIDERS.map((p) => {
+        const isOn = enabled === p.id;
+        const lwb = p.id === 'littlewhitebox' ? getLittleWhiteBoxSummary() : null;
+        let statusHtml = '';
+        if (p.id === 'littlewhitebox') {
+            if (lwb) {
+                const c = ctx();
+                const boundaryOrdinal = ordinalForIndex(c?.chat || [], lwb.boundary);
+                const totalFloors = countAiReplies(c?.chat || []);
+                statusHtml = `<div style="font-size:12px;color:#666;margin-top:8px;">
+                    ✅ 检测到总结数据：已总结至第 <strong>${boundaryOrdinal}</strong> 楼（共${totalFloors}楼）· ${lwb.facts.length} 条人物事实 · ${lwb.events.length} 个事件 · ${lwb.characters.length} 位主要人物
+                </div>`;
+            } else {
+                statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
+                    ⚠️ 当前聊天未检测到小白x总结数据（未安装小白x、或本聊天还没运行过总结）。启用后分析会先回退纯原文模式，检测到总结数据后自动生效。
+                </div>`;
+            }
+        }
+        return `
+        <div class="summary-provider-card" style="border:1.5px solid ${isOn ? '#C41E3A' : '#bbb'};border-radius:6px;padding:12px;margin-bottom:10px;background:${isOn ? '#fdf3f4' : '#f7f7f2'};">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <div style="font-weight:700;font-size:14px;">${isOn ? '🟢' : '⚪'} ${h(p.name)}</div>
+                    <div style="font-size:12px;color:#666;margin-top:4px;">${h(p.description)}</div>
+                    ${statusHtml}
+                </div>
+                <button class="btn ${isOn ? 'red' : 'green'}" id="ra_summary_toggle_${h(p.id)}">${isOn ? '✕ 停用' : '✓ 启用接口'}</button>
+            </div>
+        </div>`;
+    }).join('');
+
+    for (const p of SUMMARY_PROVIDERS) {
+        on($(`ra_summary_toggle_${p.id}`), 'click', () => {
+            const cur = config.resolveConfig().data.summaryProvider || '';
+            const next = cur === p.id ? '' : p.id;
+            withConfigData((d) => { d.summaryProvider = next; });
+            engine.reinit();
+            refreshAll();
+            window.toastr?.success?.(next ? `已启用总结接口：${p.name}（周期与书签计算不受影响）` : '已停用总结接口，恢复纯原文模式');
+        });
+    }
+}
+
 async function scanRefEntries() {
     const charBook = await worldbook.getCharBookName();
     if (!charBook) throw new Error('未找到角色世界书');
@@ -2264,6 +2348,7 @@ function generateExportData() {
         },
         charName: data.charName || '',
         customContentTags: data.customContentTags || [],
+        summaryProvider: data.summaryProvider || '',
         jailbreak: jailbreak.normalizeJailbreakConfig(data.jailbreak),
         gen: data.gen || {},
         activePresetId: data.activePresetId,
@@ -2309,6 +2394,7 @@ function wirePresetIoControls() {
             withConfigData((d) => {
                 d.charName = parsed.charName;
                 d.customContentTags = parsed.customContentTags;
+                d.summaryProvider = parsed.summaryProvider;
                 d.jailbreak = parsed.jailbreak;
                 d.gen = parsed.gen;
                 d.presets = parsed.presets;

@@ -323,13 +323,21 @@ export async function runPipeline(taskBatch) {
 
                 log(`task ${taskIndex + 1}/${taskBatch.length}: ${taskDisplayName} (${current.source})`);
 
-                let inc = reader.incrementalRead(taskKey, customTags);
+                // 总结接口（小白x）：已总结楼层用总结替代正文。
+                // 只改变"分析素材内容"，楼层/周期/书签计算全部维持原样（countAiReplies 与书签推进不受影响）。
+                const summaryEnabled = cfgData.summaryProvider === 'littlewhitebox';
+                const lwbSummary = summaryEnabled ? reader.getLittleWhiteBoxSummary() : null;
+                if (summaryEnabled && !lwbSummary) {
+                    warn('LittleWhiteBox summary unavailable (not installed or no data), falling back to raw text');
+                }
+
+                let inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!lwbSummary });
                 log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)`);
 
                 if (inc.count === 0 || !inc.text) {
                     if (current.source === 'force') {
                         reader.resetBookmark(taskKey);
-                        inc = reader.incrementalRead(taskKey, customTags);
+                        inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!lwbSummary });
                         log(`force run: bookmark reset, re-reading ${inc.count} floors`);
                         if (inc.count === 0 || !inc.text) {
                             warn(`skip ${taskDisplayName}: no readable text in chat`);
@@ -338,6 +346,30 @@ export async function runPipeline(taskBatch) {
                     } else {
                         log(`skip ${taskDisplayName}: no new floors (bookmark at ${inc.endFloor})`);
                         continue;
+                    }
+                }
+
+                // 应用总结替代：书签→小白x边界之间的楼层换为总结文本，边界之后保持原文
+                if (lwbSummary) {
+                    const boundaryOrdinal = reader.ordinalForIndex(c.chat, lwbSummary.boundary);
+                    if (boundaryOrdinal >= inc.startFloor) {
+                        const summarizedUpTo = Math.min(boundaryOrdinal, inc.endFloor);
+                        const summaryText = reader.renderLittleWhiteBoxSummary(lwbSummary);
+                        const sections = [];
+                        sections.push(`【小白x剧情总结（第${inc.startFloor}至${summarizedUpTo}楼已总结内容的浓缩替代，作为分析素材）】\n${summaryText}`);
+                        if (boundaryOrdinal < inc.endFloor) {
+                            const rawPart = reader.readFloorsRange(boundaryOrdinal + 1, inc.endFloor, customTags);
+                            if (rawPart.text) {
+                                sections.push(`【本次正文（增量，第${boundaryOrdinal + 1}楼至第${inc.endFloor}楼，共${rawPart.count}楼）】\n${rawPart.text}`);
+                            }
+                        } else {
+                            sections.push(`（第${inc.endFloor}楼及之前的正文已全部由上方小白x总结替代，本次无未总结新正文）`);
+                        }
+                        inc.text = sections.join('\n\n');
+                        inc.summaryApplied = true;
+                        log(`LittleWhiteBox summary applied: floors ${inc.startFloor}-${summarizedUpTo} replaced by summary (boundary mesId=${lwbSummary.boundary}, ${lwbSummary.facts.length} facts, ${lwbSummary.events.length} events)`);
+                    } else {
+                        log(`LittleWhiteBox boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
                     }
                 }
 
@@ -399,7 +431,12 @@ export async function runPipeline(taskBatch) {
                     const truncNote = inc.truncatedChars
                         ? `\n\n（⚠️ 本次正文超过20万字符上限，末尾约 ${inc.truncatedChars} 字符已被截断抛弃，仅上方保留部分为有效分析素材）`
                         : '';
-                    bodySections.push(`【本次正文（增量，第${inc.startFloor}楼至第${inc.endFloor}楼，共${inc.count}楼${inc.truncatedChars ? '，已截断' : ''}）】\n${inc.text}${truncNote}\n\n（硬性约束：分析输出必须取材于上方正文的实际剧情；后文任务指令中的"示范/示例"仅用于说明格式与颗粒度，禁止把示例中的具体部位、项目、情节、数值当作分析结果输出）`);
+                    if (inc.summaryApplied) {
+                        // 总结接口已生成带分节标题的素材（小白x总结 + 未总结新正文），直接使用
+                        bodySections.push(`${inc.text}${truncNote}\n\n（硬性约束：分析输出必须取材于上方小白x总结与正文的实际剧情；后文任务指令中的"示范/示例"仅用于说明格式与颗粒度，禁止把示例中的具体部位、项目、情节、数值当作分析结果输出）`);
+                    } else {
+                        bodySections.push(`【本次正文（增量，第${inc.startFloor}楼至第${inc.endFloor}楼，共${inc.count}楼${inc.truncatedChars ? '，已截断' : ''}）】\n${inc.text}${truncNote}\n\n（硬性约束：分析输出必须取材于上方正文的实际剧情；后文任务指令中的"示范/示例"仅用于说明格式与颗粒度，禁止把示例中的具体部位、项目、情节、数值当作分析结果输出）`);
+                    }
                 }
 
                 for (const varName of useRefs) {

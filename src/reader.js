@@ -107,7 +107,7 @@ export function resetBookmark(taskKey) {
     if (store) delete store[taskKey];
 }
 
-export function incrementalRead(taskKey, customTags = []) {
+export function incrementalRead(taskKey, customTags = [], options = {}) {
     const c = ctx();
     const liveChat = c?.chat || [];
     const charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '角色';
@@ -115,10 +115,13 @@ export function incrementalRead(taskKey, customTags = []) {
     if (currentOrd <= 0) return { text: '', startFloor: 0, endFloor: 0, count: 0 };
 
     const bookmark = getBookmark(taskKey);
-    const startFloor = Math.max(
-        bookmark > 0 ? bookmark + 1 : 1,
-        currentOrd - MAX_READ_FLOORS + 1,
-    );
+    // 总结接口启用时取消20楼窗口限制：窗口内靠前楼层将被总结替代，实际token成本很小
+    const startFloor = (options.noWindowLimit && bookmark > 0)
+        ? bookmark + 1
+        : Math.max(
+            bookmark > 0 ? bookmark + 1 : 1,
+            currentOrd - MAX_READ_FLOORS + 1,
+        );
     if (startFloor > currentOrd) {
         return { text: '', startFloor, endFloor: currentOrd, count: 0 };
     }
@@ -142,4 +145,108 @@ export function incrementalRead(taskKey, customTags = []) {
         endFloor: currentOrd,
         count: currentOrd - startFloor + 1,
     };
+}
+
+/** 读取一段楼层序数区间 [fromOrdinal, toOrdinal] 的原始正文（与增量阅读同格式） */
+export function readFloorsRange(fromOrdinal, toOrdinal, customTags = []) {
+    const c = ctx();
+    const liveChat = c?.chat || [];
+    const charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '角色';
+    if (!Number.isFinite(fromOrdinal) || !Number.isFinite(toOrdinal) || fromOrdinal > toOrdinal || fromOrdinal < 1) {
+        return { text: '', count: 0 };
+    }
+    const startIdx = fromOrdinal > 1
+        ? findAiReplyIndexByOrdinal(liveChat, fromOrdinal - 1) + 1
+        : 0;
+    const lines = [];
+    let ord = fromOrdinal - 1;
+    for (let i = startIdx; i < liveChat.length; i++) {
+        const m = liveChat[i];
+        if (isAiReplyMsg(m)) ord++;
+        if (ord > toOrdinal) break;
+        if (!isReadableMsg(m)) continue;
+        const role = isUserMsg(m) ? '{{user}}' : (m.name || charName);
+        let text = extractContent(m.mes || '', customTags);
+        text = cleanText(text);
+        if (text) lines.push(`【${role}】${text}`);
+    }
+    return { text: lines.join('\n\n'), count: toOrdinal - fromOrdinal + 1 };
+}
+
+/** 消息数组索引 → AI回复楼层序数（小白x边界转换用） */
+export function ordinalForIndex(chatArr, idx) {
+    if (!Number.isFinite(idx) || idx < 0) return 0;
+    let n = 0;
+    for (let i = 0; i <= Math.min(idx, (chatArr || []).length - 1); i++) {
+        if (isAiReplyMsg(chatArr[i])) n++;
+    }
+    return n;
+}
+
+// ---------- 小白x（LittleWhiteBox）总结接口 ----------
+// 只读 chat_metadata.extensions.LittleWhiteBox.storySummary，不 import 小白x模块，零耦合。
+
+export function getLittleWhiteBoxSummary() {
+    const c = ctx();
+    const store = c?.chatMetadata?.extensions?.LittleWhiteBox?.storySummary;
+    if (!store || !store.json) return null;
+    const boundary = Number(store.lastSummarizedMesId);
+    if (!Number.isFinite(boundary) || boundary < 0) return null;
+    const json = store.json;
+    const facts = (Array.isArray(json.facts) ? json.facts : []).filter((f) => f && !f.retracted);
+    const events = Array.isArray(json.events) ? json.events : [];
+    if (facts.length === 0 && events.length === 0) return null;
+    const chars = (json.characters?.main || []).map((m) => (typeof m === 'string' ? m : m?.name)).filter(Boolean);
+    const arcs = Array.isArray(json.arcs) ? json.arcs : [];
+    return { boundary, facts, events, characters: chars, arcs };
+}
+
+/** 把小白x结构化总结渲染为可分析的紧凑文本 */
+export function renderLittleWhiteBoxSummary(s) {
+    if (!s) return '';
+    const lines = [];
+
+    if (s.characters.length > 0) {
+        lines.push(`主要人物: ${s.characters.join('、')}`);
+    }
+
+    if (s.arcs.length > 0) {
+        lines.push('剧情阶段:');
+        for (const arc of s.arcs.slice(0, 12)) {
+            const name = arc?.name || arc?.title || arc?.label || '';
+            const desc = arc?.description || arc?.summary || arc?.progress || '';
+            if (name || desc) lines.push(`  - ${name}${desc ? `：${desc}` : ''}`);
+        }
+    }
+
+    if (s.events.length > 0) {
+        lines.push('关键事件:');
+        for (const ev of s.events.slice(0, 40)) {
+            const people = Array.isArray(ev?.participants) && ev.participants.length > 0 ? `［${ev.participants.join('/')}］` : '';
+            const summary = String(ev?.summary || '').trim();
+            const moments = Array.isArray(ev?.moments) ? ev.moments.map((m) => String(m?.text || '').trim()).filter(Boolean) : [];
+            if (!summary && moments.length === 0) continue;
+            if (summary) lines.push(`  - ${people}${summary}`);
+            for (const mo of moments.slice(0, 4)) lines.push(`    · 动态：${mo}`);
+        }
+    }
+
+    if (s.facts.length > 0) {
+        // 按 s（主体）分组：角色名 → 谓词: 宾语
+        const bySubject = new Map();
+        for (const f of s.facts) {
+            const subj = String(f?.s || '').trim() || '未知';
+            if (!bySubject.has(subj)) bySubject.set(subj, []);
+            const p = String(f?.p || '').trim();
+            const o = String(f?.o || '').trim();
+            if (p || o) bySubject.get(subj).push(`${p ? `${p}: ` : ''}${o}`);
+        }
+        lines.push('人物状态事实:');
+        for (const [subj, items] of bySubject) {
+            lines.push(`  ${subj}:`);
+            for (const item of items.slice(0, 15)) lines.push(`    - ${item}`);
+        }
+    }
+
+    return lines.join('\n');
 }

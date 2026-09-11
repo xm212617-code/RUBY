@@ -40,6 +40,7 @@ export const makeDefaultPreset = () => ({
 export const makeDefaultConfigData = () => ({
     charName: '',
     customContentTags: [],
+    summaryProvider: '',
     presets: [makeDefaultPreset()],
     activePresetId: 'default',
     jailbreak: null,
@@ -133,6 +134,8 @@ export function normalizeConfigData(raw) {
     result.customContentTags = Array.isArray(data.customContentTags)
         ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
         : [];
+    // 总结接口：''=关闭；'littlewhitebox'=小白x总结替代已总结正文
+    result.summaryProvider = data.summaryProvider === 'littlewhitebox' ? 'littlewhitebox' : '';
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
         ? data.presets.map(normalizePreset)
         : [makeDefaultPreset()];
@@ -453,6 +456,7 @@ export function parseImportTemplate(raw) {
         customContentTags: Array.isArray(data.customContentTags)
             ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
             : [],
+        summaryProvider: data.summaryProvider === 'littlewhitebox' ? 'littlewhitebox' : '',
         jailbreak: data.jailbreak || null,
         gen: (data.gen && typeof data.gen === 'object') ? data.gen : {},
         presets,
