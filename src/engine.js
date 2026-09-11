@@ -309,6 +309,34 @@ export async function runPipeline(taskBatch) {
             }
         }
 
+        // 总结接口（小白x / SP·数据库）：已总结楼层用总结替代正文。
+        // 只改变"分析素材内容"，楼层/周期/书签计算全部维持原样（countAiReplies 与书签推进不受影响）。
+        const provider = cfgData.summaryProvider || '';
+        let providerSummary = null; // { boundary(消息索引), text, label }
+        if (provider === 'littlewhitebox') {
+            const lwb = reader.getLittleWhiteBoxSummary();
+            if (lwb) {
+                providerSummary = {
+                    boundary: lwb.boundary,
+                    text: reader.renderLittleWhiteBoxSummary(lwb),
+                    label: '小白x剧情总结',
+                };
+            } else {
+                warn('LittleWhiteBox summary unavailable (not installed or no data), falling back to raw text');
+            }
+        } else if (provider === 'shujuku') {
+            try {
+                const shu = await reader.getShujukuSummary([charBook, chatBook]);
+                if (shu) {
+                    providerSummary = { boundary: shu.boundary, text: shu.text, label: 'SP·数据库剧情总结' };
+                } else {
+                    warn('shujuku summary unavailable (no processed floors or readable entries), falling back to raw text');
+                }
+            } catch (e) {
+                warn(`shujuku summary read failed: ${e?.message || e}`);
+            }
+        }
+
         for (let taskIndex = 0; taskIndex < taskBatch.length; taskIndex++) {
             const current = taskBatch[taskIndex];
             const taskConfig = current.config;
@@ -323,21 +351,13 @@ export async function runPipeline(taskBatch) {
 
                 log(`task ${taskIndex + 1}/${taskBatch.length}: ${taskDisplayName} (${current.source})`);
 
-                // 总结接口（小白x）：已总结楼层用总结替代正文。
-                // 只改变"分析素材内容"，楼层/周期/书签计算全部维持原样（countAiReplies 与书签推进不受影响）。
-                const summaryEnabled = cfgData.summaryProvider === 'littlewhitebox';
-                const lwbSummary = summaryEnabled ? reader.getLittleWhiteBoxSummary() : null;
-                if (summaryEnabled && !lwbSummary) {
-                    warn('LittleWhiteBox summary unavailable (not installed or no data), falling back to raw text');
-                }
-
-                let inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!lwbSummary });
+                let inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!providerSummary });
                 log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)`);
 
                 if (inc.count === 0 || !inc.text) {
                     if (current.source === 'force') {
                         reader.resetBookmark(taskKey);
-                        inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!lwbSummary });
+                        inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!providerSummary });
                         log(`force run: bookmark reset, re-reading ${inc.count} floors`);
                         if (inc.count === 0 || !inc.text) {
                             warn(`skip ${taskDisplayName}: no readable text in chat`);
@@ -349,27 +369,26 @@ export async function runPipeline(taskBatch) {
                     }
                 }
 
-                // 应用总结替代：书签→小白x边界之间的楼层换为总结文本，边界之后保持原文
-                if (lwbSummary) {
-                    const boundaryOrdinal = reader.ordinalForIndex(c.chat, lwbSummary.boundary);
+                // 应用总结替代：书签→总结边界之间的楼层换为总结文本，边界之后保持原文
+                if (providerSummary) {
+                    const boundaryOrdinal = reader.ordinalForIndex(c.chat, providerSummary.boundary);
                     if (boundaryOrdinal >= inc.startFloor) {
                         const summarizedUpTo = Math.min(boundaryOrdinal, inc.endFloor);
-                        const summaryText = reader.renderLittleWhiteBoxSummary(lwbSummary);
                         const sections = [];
-                        sections.push(`【小白x剧情总结（第${inc.startFloor}至${summarizedUpTo}楼已总结内容的浓缩替代，作为分析素材）】\n${summaryText}`);
+                        sections.push(`【${providerSummary.label}（第${inc.startFloor}至${summarizedUpTo}楼已总结内容的浓缩替代，作为分析素材）】\n${providerSummary.text}`);
                         if (boundaryOrdinal < inc.endFloor) {
                             const rawPart = reader.readFloorsRange(boundaryOrdinal + 1, inc.endFloor, customTags);
                             if (rawPart.text) {
                                 sections.push(`【本次正文（增量，第${boundaryOrdinal + 1}楼至第${inc.endFloor}楼，共${rawPart.count}楼）】\n${rawPart.text}`);
                             }
                         } else {
-                            sections.push(`（第${inc.endFloor}楼及之前的正文已全部由上方小白x总结替代，本次无未总结新正文）`);
+                            sections.push(`（第${inc.endFloor}楼及之前的正文已全部由上方${providerSummary.label}替代，本次无未总结新正文）`);
                         }
                         inc.text = sections.join('\n\n');
                         inc.summaryApplied = true;
-                        log(`LittleWhiteBox summary applied: floors ${inc.startFloor}-${summarizedUpTo} replaced by summary (boundary mesId=${lwbSummary.boundary}, ${lwbSummary.facts.length} facts, ${lwbSummary.events.length} events)`);
+                        log(`${providerSummary.label} applied: floors ${inc.startFloor}-${summarizedUpTo} replaced by summary (boundary mesId=${providerSummary.boundary}, ${providerSummary.text.length} chars)`);
                     } else {
-                        log(`LittleWhiteBox boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
+                        log(`summary boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
                     }
                 }
 

@@ -6,7 +6,7 @@ import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
-import { countAiReplies, getLittleWhiteBoxSummary, ordinalForIndex } from './reader.js';
+import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, ordinalForIndex } from './reader.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -1391,6 +1391,11 @@ const SUMMARY_PROVIDERS = [
         name: '小白x（LittleWhiteBox）剧情总结',
         description: '读取小白x故事总结模块写入聊天元数据的结构化总结（事件/人物/事实/剧情阶段），已总结楼层用总结替代原文。',
     },
+    {
+        id: 'shujuku',
+        name: 'SP·数据库 表格总结',
+        description: '读取SP·数据库写入世界书的可读条目（总结表/重要人物/剧情大纲），表格已处理的楼层用数据库内容替代原文。',
+    },
 ];
 
 function renderSummaryProviders(data) {
@@ -1400,9 +1405,9 @@ function renderSummaryProviders(data) {
 
     el.innerHTML = SUMMARY_PROVIDERS.map((p) => {
         const isOn = enabled === p.id;
-        const lwb = p.id === 'littlewhitebox' ? getLittleWhiteBoxSummary() : null;
         let statusHtml = '';
         if (p.id === 'littlewhitebox') {
+            const lwb = getLittleWhiteBoxSummary();
             if (lwb) {
                 const c = ctx();
                 const boundaryOrdinal = ordinalForIndex(c?.chat || [], lwb.boundary);
@@ -1413,6 +1418,20 @@ function renderSummaryProviders(data) {
             } else {
                 statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
                     ⚠️ 当前聊天未检测到小白x总结数据（未安装小白x、或本聊天还没运行过总结）。启用后分析会先回退纯原文模式，检测到总结数据后自动生效。
+                </div>`;
+            }
+        } else if (p.id === 'shujuku') {
+            const boundaryIdx = getShujukuBoundary();
+            if (boundaryIdx >= 0) {
+                const c = ctx();
+                const boundaryOrdinal = ordinalForIndex(c?.chat || [], boundaryIdx);
+                const totalFloors = countAiReplies(c?.chat || []);
+                statusHtml = `<div style="font-size:12px;color:#666;margin-top:8px;">
+                    ✅ 检测到数据库活动：表格已更新至第 <strong>${boundaryOrdinal}</strong> 楼（共${totalFloors}楼）。总结表/人物/大纲条目将在分析时从角色与聊天世界书读取。
+                </div>`;
+            } else {
+                statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
+                    ⚠️ 当前聊天未检测到 SP·数据库 的表格更新记录（未安装、或本聊天还没运行过填表）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
                 </div>`;
             }
         }

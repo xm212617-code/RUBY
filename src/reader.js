@@ -250,3 +250,82 @@ export function renderLittleWhiteBoxSummary(s) {
 
     return lines.join('\n');
 }
+
+// ---------- SP·数据库（shujuku）总结接口 ----------
+// 数据库插件把表格快照挂在聊天消息上（TavernDB_ACU_* 字段），并把可读总结
+// 写入世界书条目（总结条目N / 重要人物条目N / TavernDB-ACU-OutlineTable）。
+// 只匹配默认（无 ACU-[code]- 隔离前缀）的条目：隔离组属于插件高级功能，
+// RUBY 无法得知当前激活的隔离码，混入会造成数据串组。RUBY 只读，零耦合。
+
+const SHUJUKU_SUMMARY_RE = /^总结条目(\d+)$/;
+const SHUJUKU_PERSON_RE = /^重要人物条目(\d+)$/;
+const SHUJUKU_OUTLINE_RE = /^TavernDB-ACU-OutlineTable$/;
+
+/** 数据库已处理到的最后消息索引（消息上出现 TavernDB_ACU_* 字段即被处理过） */
+export function getShujukuBoundary() {
+    const c = ctx();
+    const chat = c?.chat || [];
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (m && typeof m === 'object' && Object.keys(m).some((k) => k.startsWith('TavernDB_ACU_'))) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * 读取 SP·数据库的世界书可读条目并组装总结文本。
+ * @param {string[]} books 世界书名列表（角色世界书 + 聊天世界书）
+ * @returns {Promise<{boundary: number, text: string}|null>} 无已处理消息或无条目时返回 null
+ */
+export async function getShujukuSummary(books) {
+    const boundary = getShujukuBoundary();
+    if (boundary < 0) return null;
+
+    const c = ctx();
+    const booksToScan = (Array.isArray(books) ? books : []).filter(Boolean);
+    const summaryRows = [];
+    const personRows = [];
+    let outline = '';
+
+    for (const bookName of booksToScan) {
+        let data = null;
+        try {
+            data = await c?.loadWorldInfo?.(bookName);
+        } catch { /* book unreadable */ }
+        if (!data?.entries) continue;
+        for (const e of Object.values(data.entries)) {
+            const comment = String(e?.comment || '');
+            let m = comment.match(SHUJUKU_SUMMARY_RE);
+            if (m) {
+                summaryRows.push({ idx: parseInt(m[1], 10), content: String(e.content || '').trim() });
+                continue;
+            }
+            m = comment.match(SHUJUKU_PERSON_RE);
+            if (m) {
+                personRows.push({ idx: parseInt(m[1], 10), content: String(e.content || '').trim() });
+                continue;
+            }
+            if (SHUJUKU_OUTLINE_RE.test(comment)) {
+                outline = String(e.content || '').trim();
+            }
+        }
+    }
+
+    if (summaryRows.length === 0 && personRows.length === 0 && !outline) return null;
+
+    const sections = [];
+    if (summaryRows.length > 0) {
+        summaryRows.sort((a, b) => a.idx - b.idx);
+        sections.push(`【SP·数据库·总结表】\n${summaryRows.map((r) => r.content).join('\n')}`);
+    }
+    if (personRows.length > 0) {
+        personRows.sort((a, b) => a.idx - b.idx);
+        sections.push(`【SP·数据库·重要人物】\n${personRows.map((r) => r.content).join('\n')}`);
+    }
+    if (outline) {
+        sections.push(`【SP·数据库·剧情大纲】\n${outline}`);
+    }
+    return { boundary, text: sections.join('\n\n') };
+}
