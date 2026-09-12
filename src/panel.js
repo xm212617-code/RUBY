@@ -6,7 +6,7 @@ import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
-import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, ordinalForIndex } from './reader.js';
+import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, ordinalForIndex } from './reader.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -1396,6 +1396,11 @@ const SUMMARY_PROVIDERS = [
         name: 'SP·数据库 表格总结',
         description: '读取SP·数据库写入世界书的可读条目（总结表/重要人物/剧情大纲），表格已处理的楼层用数据库内容替代原文。',
     },
+    {
+        id: 'yuzuki',
+        name: '柚子记忆表（yuzuki-Memory）总结',
+        description: '读取yuzuki-Memory写入聊天元数据的记忆总结表（总结标题/核心角色/楼层/总结内容/未解决问题），已总结楼层用总结替代原文；剧情摘要时间线可一并注入。',
+    },
 ];
 
 function renderSummaryProviders(data) {
@@ -1434,6 +1439,27 @@ function renderSummaryProviders(data) {
                     ⚠️ 当前聊天未检测到 SP·数据库 的表格更新记录（未安装、或本聊天还没运行过填表）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
                 </div>`;
             }
+        } else if (p.id === 'yuzuki') {
+            const yz = getYuzukiStatus();
+            if (yz) {
+                const c = ctx();
+                const boundaryOrdinal = ordinalForIndex(c?.chat || [], yz.boundary);
+                const totalFloors = countAiReplies(c?.chat || []);
+                statusHtml = `<div style="font-size:12px;color:#666;margin-top:8px;">
+                    ✅ 检测到记忆总结：${yz.records} 条总结记录，覆盖至第 <strong>${boundaryOrdinal}</strong> 楼（共${totalFloors}楼）。总结内容将在分析时从聊天元数据读取。
+                </div>`;
+            } else {
+                statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
+                    ⚠️ 当前聊天未检测到柚子记忆表数据（未安装 yuzuki-Memory、或本聊天还没生成记忆总结）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
+                </div>`;
+            }
+        }
+        let extraHtml = '';
+        if (p.id === 'yuzuki' && isOn) {
+            extraHtml = `<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#666;margin-top:8px;cursor:pointer;">
+                <input type="checkbox" id="ra_yuzuki_plot" ${data.yuzukiIncludePlot !== false ? 'checked' : ''}>
+                剧情摘要时间线一并注入（关闭后总结素材仅使用记忆总结表）
+            </label>`;
         }
         return `
         <div class="summary-provider-card" style="border:1.5px solid ${isOn ? '#C41E3A' : '#bbb'};border-radius:6px;padding:12px;margin-bottom:10px;background:${isOn ? '#fdf3f4' : '#f7f7f2'};">
@@ -1442,11 +1468,20 @@ function renderSummaryProviders(data) {
                     <div style="font-weight:700;font-size:14px;">${isOn ? '🟢' : '⚪'} ${h(p.name)}</div>
                     <div style="font-size:12px;color:#666;margin-top:4px;">${h(p.description)}</div>
                     ${statusHtml}
+                    ${extraHtml}
                 </div>
                 <button class="btn ${isOn ? 'red' : 'green'}" id="ra_summary_toggle_${h(p.id)}">${isOn ? '✕ 停用' : '✓ 启用接口'}</button>
             </div>
         </div>`;
     }).join('');
+
+    const yuzukiPlotToggle = $('ra_yuzuki_plot');
+    if (yuzukiPlotToggle) {
+        on(yuzukiPlotToggle, 'change', (e) => {
+            withConfigData((d) => { d.yuzukiIncludePlot = e.target.checked; });
+            window.toastr?.success?.(e.target.checked ? '剧情摘要时间线已并入总结素材' : '总结素材仅使用记忆总结表');
+        });
+    }
 
     for (const p of SUMMARY_PROVIDERS) {
         on($(`ra_summary_toggle_${p.id}`), 'click', () => {
@@ -2368,6 +2403,7 @@ function generateExportData() {
         charName: data.charName || '',
         customContentTags: data.customContentTags || [],
         summaryProvider: data.summaryProvider || '',
+        yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: jailbreak.normalizeJailbreakConfig(data.jailbreak),
         gen: data.gen || {},
         activePresetId: data.activePresetId,
@@ -2414,6 +2450,7 @@ function wirePresetIoControls() {
                 d.charName = parsed.charName;
                 d.customContentTags = parsed.customContentTags;
                 d.summaryProvider = parsed.summaryProvider;
+                d.yuzukiIncludePlot = parsed.yuzukiIncludePlot !== false;
                 d.jailbreak = parsed.jailbreak;
                 d.gen = parsed.gen;
                 d.presets = parsed.presets;

@@ -360,3 +360,137 @@ export async function getShujukuSummary(books) {
     }
     return { boundary, text: sections.join('\n\n') };
 }
+
+// ---------- 柚子记忆表（yuzuki-Memory）总结接口 ----------
+// 只读 chat_metadata.yuzukiMemory 的 memory_summary（记忆总结）表，不 import 柚子模块，零耦合。
+// 总结记录覆盖聊天消息索引区间（0基、含用户楼）：机读 meta.yzmMemoryTask.range（end 为开区间），
+// 文本楼层数为闭区间 'start-end'（多段换行分隔，连接符 - ~ － — 至 到）。
+// 边界 = 全部记录区间并集自最小覆盖楼层起的连续链末端（含端消息索引），
+// 与小白x lastSummarizedMesId 同语义，直接进引擎的 ordinalForIndex 转换。
+
+const YUZUKI_SUMMARY_TABLE_ID = 'memory_summary';
+const YUZUKI_PLOT_TABLE_ID = 'plot_summary';
+const YUZUKI_MAX_RECORD_CHARS = 600;
+const YUZUKI_MAX_TOTAL_CHARS = 30000;
+const YUZUKI_MAX_PLOT_LINES = 60;
+
+function yuzukiState() {
+    const c = ctx();
+    const state = c?.chatMetadata?.yuzukiMemory;
+    return (state && typeof state === 'object') ? state : null;
+}
+
+function yuzukiRecords(state, tableId) {
+    const list = state?.records?.[tableId];
+    return Array.isArray(list) ? list : [];
+}
+
+/** 单条总结记录覆盖的消息索引闭区间列表；meta.yzmMemoryTask.range 优先，楼层数文本兜底 */
+function yuzukiRecordIntervals(record) {
+    const metaRange = record?.meta?.yzmMemoryTask?.range;
+    if (metaRange && Number.isFinite(Number(metaRange.start)) && Number.isFinite(Number(metaRange.end))) {
+        const start = Math.max(0, Math.round(Number(metaRange.start)));
+        const end = Math.max(start, Math.round(Number(metaRange.end)) - 1);
+        return start <= end ? [[start, end]] : [];
+    }
+    const raw = String(record?.values?.['楼层数'] || record?.values?.range || record?.values?.['楼层范围'] || record?.values?.['楼层'] || '');
+    const intervals = [];
+    for (const m of raw.matchAll(/(\d+)\s*(?:-|~|－|—|至|到)\s*(\d+)/g)) {
+        let start = Math.max(0, Math.round(Number(m[1])));
+        let end = Math.max(0, Math.round(Number(m[2])));
+        if (start > end) [start, end] = [end, start];
+        intervals.push([start, end]);
+    }
+    return intervals;
+}
+
+/** 已总结边界：区间并集从最小覆盖楼层起的连续链末端（含端消息索引）；无记录或区间不可解析返回 -1 */
+function yuzukiBoundary(records) {
+    const intervals = [];
+    for (const record of records) intervals.push(...yuzukiRecordIntervals(record));
+    if (intervals.length === 0) return -1;
+    intervals.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let end = intervals[0][1];
+    for (let i = 1; i < intervals.length; i++) {
+        const [s, e] = intervals[i];
+        // 覆盖出现空洞即停：孤岛区间只参与渲染，不推进边界，防止把未总结楼层误替换
+        if (s > end + 1) break;
+        if (e > end) end = e;
+    }
+    return end;
+}
+
+const yuzukiCut = (s, max) => (s.length > max ? `${s.slice(0, max)}…（已截断）` : s);
+
+function yuzukiRenderRecord(record, index) {
+    const v = record?.values || {};
+    const title = String(v['总结标题'] || '').trim();
+    const floors = String(v['楼层数'] || '').trim();
+    const chars = String(v['核心角色'] || '').trim();
+    const content = String(v['总结内容'] || '').trim();
+    const unresolved = String(v['未解决问题'] || '').trim();
+    const note = String(v['备注'] || '').trim();
+    if (!title && !content && !floors) return '';
+    const label = title || `总结#${index + 1}`;
+    const head = floors ? `【${label}（覆盖楼层 ${floors.split(/\n+/).join('、')}）】` : `【${label}】`;
+    const lines = [head];
+    if (chars) lines.push(`核心角色: ${chars}`);
+    if (content) lines.push(`内容: ${yuzukiCut(content, YUZUKI_MAX_RECORD_CHARS)}`);
+    if (unresolved) lines.push(`未解决问题: ${unresolved}`);
+    if (note) lines.push(`备注: ${note}`);
+    return lines.join('\n');
+}
+
+function yuzukiPlotLines(state) {
+    const lines = [];
+    for (const record of yuzukiRecords(state, YUZUKI_PLOT_TABLE_ID)) {
+        for (const col of ['主线', '支线']) {
+            for (const line of String(record?.values?.[col] || '').split(/\n+/)) {
+                const t = line.trim();
+                if (t) lines.push(t);
+            }
+        }
+    }
+    return lines;
+}
+
+/**
+ * 读取柚子记忆表总结并组装为可分析的紧凑文本。
+ * @returns {{boundary: number, text: string}|null} 无插件数据/无总结记录/区间不可解析时返回 null（回退纯原文）
+ */
+export function getYuzukiSummary(includePlot = true) {
+    const state = yuzukiState();
+    if (!state) return null;
+    const records = yuzukiRecords(state, YUZUKI_SUMMARY_TABLE_ID);
+    const boundary = yuzukiBoundary(records);
+    if (boundary < 0) return null;
+
+    const sections = records.map(yuzukiRenderRecord).filter(Boolean);
+    // 防膨胀：总文本超上限时从最旧开始丢弃，保留最新总结
+    let total = sections.reduce((sum, s) => sum + s.length, 0);
+    while (sections.length > 0 && total > YUZUKI_MAX_TOTAL_CHARS) {
+        total -= sections[0].length;
+        sections.shift();
+    }
+
+    const parts = [...sections];
+    if (includePlot) {
+        const plotLines = yuzukiPlotLines(state);
+        if (plotLines.length > 0) {
+            const kept = plotLines.slice(-YUZUKI_MAX_PLOT_LINES);
+            parts.push(`【剧情摘要时间线（最近${kept.length}条）】\n${kept.join('\n')}`);
+        }
+    }
+    if (parts.length === 0) return null;
+    return { boundary, text: parts.join('\n\n') };
+}
+
+/** 面板状态探测：有可总结数据时返回 { records, boundary }，否则 null */
+export function getYuzukiStatus() {
+    const state = yuzukiState();
+    if (!state) return null;
+    const records = yuzukiRecords(state, YUZUKI_SUMMARY_TABLE_ID);
+    const boundary = yuzukiBoundary(records);
+    if (boundary < 0) return null;
+    return { records: records.length, boundary };
+}

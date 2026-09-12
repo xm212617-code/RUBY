@@ -376,6 +376,17 @@ export async function runPipeline(taskBatch) {
             } catch (e) {
                 warn(`shujuku summary read failed: ${e?.message || e}`);
             }
+        } else if (provider === 'yuzuki') {
+            try {
+                const yz = reader.getYuzukiSummary(cfgData.yuzukiIncludePlot !== false);
+                if (yz) {
+                    providerSummary = { boundary: yz.boundary, text: yz.text, label: '柚子记忆表·剧情总结' };
+                } else {
+                    warn('yuzuki-Memory summary unavailable (not installed or no summary records), falling back to raw text');
+                }
+            } catch (e) {
+                warn(`yuzuki-Memory summary read failed: ${e?.message || e}`);
+            }
         }
 
         for (let taskIndex = 0; taskIndex < taskBatch.length; taskIndex++) {
