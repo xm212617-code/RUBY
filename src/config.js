@@ -134,9 +134,9 @@ export function normalizeConfigData(raw) {
     result.customContentTags = Array.isArray(data.customContentTags)
         ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
         : [];
-    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚子记忆表
+    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚月记忆表
     result.summaryProvider = ['littlewhitebox', 'shujuku', 'yuzuki'].includes(data.summaryProvider) ? data.summaryProvider : '';
-    // 柚子记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
+    // 柚月记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
         ? data.presets.map(normalizePreset)

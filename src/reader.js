@@ -361,8 +361,8 @@ export async function getShujukuSummary(books) {
     return { boundary, text: sections.join('\n\n') };
 }
 
-// ---------- 柚子记忆表（yuzuki-Memory）总结接口 ----------
-// 只读 chat_metadata.yuzukiMemory 的 memory_summary（记忆总结）表，不 import 柚子模块，零耦合。
+// ---------- 柚月记忆表（yuzuki-Memory）总结接口 ----------
+// 只读 chat_metadata.yuzukiMemory 的 memory_summary（记忆总结）表，不 import 柚月模块，零耦合。
 // 总结记录覆盖聊天消息索引区间（0基、含用户楼）：机读 meta.yzmMemoryTask.range（end 为开区间），
 // 文本楼层数为闭区间 'start-end'（多段换行分隔，连接符 - ~ － — 至 到）。
 // 边界 = 全部记录区间并集自最小覆盖楼层起的连续链末端（含端消息索引），
@@ -455,7 +455,7 @@ function yuzukiPlotLines(state) {
 }
 
 /**
- * 读取柚子记忆表总结并组装为可分析的紧凑文本。
+ * 读取柚月记忆表总结并组装为可分析的紧凑文本。
  * @returns {{boundary: number, text: string}|null} 无插件数据/无总结记录/区间不可解析时返回 null（回退纯原文）
  */
 export function getYuzukiSummary(includePlot = true) {

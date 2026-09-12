@@ -1398,7 +1398,7 @@ const SUMMARY_PROVIDERS = [
     },
     {
         id: 'yuzuki',
-        name: '柚子记忆表（yuzuki-Memory）总结',
+        name: '柚月记忆表（yuzuki-Memory）总结',
         description: '读取yuzuki-Memory写入聊天元数据的记忆总结表（总结标题/核心角色/楼层/总结内容/未解决问题），已总结楼层用总结替代原文；剧情摘要时间线可一并注入。',
     },
 ];
@@ -1450,7 +1450,7 @@ function renderSummaryProviders(data) {
                 </div>`;
             } else {
                 statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
-                    ⚠️ 当前聊天未检测到柚子记忆表数据（未安装 yuzuki-Memory、或本聊天还没生成记忆总结）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
+                    ⚠️ 当前聊天未检测到柚月记忆表数据（未安装 yuzuki-Memory、或本聊天还没生成记忆总结）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
                 </div>`;
             }
         }

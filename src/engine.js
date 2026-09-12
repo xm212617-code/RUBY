@@ -380,7 +380,7 @@ export async function runPipeline(taskBatch) {
             try {
                 const yz = reader.getYuzukiSummary(cfgData.yuzukiIncludePlot !== false);
                 if (yz) {
-                    providerSummary = { boundary: yz.boundary, text: yz.text, label: '柚子记忆表·剧情总结' };
+                    providerSummary = { boundary: yz.boundary, text: yz.text, label: '柚月记忆表·剧情总结' };
                 } else {
                     warn('yuzuki-Memory summary unavailable (not installed or no summary records), falling back to raw text');
                 }
