@@ -63,6 +63,8 @@ const makeDefaultUi = () => ({
     orbX: null,
     orbY: null,
     notify: true,
+    // 黑夜模式：true/false = 用户显式选择；null = 未设置（跟随系统外观）
+    darkMode: null,
 });
 
 /** 悬浮球尺寸取值范围：当前悬浮窗 60px 为上限，可逐步缩小 */
