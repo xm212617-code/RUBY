@@ -2,7 +2,7 @@ import { ctx, log, warn } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
 import { initCardWriter, startSession, endSession, getState as getCwState } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
-import { initSettingsDrawer } from './src/settings.js';
+import { initSettingsDrawer, initTheme } from './src/settings.js';
 import { openPanel } from './src/panel.js';
 
 let commandRegistered = false;
@@ -136,6 +136,7 @@ function bootstrap() {
     initCardWriter();
     ensureOrb();
     initSettingsDrawer();
+    initTheme();
     log('RUBY Analyzer extension loaded (independent edition)');
 }
 
