@@ -1010,3 +1010,188 @@
     #ra_panel .task-delete-btn { margin-left: 0; margin-top: 6px; }
     #ra_panel .ref-item { flex-direction: column; align-items: flex-start; }
 }
+
+/* ==================================================================
+   黑夜模式（body.ruby-dark）—— 由 settings.js 的 initTheme() 驱动
+   主题基调：墨蓝黑底 + 浅灰文字，RUBY 绿/蓝/红主色保持不变
+   ================================================================== */
+
+body.ruby-dark #ra_panel { background: rgba(10, 11, 15, .93); }
+body.ruby-dark #ra_panel .card { background: #191b22; border-color: #3d7c47; color: #d3d7df; }
+body.ruby-dark #ra_panel .title-bar { border-bottom-color: #1A3A1E; }
+
+/* ---------- 页签栏 ---------- */
+body.ruby-dark #ra_panel .mode-tabs { background: #14161c; border-bottom-color: #3a3f4a; }
+body.ruby-dark #ra_panel .mode-tab { color: #b9bec8; }
+body.ruby-dark #ra_panel .mode-tab.player:hover { background: rgba(196, 30, 58, .18); }
+body.ruby-dark #ra_panel .mode-tab.creator:hover { background: rgba(46, 107, 198, .22); }
+body.ruby-dark #ra_panel .mode-tab.cardwriter:hover { background: rgba(61, 124, 71, .22); }
+body.ruby-dark #ra_panel .mode-tab.player.active { background: rgba(196, 30, 58, .3); color: #ff9fb0; border-bottom-color: #e53e5b; }
+body.ruby-dark #ra_panel .mode-tab.creator.active { background: rgba(46, 107, 198, .32); color: #8fb8ff; border-bottom-color: #2e6bc6; }
+body.ruby-dark #ra_panel .mode-tab.cardwriter.active { background: rgba(61, 124, 71, .3); color: #93d69c; border-bottom-color: #3d7c47; }
+body.ruby-dark #ra_panel .sub-tabs { background: #14161c; border-bottom-color: #3a3f4a; }
+body.ruby-dark #ra_panel .sub-tab { color: #a9aeb8; }
+body.ruby-dark #ra_panel .sub-tab:hover { color: #e8eaf0; background: rgba(255, 255, 255, .06); }
+body.ruby-dark #ra_panel .sub-tab.active { color: #93d69c; border-bottom-color: #3d7c47; }
+
+/* ---------- 区块与表单 ---------- */
+body.ruby-dark #ra_panel .body { background: #191b22; }
+body.ruby-dark #ra_panel .form-section { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .form-body,
+body.ruby-dark #ra_panel .form-body * { color: #d3d7df !important; }
+body.ruby-dark #ra_panel .form-label { color: #b9bec8; }
+body.ruby-dark #ra_panel .form-value { color: #d3d7df; }
+body.ruby-dark #ra_panel label { color: #c9cdd6 !important; }
+body.ruby-dark #ra_panel h4,
+body.ruby-dark #ra_panel strong,
+body.ruby-dark #ra_panel p { color: #e8eaef !important; }
+
+/* ---------- 输入控件 ---------- */
+body.ruby-dark #ra_panel input,
+body.ruby-dark #ra_panel select,
+body.ruby-dark #ra_panel textarea { background: #262a33 !important; border-color: #555c68; color: #e8eaef !important; }
+body.ruby-dark #ra_panel input:focus,
+body.ruby-dark #ra_panel select:focus,
+body.ruby-dark #ra_panel textarea:focus { border-color: #3d7c47; box-shadow: 0 0 0 2px rgba(61, 124, 71, .35); }
+body.ruby-dark #ra_panel select option { background: #262a33 !important; color: #e8eaef !important; }
+body.ruby-dark #ra_panel input::placeholder { color: #7d828d; }
+body.ruby-dark #ra_panel input[type="checkbox"] { background: #262a33; border-color: #aab0bb; }
+body.ruby-dark #ra_panel input[type="checkbox"]:hover { border-color: #e8eaef; box-shadow: 0 0 0 2px rgba(255, 255, 255, .12); }
+body.ruby-dark #ra_panel input[type="checkbox"]:checked { background: #262a33; border-color: #aab0bb; }
+body.ruby-dark #ra_panel input[type="checkbox"]:checked::after { color: #e8eaef; }
+
+/* ---------- 按钮 ---------- */
+body.ruby-dark #ra_panel .btn.outline { background: #262a33; color: #e8eaef !important; border-color: #6a7180; }
+body.ruby-dark #ra_panel .btn.outline:hover { background: #313642; }
+body.ruby-dark #ra_panel .btn[disabled] { opacity: .4; }
+body.ruby-dark #ra_panel .btn-row { border-top-color: #454b56; }
+
+/* ---------- 文字与杂项 ---------- */
+body.ruby-dark #ra_panel code { background: #2b303a; color: #e8eaef !important; }
+body.ruby-dark #ra_panel .tip { color: #c2c7d0 !important; background: #23262f; border-left-color: #3d7c47; }
+body.ruby-dark #ra_panel .help-tip { background: #1f222a; border-color: #7a8a7c; color: #9db5a0 !important; }
+body.ruby-dark #ra_panel .help-tip:hover { border-color: #3d7c47; color: #93d69c !important; background: #22301f; }
+
+/* ---------- 状态盒与状态色（提高亮度适配黑底） ---------- */
+body.ruby-dark #ra_panel .status-box { background: #1f222a; border-color: #454b56; color: #d3d7df !important; }
+body.ruby-dark #ra_panel .status-box * { color: #d3d7df !important; }
+body.ruby-dark #ra_panel .status-ok { color: #6fdc8f !important; }
+body.ruby-dark #ra_panel .status-warn { color: #e8b86a !important; }
+body.ruby-dark #ra_panel .status-err { color: #ff8080 !important; }
+body.ruby-dark #ra_panel .form-body .status-ok { color: #6fdc8f !important; }
+body.ruby-dark #ra_panel .form-body .status-warn { color: #e8b86a !important; }
+body.ruby-dark #ra_panel .form-body .status-err { color: #ff8080 !important; }
+
+/* ---------- 任务卡 ---------- */
+body.ruby-dark #ra_panel .task-card { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .task-card.disabled { opacity: .45; }
+body.ruby-dark #ra_panel .task-card-header { background: #262a33; border-bottom-color: #3a3f4a; }
+body.ruby-dark #ra_panel .task-card.collapsed .task-card-header { background: #23262e; }
+body.ruby-dark #ra_panel .task-card-title { color: #e8eaef; }
+body.ruby-dark #ra_panel .task-toggle-btn { background: #2b303a; border-color: #5a616e; color: #d3d7df; }
+body.ruby-dark #ra_panel .task-toggle-btn:hover { background: #343a45; border-color: #3d7c47; color: #93d69c; }
+
+/* ---------- 破限编辑器 ---------- */
+body.ruby-dark #ra_panel .jailbreak-item { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .jailbreak-head { background: #1f222a; border-bottom-color: #3a3f4a; }
+body.ruby-dark #ra_panel .jailbreak-head:hover { background: #232730; }
+body.ruby-dark #ra_panel .jb-title { color: #e8eaef; }
+body.ruby-dark #ra_panel .jailbreak-summary { color: #9aa0aa !important; background: #262a33; border-color: #4a515e; }
+body.ruby-dark #ra_panel .jailbreak-body { background: #1f222a; }
+body.ruby-dark #ra_panel .jb-content { background: #262a33 !important; color: #e8eaef !important; }
+
+/* ---------- 参考条目池与分组 ---------- */
+body.ruby-dark #ra_panel .ref-item { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .ref-group { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .ref-group-header { background: #262a33; color: #d3d7df; }
+body.ruby-dark #ra_panel .ref-group-header:hover { background: #2e333d; }
+body.ruby-dark #ra_panel .ref-group-empty { color: #7d828d; }
+body.ruby-dark #ra_panel .checkbox-group label { background: #262a33; border-color: #555c68; color: #d3d7df !important; }
+body.ruby-dark #ra_panel .checkbox-group label:hover { background: #2e333d; }
+
+/* ---------- 周期时间线 ---------- */
+body.ruby-dark #ra_panel .cycle-sticky { background: #191b22; border-color: #3d7c47; }
+body.ruby-dark #ra_panel .cycle-title { color: #93d69c; }
+body.ruby-dark #ra_panel .cycle-status-row { border-top-color: #3a3f4a; }
+body.ruby-dark #ra_panel .cycle-length,
+body.ruby-dark #ra_panel .cycle-counter { background: #262a33; color: #d3d7df; }
+body.ruby-dark #ra_panel .cycle-fold { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .cycle-fold-header { background: #262a33; color: #d3d7df; }
+body.ruby-dark #ra_panel .cycle-fold-header:hover { background: #2e333d; }
+body.ruby-dark #ra_panel .cycle-info { background: linear-gradient(135deg, #1d2028 0%, #191b22 100%); border-color: #3d7c47; }
+body.ruby-dark #ra_panel .cycle-legend-item { color: #c2c7d0; }
+body.ruby-dark #ra_panel .cycle-note { background: #2a2415; border-color: #a5821f; color: #e3c77a; }
+body.ruby-dark #ra_panel .cycle-trigger-info { background: #14231a; border-color: #2f7d3c; color: #7fd292; }
+body.ruby-dark #ra_panel .cycle-task-item { background: #262a33; border-color: #3a3f4a; }
+body.ruby-dark #ra_panel .cycle-task-item .task-name { color: #d3d7df; }
+body.ruby-dark #ra_panel .cycle-task-item .output-var { color: #8fb8ff; }
+body.ruby-dark #ra_panel .cycle-axis { background: linear-gradient(90deg, #2f7d3c 0%, #3d7c47 60%, #3d7c47 100%); }
+body.ruby-dark #ra_panel .cycle-marker .marker-label { color: #e8eaef; background: rgba(18, 20, 26, .92); }
+body.ruby-dark #ra_panel .cycle-marker .marker-floor { background: #14231a; border-color: #2f7d3c; color: #7fd292; }
+body.ruby-dark #ra_panel .empty-tasks { background: #1f222a; border-color: #5a616e; color: #7d828d; }
+body.ruby-dark #ra_panel .task-scroll-area { background: #14161c; border-color: #3a3f4a; }
+body.ruby-dark #ra_panel .task-scroll-area::-webkit-scrollbar-thumb { background: #3a3f4a; }
+body.ruby-dark #ra_panel .task-scroll-area::-webkit-scrollbar-thumb:hover { background: #4a515e; }
+
+/* ---------- 创作者版面方案页签 ---------- */
+body.ruby-dark #ra_panel .scheme-tab.active { background: #191b22; color: #8fb8ff; border-color: #2e6bc6; border-bottom-color: #191b22; }
+
+/* ---------- 写卡模式 ---------- */
+body.ruby-dark #ra_panel .cw-step { background: #262a33; border-color: #555c68; color: #d3d7df; }
+body.ruby-dark #ra_panel .cw-step:hover { border-color: #3d7c47; background: #233528; }
+body.ruby-dark #ra_panel .cw-step.cur { background: #3d7c47; color: #fff; border-color: #3d7c47; }
+
+/* ---------- 步骤说明气泡 ---------- */
+body.ruby-dark #ruby_cw_bubble { background: #191b22; border-color: #3d7c47; color: #d3d7df; }
+body.ruby-dark #ruby_cw_bubble .cw-bubble-title { color: #93d69c; }
+body.ruby-dark #ruby_cw_bubble .cw-bubble-close { color: #7d828d; }
+body.ruby-dark #ruby_cw_bubble .cw-bubble-close:hover { color: #e8eaef; }
+body.ruby-dark #ruby_cw_bubble pre { background: #20242c; color: #d3d7df; }
+body.ruby-dark #ruby_cw_bubble details summary { color: #e8b86a; }
+
+/* ---------- 写卡确认弹窗 ---------- */
+body.ruby-dark #ruby_cw_confirm { background: rgba(0, 0, 0, .62); }
+body.ruby-dark #ruby_cw_confirm .cw-confirm-card { background: #191b22; border-color: #3d7c47; }
+body.ruby-dark #ruby_cw_confirm .cw-confirm-title { color: #93d69c; }
+body.ruby-dark #ruby_cw_confirm .cw-confirm-body { color: #c2c7d0; }
+body.ruby-dark #ruby_cw_confirm .cw-btn-outline { background: #262a33; color: #e8eaef; border-color: #6a7180; }
+body.ruby-dark #ruby_cw_confirm .cw-btn-outline:hover { background: #313642; }
+
+/* ---------- 面板右上角主题切换按钮 ---------- */
+#ra_theme_toggle { min-width: 42px; font-size: 16px; }
+
+/* ==================================================================
+   以下组件样式从 panel.js 行内迁移至此（白昼保持原观感不变），
+   以便黑夜模式统一覆盖
+   ================================================================== */
+
+/* 配置方案卡片（玩家版面） */
+#ra_panel .preset-card { padding: 14px; background: #fff; border: 2px solid #999; border-radius: 6px; cursor: pointer; transition: all .2s; }
+#ra_panel .preset-card.active { background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-color: #2C5530; }
+#ra_panel .preset-name { font-weight: 700; font-size: 15px; color: #1a1a1a; }
+#ra_panel .preset-name.active { color: #1A3A1E; }
+#ra_panel .preset-desc { font-size: 12px; color: #666; margin-top: 2px; }
+#ra_panel .preset-meta { font-size: 11px; color: #888; margin-top: 4px; }
+#ra_panel .preset-switch-hint { color: #1E4B8E; font-size: 12px; }
+body.ruby-dark #ra_panel .preset-card { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .preset-card.active { background: linear-gradient(135deg, #1d3524 0%, #14231a 100%); border-color: #3d7c47; }
+body.ruby-dark #ra_panel .preset-name { color: #e8eaef; }
+body.ruby-dark #ra_panel .preset-name.active { color: #93d69c; }
+body.ruby-dark #ra_panel .preset-desc { color: #9aa0aa; }
+body.ruby-dark #ra_panel .preset-meta { color: #7d828d; }
+body.ruby-dark #ra_panel .preset-switch-hint { color: #8fb8ff; }
+
+/* 总结接口卡片（玩家版面） */
+#ra_panel .summary-provider-card { border: 1.5px solid #bbb; border-radius: 6px; padding: 12px; margin-bottom: 10px; background: #f7f7f2; }
+#ra_panel .summary-provider-card.on { border-color: #C41E3A; background: #fdf3f4; }
+body.ruby-dark #ra_panel .summary-provider-card { border-color: #454b56; background: #1f222a; }
+body.ruby-dark #ra_panel .summary-provider-card.on { border-color: #e53e5b; background: #2a1c21; }
+body.ruby-dark #ra_panel .summary-provider-card div[style] { color: #9aa0aa !important; }
+
+/* 导入导出页方案摘要卡 */
+#ra_panel .preset-summary-card { padding: 10px; margin-bottom: 8px; background: #f8f8f5; border: 1px solid #999; border-radius: 4px; }
+#ra_panel .preset-summary-card.active { background: #e8f5e9; border-color: #2C5530; }
+#ra_panel .preset-summary-meta { font-size: 12px; color: #666; }
+body.ruby-dark #ra_panel .preset-summary-card { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_panel .preset-summary-card.active { background: #14231a; border-color: #3d7c47; }
+body.ruby-dark #ra_panel .preset-summary-meta { color: #9aa0aa; }

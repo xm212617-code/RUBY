@@ -7,6 +7,7 @@ import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
 import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, ordinalForIndex } from './reader.js';
+import { isDarkMode } from './settings.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -129,7 +130,14 @@ function closePanel() {
     if (root) root.style.display = 'none';
 }
 
+/** 主题切换按钮：🌙=当前白天（点击进黑夜） ☀️=当前黑夜（点击回白天） */
+function updateThemeButton() {
+    const btn = $('ra_theme_toggle');
+    if (btn) btn.textContent = isDarkMode() ? '☀️' : '🌙';
+}
+
 function refreshAll() {
+    updateThemeButton();
     const { data, layer, source } = config.resolveConfig();
     if (!ui.editingPresetId || !data.presets.some((p) => p.id === ui.editingPresetId)) {
         ui.editingPresetId = data.activePresetId || data.presets[0]?.id;
@@ -177,6 +185,13 @@ function buildPanel() {
 
     on($('ra_close'), 'click', closePanel);
     root.querySelector('.ra-mask')?.addEventListener('click', closePanel);
+    on($('ra_theme_toggle'), 'click', () => {
+        const next = !isDarkMode();
+        config.saveUi({ darkMode: next });
+        window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+        updateThemeButton();
+    });
+    updateThemeButton();
 }
 
 function buildShellHtml() {
@@ -188,7 +203,10 @@ function buildShellHtml() {
                 <h1>◆ RUBY 角色分析系统 ◆</h1>
                 <div class="subtitle">Ruby Universal Bot Yield - 独立分析扩展</div>
             </div>
-            <button id="ra_close" class="close-btn">✕ 关闭</button>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button id="ra_theme_toggle" class="close-btn" title="切换黑夜/白天模式">🌙</button>
+                <button id="ra_close" class="close-btn">✕ 关闭</button>
+            </div>
         </div>
 
         <div class="mode-tabs">
@@ -1008,15 +1026,15 @@ function renderPresetList(data) {
         const isActive = preset.id === activeId;
         const taskCount = (preset.tasks || []).filter((t) => t.enabled).length;
         return `
-        <div class="preset-card" data-id="${h(preset.id)}" style="padding:14px;background:${isActive ? 'linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 100%)' : '#fff'};border:2px solid ${isActive ? '#2C5530' : '#999'};border-radius:6px;cursor:pointer;transition:all .2s;">
+        <div class="preset-card ${isActive ? 'active' : ''}" data-id="${h(preset.id)}">
             <div style="display:flex;align-items:center;gap:10px;">
                 <span style="font-size:20px;">${isActive ? '✅' : '⭕'}</span>
                 <div style="flex:1;">
-                    <div style="font-weight:700;font-size:15px;color:${isActive ? '#1A3A1E' : '#1a1a1a'};">${h(preset.name || '未命名方案')}</div>
-                    <div style="font-size:12px;color:#666;margin-top:2px;">${preset.description ? h(preset.description) : ''}</div>
-                    <div style="font-size:11px;color:#888;margin-top:4px;">${taskCount > 0 ? `📋 ${taskCount}个分析任务` : '⚠️ 暂无任务'}</div>
+                    <div class="preset-name ${isActive ? 'active' : ''}">${h(preset.name || '未命名方案')}</div>
+                    <div class="preset-desc">${preset.description ? h(preset.description) : ''}</div>
+                    <div class="preset-meta">${taskCount > 0 ? `📋 ${taskCount}个分析任务` : '⚠️ 暂无任务'}</div>
                 </div>
-                ${isActive ? '<span style="background:#2C5530;color:#fff;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;">当前使用</span>' : '<span style="color:#1E4B8E;font-size:12px;">点击切换 →</span>'}
+                ${isActive ? '<span style="background:#2C5530;color:#fff;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;">当前使用</span>' : '<span class="preset-switch-hint">点击切换 →</span>'}
             </div>
         </div>`;
     }).join('');
@@ -1462,7 +1480,7 @@ function renderSummaryProviders(data) {
             </label>`;
         }
         return `
-        <div class="summary-provider-card" style="border:1.5px solid ${isOn ? '#C41E3A' : '#bbb'};border-radius:6px;padding:12px;margin-bottom:10px;background:${isOn ? '#fdf3f4' : '#f7f7f2'};">
+        <div class="summary-provider-card ${isOn ? 'on' : ''}">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <div style="flex:1;min-width:200px;">
                     <div style="font-weight:700;font-size:14px;">${isOn ? '🟢' : '⚪'} ${h(p.name)}</div>
@@ -2378,12 +2396,12 @@ function renderPresetSummary() {
         const enabledTasks = (preset.tasks || []).filter((t) => t.enabled).length;
         const refCount = (preset.referencePool || []).length;
         html += `
-            <div style="padding:10px;margin-bottom:8px;background:${isActive ? '#e8f5e9' : '#f8f8f5'};border:1px solid ${isActive ? '#2C5530' : '#999'};border-radius:4px;">
+            <div class="preset-summary-card ${isActive ? 'active' : ''}">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                     <span style="font-weight:700;font-size:14px;">${h(preset.name || '未命名')}</span>
                     ${isActive ? '<span style="background:#2C5530;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;">当前激活</span>' : ''}
                 </div>
-                <div style="font-size:12px;color:#666;">📋 ${taskCount}个任务（${enabledTasks}启用）· 📚 ${refCount}个参考条目</div>
+                <div class="preset-summary-meta">📋 ${taskCount}个任务（${enabledTasks}启用）· 📚 ${refCount}个参考条目</div>
             </div>`;
     }
     html += '</div>';
