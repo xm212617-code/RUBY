@@ -740,6 +740,7 @@ export async function runPipeline(taskBatch) {
 
     let completedCount = 0;
     let failedCount = 0;
+    let wroteToChatBook = false;
 
     try {
         const charBook = await worldbook.getCharBookName();
@@ -1028,6 +1029,7 @@ export async function runPipeline(taskBatch) {
                     selective: !!taskConfig.selective,
                     selectiveKeys: taskConfig.selectiveKeys,
                 });
+                wroteToChatBook = true;
 
                 await worldbook.disableCharEntry(charBook, outputKey);
                 outputValues[outputVarName] = result.trim();
@@ -1044,6 +1046,24 @@ export async function runPipeline(taskBatch) {
 
         if (completedCount > 0 && chatBook) {
             await worldbook.persistBook(chatBook);
+        }
+
+        // 给本次写入分析输出的「聊天世界书」打标签（登记到全局登记簿）：
+        // 只在书级别记录书名 + 所属角色，不碰条目、不靠 UID 识别
+        if (wroteToChatBook) {
+            try {
+                const identity = config.getCharacterIdentity();
+                config.registerGeneratedChatBook({
+                    chatId: chatIdAtStart || '',
+                    chatBookName: chatBook,
+                    characterAvatar: identity?.avatar || '',
+                    characterName: identity?.name || charName || '',
+                });
+                window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed'));
+                log(`generated chat book registered: ${chatBook} (${identity?.name || charName})`);
+            } catch (e) {
+                warn(`register generated chat book failed: ${e?.message || e}`);
+            }
         }
 
         state.lastRunAt = Date.now();

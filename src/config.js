@@ -140,6 +140,9 @@ export function getSettings() {
     store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
     store.directorApi.enabled = !!store.directorApi.enabled;
     store.ui = { ...makeDefaultUi(), ...(store.ui || {}) };
+    // 生成的角色分析聊天书登记簿：全局（跨角色/跨聊天），key 为 chatId（缺失时回退书名）。
+    // 在「聊天世界书」级别登记——只记录书名与所属角色，绝不给条目打标签、不靠条目 UID 识别。
+    store.generatedChatBooks = (store.generatedChatBooks && typeof store.generatedChatBooks === 'object') ? store.generatedChatBooks : {};
     return store;
 }
 
@@ -170,7 +173,7 @@ export function normalizeConfigData(raw) {
     result.customContentTags = Array.isArray(data.customContentTags)
         ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
         : [];
-    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚月记忆表
+    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚月记忆表；'baibaibook'=柏宝书
     result.summaryProvider = ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '';
     // 柚月记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
@@ -434,6 +437,75 @@ export function getBoundCharacters() {
         result.push({ avatar, name: ch?.name || avatar, source: 'local' });
     }
     return result;
+}
+
+// ---------- 生成的角色分析聊天书登记簿 ----------
+// 仅在「聊天世界书」级别登记：记录书名 + 所属角色卡，不给条目打标签、不靠条目 UID 识别。
+// 引擎写入分析输出到聊天世界书时调用 registerGeneratedChatBook 打标签（登记）。
+
+/** 取全部已登记的生成聊天书（数组，每项带 key） */
+export function getGeneratedChatBooks() {
+    const store = getSettings();
+    if (!store?.generatedChatBooks) return [];
+    return Object.entries(store.generatedChatBooks).map(([key, v]) => ({
+        key,
+        chatId: String(v?.chatId || ''),
+        chatBookName: String(v?.chatBookName || ''),
+        characterAvatar: String(v?.characterAvatar || ''),
+        characterName: String(v?.characterName || ''),
+        createdAt: Number(v?.createdAt) || 0,
+        updatedAt: Number(v?.updatedAt) || 0,
+    }));
+}
+
+/** 登记一张生成聊天书（打标签）：同 chatId 或同名书更新而非新增，幂等 */
+export function registerGeneratedChatBook({ chatId, chatBookName, characterAvatar, characterName }) {
+    const store = getSettings();
+    if (!store) return;
+    if (!store.generatedChatBooks || typeof store.generatedChatBooks !== 'object') store.generatedChatBooks = {};
+    const map = store.generatedChatBooks;
+    const name = String(chatBookName || '').trim();
+    if (!name && !chatId) return;
+
+    // 先按 chatId 命中，再按书名命中（避免同一聊天重复登记）
+    let key = '';
+    if (chatId && map[chatId]) {
+        key = chatId;
+    } else {
+        for (const [k, v] of Object.entries(map)) {
+            if (String(v?.chatBookName || '') === name) { key = k; break; }
+        }
+    }
+    if (!key) key = String(chatId || name || `book_${Date.now()}`);
+
+    if (map[key]) {
+        const ex = map[key];
+        ex.chatId = String(chatId || ex.chatId || '');
+        ex.chatBookName = name || ex.chatBookName;
+        ex.characterAvatar = String(characterAvatar || ex.characterAvatar || '');
+        ex.characterName = String(characterName || ex.characterName || '');
+        ex.updatedAt = Date.now();
+    } else {
+        map[key] = {
+            chatId: String(chatId || ''),
+            chatBookName: name,
+            characterAvatar: String(characterAvatar || ''),
+            characterName: String(characterName || ''),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+    }
+    persist();
+}
+
+/** 移除一条登记（仅从列表移除，不删除世界书本身） */
+export function unregisterGeneratedChatBook(key) {
+    const store = getSettings();
+    if (!store?.generatedChatBooks || !key) return;
+    if (store.generatedChatBooks[key]) {
+        delete store.generatedChatBooks[key];
+        persist();
+    }
 }
 
 export function getApiConfig() {

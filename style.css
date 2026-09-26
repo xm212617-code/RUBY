@@ -1299,3 +1299,128 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
     background: #e05a72;
     box-shadow: 0 0 0 3px rgba(224, 90, 114, 0.25);
 }
+
+/* ==================================================================
+   生成的角色分析聊天书（设置抽屉内）
+   抽屉寄宿于酒馆扩展设置面板，配色跟随酒馆主题变量（var(--SmartTheme*)）
+   以同时兼容酒馆白昼/黑夜主题；不使用 #ra_panel 专属色。
+   ================================================================== */
+
+#ruby_analyzer_ext_settings .ra-ext-divider {
+    height: 1px;
+    background: var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));
+    margin: 10px 0 4px;
+    opacity: .55;
+}
+
+#ruby_analyzer_ext_settings .ra-cb-section { font-size: 13px; }
+#ruby_analyzer_ext_settings .ra-cb-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 0 2px;
+}
+#ruby_analyzer_ext_settings .ra-cb-head b {
+    font-size: 13px;
+    color: var(--SmartThemeQuoteColor, #2C5530);
+}
+#ruby_analyzer_ext_settings .ra-cb-refresh {
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor, #999);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 8px;
+    color: inherit;
+    line-height: 1.4;
+}
+#ruby_analyzer_ext_settings .ra-cb-refresh:hover { background: rgba(128, 128, 128, .14); }
+
+#ruby_analyzer_ext_settings .ra-cb-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+#ruby_analyzer_ext_settings .ra-cb-empty {
+    font-size: 12px;
+    opacity: .7;
+    padding: 8px 10px;
+    background: rgba(128, 128, 128, .07);
+    border: 1px dashed var(--SmartThemeBorderColor, #bbb);
+    border-radius: 4px;
+}
+
+#ruby_analyzer_ext_settings .ra-cb-group {
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));
+    border-radius: 5px;
+    overflow: hidden;
+    background: rgba(128, 128, 128, .05);
+}
+#ruby_analyzer_ext_settings .ra-cb-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    background: rgba(128, 128, 128, .1);
+    user-select: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: inherit;
+}
+#ruby_analyzer_ext_settings .ra-cb-group-header:hover { background: rgba(128, 128, 128, .16); }
+#ruby_analyzer_ext_settings .ra-cb-arrow {
+    display: inline-block;
+    width: 14px;
+    color: var(--SmartThemeQuoteColor, #2C5530);
+    font-weight: 900;
+    flex-shrink: 0;
+    transition: transform .2s;
+}
+#ruby_analyzer_ext_settings .ra-cb-group-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#ruby_analyzer_ext_settings .ra-cb-group-count {
+    background: #2C5530;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 10px;
+    flex-shrink: 0;
+}
+#ruby_analyzer_ext_settings .ra-cb-group.collapsed .ra-cb-group-body { display: none; }
+
+#ruby_analyzer_ext_settings .ra-cb-group-body { padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 1px; }
+#ruby_analyzer_ext_settings .ra-cb-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    font-size: 12.5px;
+    border-radius: 3px;
+}
+#ruby_analyzer_ext_settings .ra-cb-item:hover { background: rgba(128, 128, 128, .08); }
+#ruby_analyzer_ext_settings .ra-cb-idx { opacity: .6; flex-shrink: 0; min-width: 18px; }
+#ruby_analyzer_ext_settings .ra-cb-link {
+    flex: 1;
+    color: var(--SmartThemeQuoteColor, #1E4B8E);
+    cursor: pointer;
+    text-decoration: underline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#ruby_analyzer_ext_settings .ra-cb-link:hover { opacity: .8; }
+#ruby_analyzer_ext_settings .ra-cb-remove {
+    background: none;
+    border: none;
+    color: #c41e3a;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 4px;
+    flex-shrink: 0;
+    opacity: .55;
+    line-height: 1;
+}
+#ruby_analyzer_ext_settings .ra-cb-remove:hover { opacity: 1; }
