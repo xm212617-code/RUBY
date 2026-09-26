@@ -32,6 +32,8 @@ const ui = {
     expandedTasks: new Set(),
     collapsedJb: new Set(),
     importedTemplateName: '',
+    directorViewActive: false,
+    director: null,
 };
 
 let panelBuilt = false;
@@ -208,6 +210,7 @@ function buildPanel() {
     wireTagControls();
     wireRefPoolControls();
     wireTaskControls();
+    wireDirectorControls();
     wireBindingControls();
     wirePresetIoControls();
     wireCardWriterControls(root);
@@ -484,6 +487,11 @@ function buildShellHtml() {
                 </div>
 
                 <div class="sub-content" data-subcontent="tasks" style="padding:0;display:none;">
+                    <div id="ra_director_flip_bar" style="padding:10px 16px 0;display:flex;gap:8px;align-items:center;">
+                        <button id="ra_director_flip" class="btn blue" style="flex:1;padding:10px;font-size:14px;font-weight:700;">🎬 导演模式</button>
+                        <span class="director-help" data-help="导演模式：开启后，Ruby作为导演在本周期位置1（一条AI回复后）运行一次，根据剧情发展、任务优先级与近5周期历史，为本周期排出各分析任务的触发位置。导演排期后普通任务的静态周期位置被接管；导演排中的任务到点即跑（忽略关键词扫描）。点击左侧按钮进入导演配置页。">?</span>
+                    </div>
+                    <div id="ra_tasks_view">
                     <div id="ra_scheme_tabs" class="scheme-tabs"></div>
                     <div id="ra_scheme_area" class="tasks-flex" style="padding:16px;">
                         <div class="scheme-header">
@@ -550,6 +558,8 @@ function buildShellHtml() {
                             <button id="ra_tasks_save" class="btn blue">💾 保存当前方案</button>
                         </div>
                     </div>
+                    </div>
+                    <div id="ra_director_view" style="display:none;padding:16px;"></div>
                 </div>
 
                 <div class="sub-content" data-subcontent="binding" style="padding:16px;display:none;">
@@ -1786,6 +1796,15 @@ function collectTasksFromUI() {
         }));
     });
 
+    // 导演模式字段（优先级/简介在导演页编辑，任务卡不渲染）从 ui.tasks 合并回传，避免重建任务对象时丢失
+    for (const t of tasks) {
+        const prev = (ui.tasks || []).find((pt) => pt.id === t.id);
+        if (prev) {
+            t.directorPriority = Number.isFinite(Number(prev.directorPriority)) ? Math.round(Number(prev.directorPriority)) : 0;
+            t.directorSummary = String(prev.directorSummary || '');
+        }
+    }
+
     const refKeyByVar = new Map((ui.refs || []).map((r) => [String(r.varName || ''), String(r.entryKey || '').trim()]));
     const outputKeyByVar = new Map(tasks.map((t) => [String(t.outputVarName || `task_${t.id}_Output`), String(t.outputKey || '').trim()]));
 
@@ -2214,6 +2233,7 @@ async function saveCurrentSchemeFromUI() {
         referencePool: ui.refs,
         tasks: collectTasksFromUI(),
         nextTaskId: ui.nextTaskId,
+        director: config.normalizePreset({ director: collectDirectorFromUI() }).director,
     };
     config.saveConfigData(data);
 }
@@ -2240,8 +2260,261 @@ function loadSchemeToUI(presetId) {
 
     ui.tasks = preset.tasks ? preset.tasks.map((t) => ({ ...t })) : [];
     ui.nextTaskId = preset.nextTaskId || (ui.tasks.length > 0 ? Math.max(...ui.tasks.map((t) => t.id || 0)) + 1 : 1);
+    ui.director = preset.director ? config.normalizePreset({ director: preset.director }).director : config.normalizePreset({}).director;
     renderTaskSlots();
     renderCycleInfo();
+    if (ui.directorViewActive) renderDirectorView();
+}
+
+// ---------- 导演模式视图 ----------
+
+function renderDirectorRefs(dir) {
+    const refs = ui.refs || [];
+    if (refs.length === 0) {
+        return '<span style="color:#555;font-size:13px;">参考条目池为空——先在"参考条目"页扫描并加入条目，再回到这里勾选供导演阅读。</span>';
+    }
+    const selected = new Set(dir.useReferences || []);
+    return refs.map((ref) => `
+        <label><input type="checkbox" class="director-ref-cb" data-var="${h(ref.varName)}" ${selected.has(ref.varName) ? 'checked' : ''}> ${h(ref.label || ref.entryKey)}</label>
+    `).join('');
+}
+
+function renderDirectorTasks(tasks) {
+    return tasks.map((t) => `
+        <div class="director-task-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+            <span style="min-width:110px;font-weight:600;font-size:13px;">#${t.id} ${h(t.displayName || '')}</span>
+            <label style="font-size:12px;color:#666;display:flex;align-items:center;gap:4px;">优先级
+                <input type="number" class="director-priority w80" data-id="${t.id}" value="${Number(t.directorPriority) || 0}" min="0" max="99">
+            </label>
+            <input type="text" class="director-summary w250" data-id="${t.id}" value="${h(t.directorSummary || '')}" placeholder="任务简介（留空自动从提示词条目提取）">
+        </div>
+    `).join('');
+}
+
+function updateDirectorStatus() {
+    const el = $('ra_director_status');
+    if (!el) return;
+    const ds = engine.getEngineState()?.director;
+    if (!ds?.enabled) {
+        el.innerHTML = '⚪ 导演周期未启用。勾选"启用导演周期"并保存后，导演将在每周期位置1（一条AI回复后）自动排期。';
+        return;
+    }
+    const lines = [];
+    if (ds.planReady) {
+        const planText = (ds.planAssignments || []).map((a) => `位置${a.position}→task${a.taskId}`).join('，');
+        lines.push(`✅ 周期${ds.round}计划就绪（${ds.planCount}个任务）${planText ? `：${planText}` : ''}`);
+    } else {
+        lines.push(`⚠️ 周期${ds.round}暂无计划——等待导演在位置1运行${ds.lastRunOk === false ? '（上次运行失败，可手动重新执行）' : ''}`);
+    }
+    lines.push(`当前进度：周期${ds.round} 位置${ds.position}/${ds.cycleLength}（AI回复计数，已触发${ds.wokenCount || 0}个）`);
+    if (ds.lastRunOk === false && ds.lastRunReason) lines.push(`上次失败原因：${h(ds.lastRunReason)}`);
+    el.innerHTML = lines.join('<br>');
+}
+
+function renderDirectorView() {
+    const container = $('ra_director_view');
+    if (!container) return;
+    const dir = ui.director || config.normalizePreset({}).director;
+    ui.director = dir;
+    const enabledTasks = ui.tasks.filter((t) => t.enabled);
+    const apiRadio = (mode, label) => `
+        <label class="inline"><input type="radio" name="ra_director_api" value="${mode}" class="director-api" ${dir.apiMode === mode ? 'checked' : ''}> ${label}</label>`;
+
+    container.innerHTML = `
+        <div class="form-section">
+            <div class="form-header blue">■ 导演状态 <span class="director-help" data-help="导演每周期在位置1运行一次并生成调度表；此后每到计划位置自动唤醒对应任务。状态框实时显示当前周期、位置与计划覆盖情况。">?</span></div>
+            <div class="form-body">
+                <div id="ra_director_status" class="status-box">加载中...</div>
+                <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+                    <button id="ra_director_run" class="btn red">🎬 立即执行导演排期</button>
+                </div>
+                <div class="tip" style="margin-top:8px;">手动执行会让导演立即重新规划本周期（重读正文生成新调度表），不影响已保存的周期参数。</div>
+            </div>
+        </div>
+        <div class="form-section">
+            <div class="form-header blue">■ 周期参数</div>
+            <div class="form-body">
+                <div class="form-row">
+                    <span class="form-label">启用导演周期 <span class="director-help" data-help="勾选并保存后导演接管调度：所有普通任务的静态周期位置被忽略，由导演在每周期位置1排出各任务的触发位置；没被排到的任务本周期不跑。停用后恢复静态位置调度（书签保留，不丢数据）。">?</span></span>
+                    <input type="checkbox" id="ra_director_enabled" class="director-enabled" ${dir.enabled ? 'checked' : ''}>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">周期长短 <span class="director-help" data-help="一个周期包含多少次AI回复。导演固定位于周期位置1（启用后下一两条AI回复即首跑），任务由导演排到位置2~周期长短之间。修改周期长短后下个周期生效。">?</span></span>
+                    <input type="number" id="ra_director_cycle" class="director-cycle w120" min="2" max="200" value="${dir.cycleLength}">
+                    <span style="font-size:12px;color:#666;">次AI回复</span>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">最低任务间隔 <span class="director-help" data-help="相邻两次触发（含导演自己的位置1）至少间隔多少次AI回复。填0=完全由AI根据剧情节奏决定间隔；填N=硬性约束写入导演提示词，违反时仅记录警告不阻断。">?</span></span>
+                    <input type="number" id="ra_director_spacing" class="director-spacing w120" min="0" max="50" value="${dir.minSpacing}">
+                    <span style="font-size:12px;color:#666;">0 = 由AI决定</span>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">失败自动重试 <span class="director-help" data-help="导演输出格式错乱或内容不完整时的自动重试次数（只有这类错误会重试；接口本身失败不重试）。重试耗尽弹出红色警告，本周期空转等下周期，可随时点上方按钮手动重新执行。">?</span></span>
+                    <input type="number" id="ra_director_retry" class="director-retry w120" min="0" max="10" value="${dir.retryLimit}">
+                    <span style="font-size:12px;color:#666;">次</span>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">计划条目 <span class="director-help" data-help="导演排好的调度表写入这个聊天世界书条目，条目保持关闭状态、不注入对话，仅供引擎读取与排查。留空则不写条目（调度仍保存在聊天元数据里，功能不受影响）。">?</span></span>
+                    <input type="text" id="ra_director_plankey" class="director-plankey w250" value="${h(dir.planKey || '')}" placeholder="ruby导演计划">
+                </div>
+            </div>
+        </div>
+        <div class="form-section">
+            <div class="form-header blue">■ 导演API <span class="director-help" data-help="导演调用哪个AI：沿用酒馆主API=当前酒馆连接的主接口；沿用RUBY分析API=本插件API设置页配置的接口；使用其他API=下方独立填写地址/密钥/模型，与分析任务完全隔离。">?</span></div>
+            <div class="form-body">
+                <div style="display:flex;gap:14px;flex-wrap:wrap;">
+                    ${apiRadio('main', '沿用酒馆主API')}
+                    ${apiRadio('analyzer', '沿用RUBY分析API')}
+                    ${apiRadio('custom', '使用其他API')}
+                </div>
+                <div id="ra_director_custom_api" style="display:${dir.apiMode === 'custom' ? '' : 'none'};margin-top:8px;">
+                    <div class="form-row"><span class="form-label">API地址</span><input type="text" id="ra_director_api_url" class="director-api-url w250" value="${h(dir.customApi?.url || '')}" placeholder="https://api.example.com/v1"></div>
+                    <div class="form-row"><span class="form-label">API密钥</span><input type="password" id="ra_director_api_key" class="director-api-key w250" value="${h(dir.customApi?.key || '')}" placeholder="sk-..."></div>
+                    <div class="form-row"><span class="form-label">模型</span><input type="text" id="ra_director_api_model" class="director-api-model w250" value="${h(dir.customApi?.model || '')}" placeholder="模型名"></div>
+                </div>
+            </div>
+        </div>
+        <div class="form-section">
+            <div class="form-header blue">■ 参考条目 <span class="director-help" data-help="勾选世界书条目供导演阅读——创作者认为对排期重要的内容（世界观、人物关系等）会随调度提示词发给导演。与分析任务的参考条目池共用同一批条目，此处勾选只影响导演。">?</span></div>
+            <div class="form-body">
+                <div id="ra_director_refs" class="checkbox-group">${renderDirectorRefs(dir)}</div>
+            </div>
+        </div>
+        <div class="form-section">
+            <div class="form-header blue">■ 任务优先级与简介 <span class="director-help" data-help="优先级：数字越大越优先（同数同级，0为普通），导演在同等条件下优先安排数字大的任务。简介：给导演看的一句话任务说明，留空则自动从任务的提示词条目里捕捉『该任务是为了/任务说明』等标记附近约200字作为切面简介。">?</span></div>
+            <div class="form-body">
+                <div id="ra_director_tasks">${renderDirectorTasks(enabledTasks)}</div>
+                ${enabledTasks.length === 0 ? '<div class="tip" style="margin-top:8px;">暂无启用的任务——请先在任务配置页添加并启用任务，导演才有可调度的对象。</div>' : ''}
+            </div>
+        </div>`;
+    updateDirectorStatus();
+    wireDirectorViewInputs(container);
+}
+
+function collectDirectorFromUI() {
+    const base = ui.director || config.normalizePreset({}).director;
+    const container = $('ra_director_view');
+    // 视图尚未渲染（或已切回任务页且内容被重建）时保留现有值
+    if (!container || !container.innerHTML.trim()) return base;
+    const num = (sel, def, min) => {
+        const v = parseInt(container.querySelector(sel)?.value, 10);
+        return Number.isFinite(v) ? Math.max(min, v) : def;
+    };
+    return {
+        ...base,
+        enabled: !!container.querySelector('.director-enabled')?.checked,
+        cycleLength: num('.director-cycle', base.cycleLength, 2),
+        minSpacing: num('.director-spacing', base.minSpacing, 0),
+        retryLimit: num('.director-retry', base.retryLimit, 0),
+        planKey: container.querySelector('.director-plankey')?.value.trim() || '',
+        apiMode: container.querySelector('.director-api:checked')?.value || base.apiMode,
+        customApi: {
+            url: container.querySelector('.director-api-url')?.value.trim() || '',
+            key: container.querySelector('.director-api-key')?.value || '',
+            model: container.querySelector('.director-api-model')?.value.trim() || '',
+        },
+        useReferences: [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var),
+    };
+}
+
+function wireDirectorViewInputs(container) {
+    on(container.querySelector('.director-enabled'), 'change', (e) => {
+        ui.director.enabled = e.target.checked;
+        triggerAutoSave();
+        engine.reinit();
+        updateDirectorStatus();
+    });
+    on(container.querySelector('.director-cycle'), 'change', (e) => {
+        ui.director.cycleLength = Math.max(2, parseInt(e.target.value, 10) || 20);
+        e.target.value = ui.director.cycleLength;
+        triggerAutoSave();
+        engine.reinit();
+    });
+    on(container.querySelector('.director-spacing'), 'change', (e) => {
+        ui.director.minSpacing = Math.max(0, parseInt(e.target.value, 10) || 0);
+        e.target.value = ui.director.minSpacing;
+        triggerAutoSave();
+    });
+    on(container.querySelector('.director-retry'), 'change', (e) => {
+        ui.director.retryLimit = Math.max(0, parseInt(e.target.value, 10) || 0);
+        e.target.value = ui.director.retryLimit;
+        triggerAutoSave();
+    });
+    on(container.querySelector('.director-plankey'), 'change', (e) => {
+        ui.director.planKey = e.target.value.trim();
+        triggerAutoSave();
+    });
+    container.querySelectorAll('.director-api').forEach((radio) => on(radio, 'change', () => {
+        ui.director.apiMode = radio.value;
+        const custom = $('ra_director_custom_api');
+        if (custom) custom.style.display = radio.value === 'custom' ? '' : 'none';
+        triggerAutoSave();
+    }));
+    ['url', 'key', 'model'].forEach((k) => on(container.querySelector(`.director-api-${k}`), 'change', (e) => {
+        ui.director.customApi[k] = e.target.value;
+        triggerAutoSave();
+    }));
+    container.querySelectorAll('.director-ref-cb').forEach((cb) => on(cb, 'change', () => {
+        ui.director.useReferences = [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var);
+        triggerAutoSave();
+    }));
+    container.querySelectorAll('.director-priority').forEach((input) => on(input, 'change', () => {
+        const t = ui.tasks.find((x) => x.id === parseInt(input.dataset.id, 10));
+        if (t) t.directorPriority = Math.max(0, Math.round(Number(input.value) || 0));
+        triggerAutoSave();
+    }));
+    container.querySelectorAll('.director-summary').forEach((input) => on(input, 'change', () => {
+        const t = ui.tasks.find((x) => x.id === parseInt(input.dataset.id, 10));
+        if (t) t.directorSummary = input.value;
+        triggerAutoSave();
+    }));
+    on($('ra_director_run'), 'click', async () => {
+        try {
+            ui.director = collectDirectorFromUI();
+            await saveCurrentSchemeFromUI();
+            await engine.forceRun('director');
+        } catch (e) {
+            window.toastr?.error?.(e.message);
+        }
+        updateDirectorStatus();
+    });
+}
+
+function setDirectorView(active) {
+    ui.directorViewActive = active;
+    const tasksView = $('ra_tasks_view');
+    const dirView = $('ra_director_view');
+    const flipBtn = $('ra_director_flip');
+    if (!tasksView || !dirView) return;
+    tasksView.style.display = active ? 'none' : '';
+    dirView.style.display = active ? '' : 'none';
+    if (flipBtn) flipBtn.textContent = active ? '⬅ 返回任务配置' : '🎬 导演模式';
+    if (active) renderDirectorView();
+}
+
+/** 导演模式一次性接线：翻转按钮、?帮助弹窗（点击弹出/点别处关闭）、引擎状态联动刷新 */
+function wireDirectorControls() {
+    on($('ra_director_flip'), 'click', () => setDirectorView(!ui.directorViewActive));
+    document.addEventListener('click', (e) => {
+        const tip = e.target?.closest?.('.director-help');
+        const existing = $('ra_director_help_pop');
+        if (!tip) {
+            if (existing) existing.remove();
+            return;
+        }
+        e.stopPropagation();
+        if (existing) existing.remove();
+        const pop = document.createElement('div');
+        pop.id = 'ra_director_help_pop';
+        pop.textContent = tip.dataset.help || '';
+        document.body.appendChild(pop);
+        const r = tip.getBoundingClientRect();
+        pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 300))}px`;
+        pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - 140)}px`;
+    });
+    engine.onStateChange(() => {
+        if (ui.directorViewActive) updateDirectorStatus();
+    });
 }
 
 function renderSchemeTabs() {

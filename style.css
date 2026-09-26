@@ -1195,3 +1195,41 @@ body.ruby-dark #ra_panel .summary-provider-card div[style] { color: #9aa0aa !imp
 body.ruby-dark #ra_panel .preset-summary-card { background: #1f222a; border-color: #454b56; }
 body.ruby-dark #ra_panel .preset-summary-card.active { background: #14231a; border-color: #3d7c47; }
 body.ruby-dark #ra_panel .preset-summary-meta { color: #9aa0aa; }
+
+/* ---------- 导演模式 ---------- */
+.director-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: 4px;
+    border-radius: 50%;
+    background: #1E4B8E;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+.director-help:hover { background: #2C5530; }
+#ra_director_help_pop {
+    position: fixed;
+    z-index: 10010;
+    max-width: 280px;
+    background: #fffbe8;
+    border: 1px solid #e0c060;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #5a4500;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+}
+#ra_panel .director-task-row { background: #f8f8f5; border: 1px solid #ddd; border-radius: 4px; padding: 6px 10px; }
+#ra_panel .director-task-row .director-priority { width: 64px; }
+body.ruby-dark #ra_panel .director-task-row { background: #1f222a; border-color: #454b56; }
+body.ruby-dark #ra_director_help_pop { background: #2a2415; border-color: #8a7a30; color: #e8dcb0; }
+body.ruby-dark #ra_panel .director-help { background: #3d6ba8; }

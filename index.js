@@ -40,6 +40,9 @@ async function rubyCommandCallback(args, text) {
                 `aiReplies: ${es.aiCount}`,
                 `cycle: ${es.cycleLength > 0 ? `${es.position}/${es.cycleLength}` : 'not configured'}`,
                 `lastRun: ${es.lastRunSummary || 'never'}`,
+                es.director?.enabled
+                    ? `director: ON round=${es.director.round} pos=${es.director.position}/${es.director.cycleLength} plan=${es.director.planReady ? `${es.director.planCount} tasks` : 'none'}${es.director.lastRunOk === false ? ` (last failed: ${es.director.lastRunReason})` : ''}`
+                    : 'director: off',
                 es.lastError ? `lastError: ${es.lastError}` : null,
             ].filter(Boolean);
             return lines.join(' | ');
@@ -56,13 +59,16 @@ async function rubyCommandCallback(args, text) {
             if (args?.all) {
                 return await forceRun('all');
             }
+            if (args?.director || String(args?.director ?? '').toLowerCase() === 'true') {
+                return await forceRun('director');
+            }
             const taskId = parseInt(String(taskArg ?? ''), 10);
             if (!Number.isFinite(taskId)) {
-                return 'usage: /ruby run task=1 | /ruby run startup=true | /ruby run all=true';
+                return 'usage: /ruby run task=1 | /ruby run startup=true | /ruby run all=true | /ruby run director=true';
             }
             return await forceRun('task', taskId);
         }
-        return 'usage: /ruby [panel | status | run | reload]  (run: task=<id> | startup=true | all=true)';
+        return 'usage: /ruby [panel | status | run | reload]  (run: task=<id> | startup=true | all=true | director=true)';
     } catch (e) {
         return `RUBY error: ${e.message}`;
     }

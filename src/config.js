@@ -27,6 +27,18 @@ export const DEFAULT_STARTUP = {
     characters: [],
 };
 
+export const DEFAULT_DIRECTOR = {
+    enabled: false,
+    displayName: '导演模式',
+    cycleLength: 20,        // 周期长短（次AI回复）；导演永远位于周期位置1
+    minSpacing: 0,          // 任务最低间隔（次AI回复）；0=完全由AI决定
+    retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
+    apiMode: 'analyzer',    // 'main'=酒馆主API | 'analyzer'=RUBY分析API | 'custom'=其他API
+    customApi: { url: '', key: '', model: '' },
+    planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
+    useReferences: [],      // 导演可勾选参考条目池
+};
+
 export const makeDefaultPreset = () => ({
     id: 'default',
     name: '默认方案',
@@ -35,6 +47,7 @@ export const makeDefaultPreset = () => ({
     tasks: [],
     nextTaskId: 1,
     startupTask: JSON.parse(JSON.stringify(DEFAULT_STARTUP)),
+    director: JSON.parse(JSON.stringify(DEFAULT_DIRECTOR)),
 });
 
 export const makeDefaultConfigData = () => ({
@@ -175,6 +188,15 @@ export function normalizePreset(raw) {
         rawStartup.cyclePositions ?? rawStartup.triggerFloors ?? mergedStartup.cyclePositions,
     );
     preset.startupTask = mergedStartup;
+    const rawDirector = (p.director && typeof p.director === 'object') ? p.director : {};
+    const mergedDirector = { ...clone(DEFAULT_DIRECTOR), ...rawDirector };
+    mergedDirector.customApi = { ...clone(DEFAULT_DIRECTOR.customApi), ...(rawDirector.customApi && typeof rawDirector.customApi === 'object' ? rawDirector.customApi : {}) };
+    mergedDirector.cycleLength = Math.max(2, Math.round(Number(rawDirector.cycleLength) || DEFAULT_DIRECTOR.cycleLength));
+    mergedDirector.minSpacing = Math.max(0, Math.round(Number(rawDirector.minSpacing) || 0));
+    mergedDirector.retryLimit = Math.min(10, Math.max(0, Math.round(Number(rawDirector.retryLimit) ?? DEFAULT_DIRECTOR.retryLimit)));
+    if (!['main', 'analyzer', 'custom'].includes(mergedDirector.apiMode)) mergedDirector.apiMode = 'analyzer';
+    mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
+    preset.director = mergedDirector;
     return preset;
 }
 
@@ -208,6 +230,9 @@ export function normalizeTask(raw) {
                 : []),
         useReferences: Array.isArray(t.useReferences) ? t.useReferences.map(String) : [],
         useOutputs: Array.isArray(t.useOutputs) ? t.useOutputs.map(String) : [],
+        // 导演模式字段：优先级数字（同数同级，数大者优先）；手动简介（空则运行时从提示词条目自动提取）
+        directorPriority: Number.isFinite(Number(t.directorPriority)) ? Math.round(Number(t.directorPriority)) : 0,
+        directorSummary: String(t.directorSummary || ''),
         // characters（任务级角色绑定）已废弃：读取时静默丢弃，避免误过滤
     };
     task.cyclePosition = task.cyclePositions[0] || 0;
