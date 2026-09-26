@@ -27,6 +27,24 @@ export const DEFAULT_STARTUP = {
     characters: [],
 };
 
+export const DEFAULT_DIRECTOR = {
+    enabled: false,
+    displayName: '导演模式',
+    cycleLength: 20,        // 周期长短（次AI回复）；导演永远位于周期位置1
+    aggressive: false,      // 激进模式：导演自决下次出现时间（输出"下次导演间隔"）
+    minSpacing: 0,          // 任务最低间隔（次AI回复）；0=完全由AI决定
+    retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
+    planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
+    useReferences: [],      // 导演可勾选参考条目池
+};
+
+const makeDefaultDirectorApi = () => ({
+    enabled: false,         // 玩家侧勾选：独立导演API（建议智商更高的模型）
+    url: '',                // 空=跟随RUBY分析API地址
+    key: '',                // 空=跟随RUBY分析API密钥
+    model: '',              // 空=跟随RUBY分析API模型
+});
+
 export const makeDefaultPreset = () => ({
     id: 'default',
     name: '默认方案',
@@ -35,6 +53,7 @@ export const makeDefaultPreset = () => ({
     tasks: [],
     nextTaskId: 1,
     startupTask: JSON.parse(JSON.stringify(DEFAULT_STARTUP)),
+    director: JSON.parse(JSON.stringify(DEFAULT_DIRECTOR)),
 });
 
 export const makeDefaultConfigData = () => ({
@@ -118,8 +137,26 @@ export function getSettings() {
     }
     store.global = normalizeConfigData(store.global || makeDefaultConfigData());
     store.characterConfigs = (store.characterConfigs && typeof store.characterConfigs === 'object') ? store.characterConfigs : {};
+    store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
+    store.directorApi.enabled = !!store.directorApi.enabled;
     store.ui = { ...makeDefaultUi(), ...(store.ui || {}) };
+    // 生成的角色分析聊天书登记簿：全局（跨角色/跨聊天），key 为 chatId（缺失时回退书名）。
+    // 在「聊天世界书」级别登记——只记录书名与所属角色，绝不给条目打标签、不靠条目 UID 识别。
+    store.generatedChatBooks = (store.generatedChatBooks && typeof store.generatedChatBooks === 'object') ? store.generatedChatBooks : {};
     return store;
+}
+
+/** 玩家侧独立导演API（全局设置，不随角色卡）：空字段跟随RUBY分析API */
+export function getDirectorApiConfig() {
+    const store = getSettings();
+    return store ? store.directorApi : makeDefaultDirectorApi();
+}
+
+export function saveDirectorApiConfig(patch = {}) {
+    const store = getSettings();
+    if (!store) return;
+    store.directorApi = { ...store.directorApi, ...patch };
+    persist();
 }
 
 export function persist() {
@@ -136,7 +173,7 @@ export function normalizeConfigData(raw) {
     result.customContentTags = Array.isArray(data.customContentTags)
         ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
         : [];
-    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚月记忆表
+    // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=SP·数据库；'yuzuki'=柚月记忆表；'baibaibook'=柏宝书
     result.summaryProvider = ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '';
     // 柚月记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
@@ -175,6 +212,19 @@ export function normalizePreset(raw) {
         rawStartup.cyclePositions ?? rawStartup.triggerFloors ?? mergedStartup.cyclePositions,
     );
     preset.startupTask = mergedStartup;
+    const rawDirector = (p.director && typeof p.director === 'object') ? p.director : {};
+    const mergedDirector = { ...clone(DEFAULT_DIRECTOR), ...rawDirector };
+    mergedDirector.cycleLength = Math.max(2, Math.round(Number(rawDirector.cycleLength) || DEFAULT_DIRECTOR.cycleLength));
+    mergedDirector.aggressive = !!rawDirector.aggressive;
+    mergedDirector.minSpacing = Math.max(0, Math.round(Number(rawDirector.minSpacing) || 0));
+    mergedDirector.retryLimit = Math.min(10, Math.max(0, Math.round(Number(rawDirector.retryLimit) ?? DEFAULT_DIRECTOR.retryLimit)));
+    mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
+    // 密钥绝不入卡：导演API是玩家侧全局设置（store.directorApi），不随角色卡走；
+    // 旧版残留的密钥类字段（apiMode/customApi/api）一律剔除
+    delete mergedDirector.apiMode;
+    delete mergedDirector.customApi;
+    delete mergedDirector.api;
+    preset.director = mergedDirector;
     return preset;
 }
 
@@ -208,6 +258,9 @@ export function normalizeTask(raw) {
                 : []),
         useReferences: Array.isArray(t.useReferences) ? t.useReferences.map(String) : [],
         useOutputs: Array.isArray(t.useOutputs) ? t.useOutputs.map(String) : [],
+        // 导演模式字段：优先级数字（同数同级，数大者优先）；手动简介（空则运行时从提示词条目自动提取）
+        directorPriority: Number.isFinite(Number(t.directorPriority)) ? Math.round(Number(t.directorPriority)) : 0,
+        directorSummary: String(t.directorSummary || ''),
         // characters（任务级角色绑定）已废弃：读取时静默丢弃，避免误过滤
     };
     task.cyclePosition = task.cyclePositions[0] || 0;
@@ -384,6 +437,75 @@ export function getBoundCharacters() {
         result.push({ avatar, name: ch?.name || avatar, source: 'local' });
     }
     return result;
+}
+
+// ---------- 生成的角色分析聊天书登记簿 ----------
+// 仅在「聊天世界书」级别登记：记录书名 + 所属角色卡，不给条目打标签、不靠条目 UID 识别。
+// 引擎写入分析输出到聊天世界书时调用 registerGeneratedChatBook 打标签（登记）。
+
+/** 取全部已登记的生成聊天书（数组，每项带 key） */
+export function getGeneratedChatBooks() {
+    const store = getSettings();
+    if (!store?.generatedChatBooks) return [];
+    return Object.entries(store.generatedChatBooks).map(([key, v]) => ({
+        key,
+        chatId: String(v?.chatId || ''),
+        chatBookName: String(v?.chatBookName || ''),
+        characterAvatar: String(v?.characterAvatar || ''),
+        characterName: String(v?.characterName || ''),
+        createdAt: Number(v?.createdAt) || 0,
+        updatedAt: Number(v?.updatedAt) || 0,
+    }));
+}
+
+/** 登记一张生成聊天书（打标签）：同 chatId 或同名书更新而非新增，幂等 */
+export function registerGeneratedChatBook({ chatId, chatBookName, characterAvatar, characterName }) {
+    const store = getSettings();
+    if (!store) return;
+    if (!store.generatedChatBooks || typeof store.generatedChatBooks !== 'object') store.generatedChatBooks = {};
+    const map = store.generatedChatBooks;
+    const name = String(chatBookName || '').trim();
+    if (!name && !chatId) return;
+
+    // 先按 chatId 命中，再按书名命中（避免同一聊天重复登记）
+    let key = '';
+    if (chatId && map[chatId]) {
+        key = chatId;
+    } else {
+        for (const [k, v] of Object.entries(map)) {
+            if (String(v?.chatBookName || '') === name) { key = k; break; }
+        }
+    }
+    if (!key) key = String(chatId || name || `book_${Date.now()}`);
+
+    if (map[key]) {
+        const ex = map[key];
+        ex.chatId = String(chatId || ex.chatId || '');
+        ex.chatBookName = name || ex.chatBookName;
+        ex.characterAvatar = String(characterAvatar || ex.characterAvatar || '');
+        ex.characterName = String(characterName || ex.characterName || '');
+        ex.updatedAt = Date.now();
+    } else {
+        map[key] = {
+            chatId: String(chatId || ''),
+            chatBookName: name,
+            characterAvatar: String(characterAvatar || ''),
+            characterName: String(characterName || ''),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+    }
+    persist();
+}
+
+/** 移除一条登记（仅从列表移除，不删除世界书本身） */
+export function unregisterGeneratedChatBook(key) {
+    const store = getSettings();
+    if (!store?.generatedChatBooks || !key) return;
+    if (store.generatedChatBooks[key]) {
+        delete store.generatedChatBooks[key];
+        persist();
+    }
 }
 
 export function getApiConfig() {

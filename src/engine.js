@@ -4,6 +4,7 @@ import * as scheduler from './scheduler.js';
 import * as reader from './reader.js';
 import * as worldbook from './worldbook.js';
 import * as ai from './ai.js';
+import * as director from './director.js';
 import { BUILTIN_REFERENCES } from './builtin-refs.js';
 import { buildMessages } from './jailbreak.js';
 
@@ -38,6 +39,43 @@ function emitState() {
     }
 }
 
+/** 导演模式状态快照（面板/状态命令用）：轮次、位置、计划就绪与覆盖数、上次运行结果 */
+function directorStateSnapshot() {
+    try {
+        const c = ctx();
+        if (!c) return { enabled: false };
+        const { data, layer } = config.resolveConfig();
+        if (layer !== 'character') return { enabled: false };
+        const dirCfg = config.getActivePreset(data).director;
+        if (!dirCfg?.enabled) return { enabled: false };
+        const aiCount = reader.countAiReplies(c.chat);
+        const meta = readDirectorMeta();
+        const anchored = Number.isFinite(meta?.anchor);
+        const plan = (meta?.plan && Number.isFinite(meta.plan.runFloor)) ? meta.plan : null;
+        const dirApiCfg = config.getDirectorApiConfig();
+        return {
+            enabled: true,
+            cycleLength: dirCfg.cycleLength,
+            aggressive: !!dirCfg.aggressive,
+            minSpacing: dirCfg.minSpacing,
+            apiOverride: dirApiCfg.enabled ? { model: dirApiCfg.model || '', urlSet: !!dirApiCfg.url, keySet: !!dirApiCfg.key } : null,
+            anchor: anchored ? meta.anchor : 0,
+            runSeq: (meta?.history?.length || 0) + 1,
+            offset: anchored ? aiCount - meta.anchor : 0,
+            planReady: !!plan,
+            planCount: plan?.assignments?.length || 0,
+            planAssignments: (plan?.assignments || []).map((a) => ({ floor: a.floor, taskId: a.taskId })),
+            nextDirectorFloor: meta?.nextDirectorFloor || 0,
+            wokenCount: meta?.woken?.length || 0,
+            manualRuns: meta?.manualRuns || 0,
+            lastRunOk: meta?.lastDirectorRun ? !!meta.lastDirectorRun.ok : null,
+            lastRunReason: meta?.lastDirectorRun?.reason || '',
+        };
+    } catch {
+        return { enabled: false };
+    }
+}
+
 export function getEngineState() {
     const c = ctx();
     const aiCount = c ? reader.countAiReplies(c.chat) : 0;
@@ -53,6 +91,7 @@ export function getEngineState() {
         lastError: state.lastError,
         lastRunAt: state.lastRunAt,
         lastRunSummary: state.lastRunSummary,
+        director: directorStateSnapshot(),
     };
 }
 
@@ -120,9 +159,20 @@ export function reinit() {
         return;
     }
     const preset = config.getActivePreset(data);
+    const dirCfg = preset.director;
+    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled));
     const len = scheduler.cycleLength(preset.startupTask, preset.tasks);
 
-    if (len <= 0) {
+    // 导演模式停用时清除遗留的导演元数据（重新启用会重新锚定，符合"回复1~2后首跑"）
+    if (dirCfg?.enabled !== true) {
+        const ns = c.chatMetadata?.extensions?.RubyAnalyzer;
+        if (ns?.director) {
+            delete ns.director;
+            saveDirectorMeta();
+        }
+    }
+
+    if (!dirActive && len <= 0) {
         state.armed = false;
         state.cycleLength = 0;
         log(`engine standby: no enabled tasks for "${state.identity.name}" (layer=${layer})`);
@@ -130,10 +180,10 @@ export function reinit() {
         return;
     }
 
-    state.cycleLength = len;
+    state.cycleLength = dirActive ? dirCfg.cycleLength : len;
     state.armed = true;
     state.baseline = reader.countAiReplies(c.chat);
-    log(`engine armed | character=${state.identity.name} | layer=${layer} | preset=${preset.name} | cycle=${len} | AI replies=${state.baseline} | position=${scheduler.positionFor(state.baseline, len)}/${len}`);
+    log(`engine armed | character=${state.identity.name} | layer=${layer} | preset=${preset.name} | ${dirActive ? `director cycle=${dirCfg.cycleLength} minSpacing=${dirCfg.minSpacing} retry=${dirCfg.retryLimit}` : `cycle=${len}`} | AI replies=${state.baseline} | position=${scheduler.positionFor(state.baseline, state.cycleLength)}/${state.cycleLength}`);
     emitState();
 }
 
@@ -165,6 +215,25 @@ function handleMessagesDeleted(cc) {
     }
     if (deletedOrdinals.length === 0) return;
 
+    // 导演模式（v2 绝对楼层调度）：删除使楼层前移，计划/下次导演/锚点同步前移，
+    // 清空导演幂等键与已触发记录（前移后的计划楼层可能落在已跑区间，重触发一次可接受）
+    const dirMeta = cc.chatMetadata?.extensions?.RubyAnalyzer?.director;
+    if (dirMeta?.v === 2) {
+        const shiftFor = (floor) => deletedOrdinals.filter((d) => d <= floor).length;
+        if (dirMeta.plan?.runFloor !== undefined) {
+            for (const a of dirMeta.plan.assignments || []) a.floor -= shiftFor(a.floor);
+            dirMeta.plan.runFloor -= shiftFor(dirMeta.plan.runFloor);
+        }
+        if (Number.isFinite(dirMeta.nextDirectorFloor)) dirMeta.nextDirectorFloor -= shiftFor(dirMeta.nextDirectorFloor);
+        if (Number.isFinite(dirMeta.anchor)) dirMeta.anchor -= shiftFor(dirMeta.anchor);
+        for (const key of [...state.triggered]) {
+            if (String(key).startsWith('dir_')) state.triggered.delete(key);
+        }
+        dirMeta.woken = [];
+        saveDirectorMeta();
+        log(`director resync: plan/next-director floors shifted for ${deletedOrdinals.length} deletion(s), dir idempotent keys cleared`);
+    }
+
     const len = state.cycleLength > 0 ? state.cycleLength : 1;
     const fromRound = Math.ceil(deletedOrdinals[0] / len);
     let clearedKeys = 0;
@@ -182,6 +251,100 @@ function handleMessagesDeleted(cc) {
 function scheduleTick() {
     if (tickTimer) clearTimeout(tickTimer);
     tickTimer = setTimeout(tick, TICK_DELAY_MS);
+}
+
+// ---------- 导演模式：聊天元数据状态（锚点/计划/历史/已触发） ----------
+
+function readDirectorMeta() {
+    const c = ctx();
+    const ns = c?.chatMetadata?.extensions?.RubyAnalyzer;
+    const d = ns?.director;
+    return (d && typeof d === 'object') ? d : null;
+}
+
+function saveDirectorMeta() {
+    const c = ctx();
+    if (typeof c?.saveMetadataDebounced === 'function') c.saveMetadataDebounced();
+}
+
+/**
+ * 取导演元数据（v2：绝对楼层调度）。
+ * - anchor: 上次导演运行（或启用锚定）时的AI楼层数
+ * - nextDirectorFloor: 下次导演运行的绝对楼层（普通模式=runFloor+周期长度；激进模式=导演自决）
+ * - plan: { runFloor, assignments:[{floor,taskId}] }（位置换算为绝对楼层：runFloor+位置-1）
+ * - history: 近5周期 {runFloor, taskIds, planned, woken, manual}（迭代学习统计）
+ * - manualRuns: 本周期玩家手动执行的分析次数
+ * 无锚点时以当前AI回复数锚定——启用后的下一条AI回复即导演首跑（回复1~2后开始）。
+ * 旧格式（v1 周期位置制）自动重置，导演重跑一次即可。
+ */
+function ensureDirectorMeta(aiCount) {
+    const c = ctx();
+    const ns = c?.chatMetadata?.extensions;
+    if (!ns) return null;
+    ns.RubyAnalyzer ||= {};
+    let d = ns.RubyAnalyzer.director;
+    if (!d || typeof d !== 'object' || d.v !== 2 || !Number.isFinite(d.anchor)) {
+        d = ns.RubyAnalyzer.director = {
+            v: 2,
+            anchor: aiCount,
+            nextDirectorFloor: aiCount + 1,
+            plan: null,
+            history: [],
+            woken: [],
+            manualRuns: 0,
+        };
+        log(`director anchored at AI reply ${aiCount}: first run right after the next reply (floor ${aiCount + 1})`);
+        saveDirectorMeta();
+    }
+    d.history ||= [];
+    d.woken ||= [];
+    d.manualRuns ||= 0;
+    return d;
+}
+
+/** 久未触发统计（按"执导次数"计）：当前生效计划=上一次执导，历史依次回溯 */
+function computeOverdue(dmeta, taskList, runSeq) {
+    const lastSeenSeq = new Map();
+    const see = (taskId, seq) => {
+        const prev = lastSeenSeq.get(taskId);
+        if (prev === undefined || seq > prev) lastSeenSeq.set(taskId, seq);
+    };
+    if (dmeta?.plan?.assignments) {
+        for (const a of dmeta.plan.assignments) see(a.taskId, runSeq - 1);
+    }
+    (dmeta?.history || []).forEach((h, idx) => {
+        for (const taskId of h.taskIds || []) see(taskId, runSeq - 2 - idx);
+    });
+    return taskList
+        .map((t) => ({ id: t.id, name: t.name, cyclesAgo: lastSeenSeq.has(t.id) ? runSeq - lastSeenSeq.get(t.id) : runSeq }))
+        .filter((t) => t.cyclesAgo >= 1)
+        .sort((a, b) => b.cyclesAgo - a.cyclesAgo)
+        .slice(0, 6);
+}
+
+/** 总结替代（普通任务与导演共用）：书签→总结边界之间的楼层换为总结文本，边界之后保持原文。
+ *  只改 inc.text（分析素材），关键词扫描、楼层计数与书签均不受影响 */
+function applySummaryReplacement(c, inc, providerSummary, customTags = []) {
+    if (!providerSummary) return;
+    const boundaryOrdinal = reader.ordinalForIndex(c.chat, providerSummary.boundary);
+    if (boundaryOrdinal >= inc.startFloor) {
+        const summarizedUpTo = Math.min(boundaryOrdinal, inc.endFloor);
+        const sections = [];
+        sections.push(`【${providerSummary.label}（第${inc.startFloor}至${summarizedUpTo}楼已总结内容的浓缩替代，作为分析素材）】\n${providerSummary.text}`);
+        if (boundaryOrdinal < inc.endFloor) {
+            const rawPart = reader.readFloorsRange(boundaryOrdinal + 1, inc.endFloor, customTags);
+            if (rawPart.text) {
+                sections.push(`【本次正文（增量，第${boundaryOrdinal + 1}楼至第${inc.endFloor}楼，共${rawPart.count}楼）】\n${rawPart.text}`);
+            }
+        } else {
+            sections.push(`（第${inc.endFloor}楼及之前的正文已全部由上方${providerSummary.label}替代，本次无未总结新正文）`);
+        }
+        inc.text = sections.join('\n\n');
+        inc.summaryApplied = true;
+        log(`${providerSummary.label} applied: floors ${inc.startFloor}-${summarizedUpTo} replaced by summary (boundary mesId=${providerSummary.boundary}, ${providerSummary.text.length} chars)`);
+    } else {
+        log(`summary boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
+    }
 }
 
 async function tick() {
@@ -205,6 +368,51 @@ async function tick() {
         return;
     }
     const preset = config.getActivePreset(data);
+    const dirCfg = preset.director;
+    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled));
+
+    // —— 导演模式：绝对楼层调度——导演在 nextDirectorFloor 运行，任务按计划楼层唤醒（静态位置被接管）——
+    if (dirActive) {
+        const dmeta = ensureDirectorMeta(aiCount);
+        if (!dmeta) return;
+        state.baseline = aiCount;
+        state.cycleLength = dirCfg.cycleLength;
+
+        const batch = [];
+        if (aiCount === dmeta.nextDirectorFloor) {
+            const idemKey = `dir_${aiCount}_director`;
+            if (!state.triggered.has(idemKey)) {
+                state.triggered.add(idemKey);
+                batch.push({ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: aiCount, source: 'auto' });
+            }
+        } else if (dmeta.plan) {
+            for (const a of dmeta.plan.assignments.filter((x) => x.floor === aiCount)) {
+                const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
+                if (!task) continue;
+                const type = `task_${task.id}`;
+                const idemKey = `dir_${aiCount}_${type}`;
+                if (state.triggered.has(idemKey)) {
+                    log(`idempotent skip: ${task.displayName} (floor ${aiCount})`);
+                    continue;
+                }
+                state.triggered.add(idemKey);
+                batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: aiCount - dmeta.plan.runFloor + 1, sourceFloor: aiCount, source: 'director' });
+                dmeta.woken.push({ floor: aiCount, taskId: task.id });
+                saveDirectorMeta();
+            }
+        }
+        emitState();
+        if (batch.length === 0) return;
+        log(`director trigger at AI reply ${aiCount}: ${batch.map((t) => t.displayName).join(', ')}`);
+        await runPipeline(batch);
+        if (state.needTick) {
+            state.needTick = false;
+            scheduleTick();
+        }
+        return;
+    }
+
+    // —— 静态周期调度（原逻辑）——
     const startupTask = preset.startupTask;
     const tasks = preset.tasks;
     const len = scheduler.cycleLength(startupTask, tasks);
@@ -290,12 +498,223 @@ export async function forceRun(kind, taskId) {
         batch = scheduler.allEnabledTasks(preset.startupTask, preset.tasks, state.identity)
             .map((t) => ({ ...t, triggeredAt: scheduler.positionFor(aiCount, len), sourceFloor: aiCount, source: 'force' }));
         if (batch.length === 0) throw new Error('没有已启用的任务');
+    } else if (kind === 'director') {
+        const dirCfg = preset.director;
+        if (!dirCfg?.enabled) throw new Error('导演模式未启用：请先在导演面板启用导演周期');
+        if (!(preset.tasks || []).some((t) => t.enabled)) throw new Error('没有已启用的任务，导演无可调度');
+        batch = [{ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: aiCount, source: 'force' }];
     } else {
         throw new Error(`unknown forceRun kind: ${kind}`);
     }
 
+    // 手动执行计入导演迭代统计（本周期玩家手动分析次数）
+    if (kind !== 'director') {
+        const dm = readDirectorMeta();
+        if (dm) {
+            dm.manualRuns = (dm.manualRuns || 0) + batch.length;
+            saveDirectorMeta();
+        }
+    }
+
     await runPipeline(batch);
     return `${batch.map((t) => t.displayName).join(', ')} 执行完毕`;
+}
+
+/**
+ * 导演任务执行：组装高度结构化提示词（任务清单/排期规则/调度参考/正文/参考条目/输出格式），
+ * 调用导演API，严格解析调度表——仅格式错乱/内容不完整按创作者设定的次数自动重试；
+ * 成功后计划写入聊天元数据（tick 查表唤醒）+ 聊天世界书计划条目（保持关闭），并轮转近5周期历史。
+ */
+async function runDirectorTask(d, ctxObj) {
+    const { cfgData, preset, charBook, chatBook, referencePool, referenceValues, providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart } = ctxObj;
+    const c = ctx();
+    const dirCfg = d.config;
+    const L = dirCfg.cycleLength;
+    const dmeta = ensureDirectorMeta(c ? reader.countAiReplies(c.chat) : 0);
+    if (!dmeta) throw new Error('聊天元数据不可用');
+    const runSeq = dmeta.history.length + 1;
+
+    // 独立导演API（玩家面板勾选，全局设置）：仅覆盖 url/key/model，空字段跟随RUBY分析API；
+    // 流式等传输方式完全跟随RUBY基础API设置，不存在独立传输设计
+    const dirApi = config.getDirectorApiConfig();
+    const effApiCfg = dirApi.enabled
+        ? { ...apiCfg, url: dirApi.url || apiCfg.url, key: dirApi.key || apiCfg.key, model: dirApi.model || apiCfg.model }
+        : apiCfg;
+    log(`director api: ${dirApi.enabled
+        ? `独立（model=${effApiCfg.model || '未设置'}｜url=${dirApi.url ? '已覆盖' : '跟随'}｜key=${dirApi.key ? '已覆盖' : '跟随'}）`
+        : '未启用 — 跟随RUBY基础API'}`);
+
+    // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读
+    let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
+    if (inc.count === 0 || !inc.text) {
+        if (d.source === 'force') {
+            reader.resetBookmark('director');
+            inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
+            log(`director force run: bookmark reset, re-reading ${inc.count} floors`);
+        } else {
+            log('director: no new floors since last run (bookmark at current), scheduling with empty context');
+        }
+    }
+    applySummaryReplacement(c, inc, providerSummary, customTags);
+    const contextText = reader.capText(inc.text).text;
+
+    // 任务清单：id+名称必发；简介手写优先，否则从提示词条目自动提取约200字切面
+    const enabledTasks = (preset.tasks || []).filter((t) => t.enabled);
+    const taskList = [];
+    for (const t of enabledTasks) {
+        let brief = String(t.directorSummary || '').trim();
+        if (!brief && t.promptKey) {
+            try {
+                const content = await worldbook.readEntry(charBook, chatBook, t.promptKey, true);
+                brief = director.extractTaskBrief(content);
+            } catch { /* 简介提取失败不阻断 */ }
+        }
+        taskList.push({ id: t.id, name: t.displayName || `任务#${t.id}`, priority: t.directorPriority || 0, brief });
+    }
+
+    // 导演勾选的参考条目（创作者认为对导演重要的世界书内容）
+    const refSections = [];
+    for (const varName of dirCfg.useReferences || []) {
+        const content = referenceValues[varName];
+        if (content && content !== '（未设定）') {
+            const refConfig = referencePool.find((r) => r.varName === varName);
+            refSections.push(`【${refConfig?.label || refConfig?.entryKey || varName}】\n${content}`);
+        }
+    }
+
+    const round = runSeq;
+    const prevPlan = dmeta.plan;
+    const nameOf = (taskId) => taskList.find((t) => t.id === taskId)?.name || `任务#${taskId}`;
+    const lastCycle = (prevPlan?.assignments || []).map((a) => ({
+        position: a.floor - prevPlan.runFloor + 1,
+        taskId: a.taskId,
+        name: nameOf(a.taskId),
+    }));
+    const woken = (dmeta.woken || []).map((a) => ({
+        position: prevPlan ? a.floor - prevPlan.runFloor + 1 : a.floor,
+        taskId: a.taskId,
+        name: nameOf(a.taskId),
+    }));
+    const overdue = computeOverdue(dmeta, taskList, round);
+    const lastStats = prevPlan ? {
+        planned: prevPlan.assignments.length,
+        woken: dmeta.woken.length,
+        manual: dmeta.manualRuns || 0,
+    } : null;
+
+    const prompt = director.buildDirectorPrompt({
+        tasks: taskList,
+        cycleLength: L,
+        minSpacing: dirCfg.minSpacing,
+        aggressive: !!dirCfg.aggressive,
+        round,
+        lastCycle,
+        woken,
+        overdue,
+        lastStats,
+        contextText,
+        refSections,
+    });
+    const messages = buildMessages('导演模式', prompt, cfgData);
+
+    // gemini 3.5 及以上（含pro/flash）已取消assistant预填充支持：破限预填充消息自动降为user
+    const effModel = String(effApiCfg.model || '');
+    if (director.isGeminiPostPrefillDrop(effModel)) {
+        let converted = 0;
+        for (const m of messages) {
+            if (m.role === 'assistant') { m.role = 'user'; converted++; }
+        }
+        if (converted > 0) log(`gemini 3.5+ model detected (${effModel}): ${converted} prefill assistant message(s) -> user`);
+    }
+
+    // 导演就是分析任务：genParams/messages 与任务循环完全一致；apiCfg 仅按导演页的复制粘贴覆盖 url/key/model
+    notify('info', '🎬 导演排期中...', { timeOut: 4000 });
+    const maxAttempts = 1 + Math.max(0, Math.round(dirCfg.retryLimit || 0));
+    let parsed = null;
+    let lastReason = '';
+    let attempts = 0;
+    while (attempts < maxAttempts) {
+        attempts++;
+        const result = await ai.callModel({
+            apiCfg: effApiCfg,
+            genParams,
+            messages,
+            taskLabel: `导演模式${attempts > 1 ? `(重试${attempts - 1})` : ''}`,
+        });
+        parsed = director.parseDirectorSchedule(result, taskList);
+        if (!parsed.retryable) break;
+        lastReason = parsed.reason;
+        warn(`director schedule parse failed (attempt ${attempts}/${maxAttempts}): ${lastReason}`);
+    }
+    if (!parsed || parsed.retryable) {
+        state.lastError = `导演模式失败：${lastReason}`;
+        dmeta.lastDirectorRun = { round, at: Date.now(), ok: false, reason: lastReason };
+        saveDirectorMeta();
+        emitState();
+        notify('error', `🔴 导演模式失败：${lastReason}（已重试 ${attempts - 1} 次）。本周期无调度计划，可在导演面板手动重新执行`, { timeOut: 10000 });
+        return;
+    }
+
+    // 中途切换聊天/角色则丢弃结果
+    if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
+        warn('director: chat changed during generation, plan discarded');
+        return;
+    }
+
+    // 下次导演间隔：激进模式由导演自决（"下次导演间隔"字段），普通模式=周期长度
+    const runFloor = inc.endFloor || dmeta.anchor + 1;
+    const gap = dirCfg.aggressive && Number.isFinite(parsed.directorGap) && parsed.directorGap >= 2
+        ? Math.min(parsed.directorGap, 60)
+        : L;
+    const validated = director.validateSchedule(parsed.assignments, { maxPosition: gap - 1, minSpacing: dirCfg.minSpacing, taskList });
+    for (const w of validated.warnings) warn(`director schedule: ${w}`);
+
+    // 历史轮转：上一周期计划连同实际表现（计划数/触发数/手动次数）进历史，供迭代学习（最多5条）
+    if (prevPlan && Number.isFinite(prevPlan.runFloor)) {
+        dmeta.history.unshift({
+            runFloor: prevPlan.runFloor,
+            taskIds: prevPlan.assignments.map((a) => a.taskId),
+            planned: prevPlan.assignments.length,
+            woken: dmeta.woken.length,
+            manual: dmeta.manualRuns || 0,
+        });
+        dmeta.history = dmeta.history.slice(0, 5);
+    }
+    dmeta.plan = {
+        runFloor,
+        assignments: validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, taskId: a.taskId })),
+        createdAt: Date.now(),
+    };
+    dmeta.nextDirectorFloor = runFloor + gap;
+    dmeta.anchor = runFloor;
+    dmeta.woken = [];
+    dmeta.manualRuns = 0;
+    dmeta.lastDirectorRun = { floor: runFloor, at: Date.now(), ok: true, gap, aggressive: !!dirCfg.aggressive };
+    saveDirectorMeta();
+    reader.saveBookmark('director', inc.endFloor);
+
+    // 计划条目写入聊天世界书（保持关闭，仅引擎读取/排查用）
+    if (chatBook && dirCfg.planKey) {
+        try {
+            const content = [
+                `【RUBY导演计划·第${round}次执导】（自动生成，请保持条目关闭，仅供导演引擎读取）`,
+                `导演运行楼层: ${runFloor}｜下次导演: 第${dmeta.nextDirectorFloor}楼${dirCfg.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${L}）`}`,
+                ...validated.assignments.map((a) => `第${a.floor}楼: task${a.taskId} ${nameOf(a.taskId)}`),
+            ].join('\n');
+            await worldbook.writeOutputEntry(chatBook, { key: dirCfg.planKey, content, disable: true });
+            await worldbook.persistBook(chatBook);
+        } catch (e) {
+            warn(`director plan entry write failed: ${e?.message || e}`);
+        }
+    }
+
+    state.lastRunAt = Date.now();
+    state.lastRunSummary = validated.assignments.length > 0
+        ? `导演计划：${validated.assignments.length}个任务（第${round}次执导，下次导演第${dmeta.nextDirectorFloor}楼）`
+        : `导演计划：本周期不排任务（第${round}次执导）`;
+    notify('success', `🎬 导演计划已生成（第${round}次执导）：${validated.assignments.map((a) => `第${a.floor}楼→task${a.taskId}`).join('，') || '本周期无任务'}｜下次导演第${dmeta.nextDirectorFloor}楼`, { timeOut: 8000 });
+    log(`director plan ready: ${JSON.stringify(dmeta.plan.assignments)} | nextDirectorFloor=${dmeta.nextDirectorFloor}`);
+    emitState();
 }
 
 export async function runPipeline(taskBatch) {
@@ -321,6 +740,7 @@ export async function runPipeline(taskBatch) {
 
     let completedCount = 0;
     let failedCount = 0;
+    let wroteToChatBook = false;
 
     try {
         const charBook = await worldbook.getCharBookName();
@@ -409,6 +829,15 @@ export async function runPipeline(taskBatch) {
             }
         }
 
+        // —— 导演任务：单独执行器，不进普通任务循环 ——
+        if (taskBatch.length === 1 && taskBatch[0].type === 'director') {
+            await runDirectorTask(taskBatch[0], {
+                cfgData, preset, charBook, chatBook, referencePool, referenceValues,
+                providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart,
+            });
+            return; // finally 复位 running
+        }
+
         for (let taskIndex = 0; taskIndex < taskBatch.length; taskIndex++) {
             const current = taskBatch[taskIndex];
             const taskConfig = current.config;
@@ -443,8 +872,9 @@ export async function runPipeline(taskBatch) {
 
                 // 关键词扫描作用于替换/截断前的完整增量原文：与总结机制解耦
                 // （扫原始楼层而非总结浓缩文本，避免已总结楼层里的关键词被永久漏扫），
-                // 同时防止截断机制吞掉最新楼层里的触发关键词
-                const keywordScan = current.source === 'force'
+                // 同时防止截断机制吞掉最新楼层里的触发关键词。
+                // 导演模式排中的任务不扫描——导演排了就跑，调度权完全在导演
+                const keywordScan = (current.source === 'force' || current.source === 'director')
                     ? { run: true, keywords: [], matched: [] }
                     : scheduler.shouldRunByKeywordScan(taskConfig, inc.text);
                 if (!keywordScan.run) {
@@ -455,29 +885,7 @@ export async function runPipeline(taskBatch) {
                     log(`keyword scan hit: ${keywordScan.matched.join(', ')}`);
                 }
 
-                // 应用总结替代：书签→总结边界之间的楼层换为总结文本，边界之后保持原文。
-                // 只改注入给AI的分析素材，关键词扫描、楼层计数与书签均不受影响
-                if (providerSummary) {
-                    const boundaryOrdinal = reader.ordinalForIndex(c.chat, providerSummary.boundary);
-                    if (boundaryOrdinal >= inc.startFloor) {
-                        const summarizedUpTo = Math.min(boundaryOrdinal, inc.endFloor);
-                        const sections = [];
-                        sections.push(`【${providerSummary.label}（第${inc.startFloor}至${summarizedUpTo}楼已总结内容的浓缩替代，作为分析素材）】\n${providerSummary.text}`);
-                        if (boundaryOrdinal < inc.endFloor) {
-                            const rawPart = reader.readFloorsRange(boundaryOrdinal + 1, inc.endFloor, customTags);
-                            if (rawPart.text) {
-                                sections.push(`【本次正文（增量，第${boundaryOrdinal + 1}楼至第${inc.endFloor}楼，共${rawPart.count}楼）】\n${rawPart.text}`);
-                            }
-                        } else {
-                            sections.push(`（第${inc.endFloor}楼及之前的正文已全部由上方${providerSummary.label}替代，本次无未总结新正文）`);
-                        }
-                        inc.text = sections.join('\n\n');
-                        inc.summaryApplied = true;
-                        log(`${providerSummary.label} applied: floors ${inc.startFloor}-${summarizedUpTo} replaced by summary (boundary mesId=${providerSummary.boundary}, ${providerSummary.text.length} chars)`);
-                    } else {
-                        log(`summary boundary (ordinal ${boundaryOrdinal}) before read window start ${inc.startFloor}, no replacement`);
-                    }
-                }
+                applySummaryReplacement(c, inc, providerSummary, customTags);
 
                 // 20万字符上限：只截断对话正文（保留靠前部分、抛弃后续剩余正文）。
                 // 参考条目池与历史分析输出在下方组装阶段追加，从不参与此上限，绝不因截断丢失。
@@ -621,6 +1029,7 @@ export async function runPipeline(taskBatch) {
                     selective: !!taskConfig.selective,
                     selectiveKeys: taskConfig.selectiveKeys,
                 });
+                wroteToChatBook = true;
 
                 await worldbook.disableCharEntry(charBook, outputKey);
                 outputValues[outputVarName] = result.trim();
@@ -637,6 +1046,24 @@ export async function runPipeline(taskBatch) {
 
         if (completedCount > 0 && chatBook) {
             await worldbook.persistBook(chatBook);
+        }
+
+        // 给本次写入分析输出的「聊天世界书」打标签（登记到全局登记簿）：
+        // 只在书级别记录书名 + 所属角色，不碰条目、不靠 UID 识别
+        if (wroteToChatBook) {
+            try {
+                const identity = config.getCharacterIdentity();
+                config.registerGeneratedChatBook({
+                    chatId: chatIdAtStart || '',
+                    chatBookName: chatBook,
+                    characterAvatar: identity?.avatar || '',
+                    characterName: identity?.name || charName || '',
+                });
+                window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed'));
+                log(`generated chat book registered: ${chatBook} (${identity?.name || charName})`);
+            } catch (e) {
+                warn(`register generated chat book failed: ${e?.message || e}`);
+            }
         }
 
         state.lastRunAt = Date.now();
