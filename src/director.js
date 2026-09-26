@@ -254,12 +254,14 @@ export function validateSchedule(assignments, { cycleLength, minSpacing, taskLis
 /**
  * 导演API三选一：'main'=酒馆主API；'analyzer'=RUBY分析API；'custom'=其他API（独立url/key/model）。
  * 返回 ai.callModel 可用的 apiCfg。
+ * 通道与任务调用完全一致：自定义端点同样走 ChatCompletionService/后端端点，
+ * stream 跟随分析API的既有偏好（假流式等端点的流式可用性已在分析任务中验证），仅 url/key/model 独立。
  */
 export function resolveDirectorApiCfg(apiMode, analyzerApi, customApi) {
     if (apiMode === 'main') return { provider: 'main' };
     if (apiMode === 'custom') {
         const c = customApi || {};
-        return { provider: 'custom', url: String(c.url || ''), key: String(c.key || ''), model: String(c.model || ''), stream: true, cache: [] };
+        return { provider: 'custom', url: String(c.url || ''), key: String(c.key || ''), model: String(c.model || ''), stream: analyzerApi?.stream !== false, cache: [] };
     }
     return analyzerApi;
 }
