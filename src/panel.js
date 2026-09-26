@@ -9,7 +9,6 @@ import * as cardwriter from './cardwriter.js';
 import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, getBaibaibookStatus, ordinalForIndex } from './reader.js';
 import { isDarkMode } from './settings.js';
 import { BUILTIN_REFERENCES, findShadowingKey } from './builtin-refs.js';
-import * as director from './director.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -33,8 +32,6 @@ const ui = {
     expandedTasks: new Set(),
     collapsedJb: new Set(),
     importedTemplateName: '',
-    directorViewActive: false,
-    director: null,
 };
 
 let panelBuilt = false;
@@ -211,7 +208,6 @@ function buildPanel() {
     wireTagControls();
     wireRefPoolControls();
     wireTaskControls();
-    wireDirectorControls();
     wireBindingControls();
     wirePresetIoControls();
     wireCardWriterControls(root);
@@ -341,33 +337,6 @@ function buildShellHtml() {
                                     <label class="inline"><input type="checkbox" id="ra_notify" checked> 分析进度提示</label>
                                     <label class="inline"><input type="checkbox" id="ra_orb_show" checked> 显示悬浮球</label>
                                 </span>
-                            </div>
-                            <div class="form-row" id="ra_dir_api_wrap" style="flex-direction:column;align-items:stretch;gap:8px;border:1.5px dashed #bbb;border-radius:6px;padding:10px 12px;">
-                                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                                    <label class="inline" id="ra_dir_api_toggle_label" style="font-weight:700;">
-                                        <input type="checkbox" id="ra_dir_api_enabled"> 🎬 独立导演API
-                                    </label>
-                                    <span class="director-help" data-help="导演是整个系统里最吃智商的一环——它要理解剧情走向、权衡任务优先级、规划触发节奏。分析任务用便宜快速的模型完全没问题，导演建议换成智商更高的模型（更强的推理模型），排期质量会明显提升。勾选后默认复制当前 RUBY API 的地址与密钥，只需重选模型；地址/密钥必要时也可编辑。传输方式（流式与否）完全沿用 RUBY 基础 API 设置。">?</span>
-                                    <span id="ra_dir_api_hint" class="hidden" style="font-size:11px;color:#C41E3A;font-weight:700;">⚠ 导演模式已启用——建议配置独立导演API并选用更强的模型</span>
-                                </div>
-                                <div id="ra_dir_api_fields" class="hidden" style="display:flex;flex-direction:column;gap:8px;">
-                                    <div class="form-row" style="margin:0;">
-                                        <span class="form-label">API地址</span>
-                                        <input id="ra_dir_api_url" class="w320" placeholder="默认=当前RUBY API地址">
-                                    </div>
-                                    <div class="form-row" style="margin:0;">
-                                        <span class="form-label">API密钥</span>
-                                        <input id="ra_dir_api_key" class="w320" type="password" placeholder="默认=当前RUBY API密钥">
-                                    </div>
-                                    <div class="form-row" style="margin:0;">
-                                        <span class="form-label">模型名称</span>
-                                        <span class="form-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                                            <select id="ra_dir_api_model_select" class="w250 hidden"></select>
-                                            <input id="ra_dir_api_model_text" class="w250" placeholder="默认=当前RUBY API模型">
-                                            <button id="ra_dir_api_connect" class="btn outline small">连接/拉取模型</button>
-                                        </span>
-                                    </div>
-                                </div>
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>主API</strong>：通过酒馆原生 <code>generateRaw</code> 走当前连接的模型，仅借用通道——<u>不注入预设的提示词</u>（主提示词/越狱/角色卡/聊天记录一概不进上下文），发送的只有 RUBY 自己组装的破限消息与任务提示词，与酒馆自身静默提示词同一机制；RUBY 生成参数会按官方事件钩子覆写到本次请求。<br>
@@ -515,11 +484,6 @@ function buildShellHtml() {
                 </div>
 
                 <div class="sub-content" data-subcontent="tasks" style="padding:0;display:none;">
-                    <div id="ra_director_flip_bar" style="padding:10px 16px 0;display:flex;gap:8px;align-items:center;">
-                        <button id="ra_director_flip" class="btn director-flip-btn director-enter" style="flex:1;padding:10px;font-size:14px;font-weight:700;">🎬 导演模式</button>
-                        <span class="director-help" data-help="导演模式：开启后，Ruby作为导演在本周期位置1（一条AI回复后）运行一次，根据剧情发展、任务优先级与近5周期历史，为本周期排出各分析任务的触发位置。导演排期后普通任务的静态周期位置被接管；导演排中的任务到点即跑（忽略关键词扫描）。点击左侧按钮进入导演配置页。">?</span>
-                    </div>
-                    <div id="ra_tasks_view">
                     <div id="ra_scheme_tabs" class="scheme-tabs"></div>
                     <div id="ra_scheme_area" class="tasks-flex" style="padding:16px;">
                         <div class="scheme-header">
@@ -586,8 +550,6 @@ function buildShellHtml() {
                             <button id="ra_tasks_save" class="btn blue">💾 保存当前方案</button>
                         </div>
                     </div>
-                    </div>
-                    <div id="ra_director_view" style="display:none;padding:16px;"></div>
                 </div>
 
                 <div class="sub-content" data-subcontent="binding" style="padding:16px;display:none;">
@@ -1071,17 +1033,6 @@ function renderSchedule(data, layer) {
         return;
     }
 
-    // 导演模式：任务触发时间表动态跟随导演计划（图表化，与创作者面板时间线同源）
-    const ds = engine.getEngineState()?.director;
-    if (ds?.enabled) {
-        const c = ctx();
-        const parts = buildDirectorCycleParts(ds, c ? countAiReplies(c.chat) : 0);
-        el.innerHTML = parts.waiting
-            ? `<div style="text-align:center;padding:10px;color:#666;">${h(parts.waitNote)}</div>`
-            : `<div style="font-size:12px;font-weight:600;color:#666;margin-bottom:6px;">${h(parts.badge)}｜${h(parts.counter)}</div>${parts.track}${parts.list}`;
-        return;
-    }
-
     if (preset.startupTask?.enabled && scheduler.taskMatchesCharacter(preset.startupTask, identity)) {
         const positions = scheduler.startupPositions(preset.startupTask).join(',');
         lines.push(`<div>📌 位置<strong>${positions}</strong> → ${h(preset.startupTask.displayName || '开局分析')}</div>`);
@@ -1205,21 +1156,6 @@ function loadApiTab(data) {
     $('ra_notify').checked = uiCfg.notify !== false;
     $('ra_orb_show').checked = !uiCfg.orbHidden;
 
-    // 独立导演API（玩家侧全局设置）：勾选高亮提醒 + 字段水合
-    const dirApi = config.getDirectorApiConfig();
-    $('ra_dir_api_enabled').checked = !!dirApi.enabled;
-    $('ra_dir_api_url').value = dirApi.url || '';
-    $('ra_dir_api_key').value = dirApi.key || '';
-    $('ra_dir_api_model_text').value = dirApi.model || '';
-    const dirModelSelect = $('ra_dir_api_model_select');
-    if (Array.isArray(apiCfg.cache) && apiCfg.cache.length > 0 && dirApi.enabled) {
-        dirModelSelect.innerHTML = apiCfg.cache.map((id) => `<option value="${h(id)}">${h(id)}</option>`).join('');
-        if (dirApi.model) dirModelSelect.value = dirApi.model;
-        else if (apiCfg.model) dirModelSelect.value = apiCfg.model;
-    }
-    syncDirectorApiUi();
-    updateDirectorApiHighlight();
-
     const modelSelect = $('ra_api_model_select');
     const modelText = $('ra_api_model_text');
     if (Array.isArray(apiCfg.cache) && apiCfg.cache.length > 0) {
@@ -1271,91 +1207,7 @@ function loadApiTab(data) {
     };
 }
 
-/** 独立导演API字段展开/收起 */
-function syncDirectorApiUi() {
-    const enabled = !!$('ra_dir_api_enabled')?.checked;
-    $('ra_dir_api_fields')?.classList.toggle('hidden', !enabled);
-}
-
-/** 高亮提醒：导演模式启用但未配置独立导演API时，勾选框区域醒目提醒（提倡换智商更高的模型） */
-function updateDirectorApiHighlight() {
-    const wrap = $('ra_dir_api_wrap');
-    if (!wrap) return;
-    const directorEnabled = !!engine.getEngineState()?.director?.enabled;
-    const configured = !!config.getDirectorApiConfig().enabled;
-    const needed = directorEnabled && !configured;
-    wrap.classList.toggle('director-needed', needed);
-    $('ra_dir_api_hint')?.classList.toggle('hidden', !needed);
-}
-
 function wirePlayerSections() {
-    on($('ra_dir_api_enabled'), 'change', (e) => {
-        const enabled = e.target.checked;
-        if (enabled) {
-            // 默认复制当前 RUBY API 的地址与密钥（复制粘贴语义）；模型留空=跟随RUBY API
-            const apiCfg = config.getApiConfig();
-            if (!$('ra_dir_api_url').value.trim()) $('ra_dir_api_url').value = apiCfg.url || '';
-            if (!$('ra_dir_api_key').value) $('ra_dir_api_key').value = apiCfg.key || '';
-            if (!$('ra_dir_api_model_text').value.trim() && !$('ra_dir_api_model_select').value) {
-                $('ra_dir_api_model_text').value = apiCfg.model || '';
-            }
-        }
-        // 勾选时立即持久化全部字段（否则复制的值只存在DOM里，重载即丢）
-        config.saveDirectorApiConfig({
-            enabled,
-            url: $('ra_dir_api_url').value.trim(),
-            key: $('ra_dir_api_key').value,
-            model: $('ra_dir_api_model_text').value.trim(),
-        });
-        syncDirectorApiUi();
-        updateDirectorApiHighlight();
-        window.toastr?.success?.(enabled ? '已启用独立导演API（默认沿用当前RUBY API，可重选模型）' : '已停用独立导演API，导演跟随RUBY分析API');
-    });
-    on($('ra_dir_api_url'), 'change', () => {
-        config.saveDirectorApiConfig({ url: $('ra_dir_api_url').value.trim() });
-    });
-    on($('ra_dir_api_key'), 'change', () => {
-        config.saveDirectorApiConfig({ key: $('ra_dir_api_key').value });
-    });
-    on($('ra_dir_api_model_text'), 'change', () => {
-        config.saveDirectorApiConfig({ model: $('ra_dir_api_model_text').value.trim() });
-    });
-    on($('ra_dir_api_model_select'), 'change', () => {
-        const chosen = $('ra_dir_api_model_select').value || '';
-        if (chosen) {
-            $('ra_dir_api_model_text').value = chosen;
-            config.saveDirectorApiConfig({ model: chosen });
-            window.toastr?.success?.('已选择导演模型');
-        }
-    });
-    on($('ra_dir_api_connect'), 'click', async () => {
-        const btn = $('ra_dir_api_connect');
-        try {
-            const apiCfg = config.getApiConfig();
-            const base = $('ra_dir_api_url').value.trim() || apiCfg.url || '';
-            const key = $('ra_dir_api_key').value.trim() || apiCfg.key || '';
-            if (!base) { window.toastr?.warning?.('请先填写 API 地址'); return; }
-            if (!key) { window.toastr?.warning?.('请先填写 KEY'); return; }
-            btn.disabled = true;
-            btn.textContent = '连接中...';
-            const models = await ai.fetchModelList(base, key);
-            if (!models.length) { window.toastr?.warning?.('未获取到模型'); return; }
-            const modelSelect = $('ra_dir_api_model_select');
-            modelSelect.innerHTML = models.map((id) => `<option value="${h(id)}">${h(id)}</option>`).join('');
-            const current = config.getDirectorApiConfig().model;
-            modelSelect.value = models.includes(current) ? current : models[0];
-            $('ra_dir_api_model_text').value = modelSelect.value;
-            modelSelect.classList.remove('hidden');
-            $('ra_dir_api_model_text').classList.add('hidden');
-            config.saveDirectorApiConfig({ model: modelSelect.value });
-            window.toastr?.success?.(`获取成功：${models.length} 个模型`);
-        } catch (e) {
-            window.toastr?.error?.(e.message || '连接失败');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = '连接/拉取模型';
-        }
-    });
     on($('ra_api_connect'), 'click', async () => {
         const btn = $('ra_api_connect');
         try {
@@ -1934,15 +1786,6 @@ function collectTasksFromUI() {
         }));
     });
 
-    // 导演模式字段（优先级/简介在导演页编辑，任务卡不渲染）从 ui.tasks 合并回传，避免重建任务对象时丢失
-    for (const t of tasks) {
-        const prev = (ui.tasks || []).find((pt) => pt.id === t.id);
-        if (prev) {
-            t.directorPriority = Number.isFinite(Number(prev.directorPriority)) ? Math.round(Number(prev.directorPriority)) : 0;
-            t.directorSummary = String(prev.directorSummary || '');
-        }
-    }
-
     const refKeyByVar = new Map((ui.refs || []).map((r) => [String(r.varName || ''), String(r.entryKey || '').trim()]));
     const outputKeyByVar = new Map(tasks.map((t) => [String(t.outputVarName || `task_${t.id}_Output`), String(t.outputKey || '').trim()]));
 
@@ -2260,13 +2103,6 @@ function renderCycleInfo() {
     const c = ctx();
     const currentCounter = c ? countAiReplies(c.chat) : 0;
 
-    // 导演模式：时间线动态跟随导演计划（绝对楼层），不再读静态周期位置
-    const ds = engine.getEngineState()?.director;
-    if (ds?.enabled) {
-        renderDirectorCycle(ds, { lengthBadge, counterBadge, timeline, taskList, currentCounter });
-        return;
-    }
-
     const tasksFromUI = [];
     document.querySelectorAll('.task-card[data-id]').forEach((card) => {
         const taskId = parseInt(card.dataset.id, 10);
@@ -2365,114 +2201,6 @@ function renderCycleInfo() {
     taskList.innerHTML = listHtml;
 }
 
-/** 导演计划图表构建（创作者时间线与玩家任务时间表共用）：🎬起点→任务点位（已触发✅）→▶当前→🎬下次导演 */
-function buildDirectorCycleParts(ds, currentCounter) {
-    const anchor = ds.anchor || 0;
-    const nextFloor = ds.nextDirectorFloor || (anchor + ds.cycleLength);
-    const span = Math.max(1, nextFloor - anchor);
-    const nameOf = (taskId) => {
-        const t = ui.tasks.find((x) => x.id === taskId);
-        return t ? (t.displayName || `任务#${t.id}`) : `任务#${taskId}`;
-    };
-    const badge = ds.aggressive ? `导演间隔：由导演自决（下次第${nextFloor}楼）` : `周期长度：${ds.cycleLength} 次AI回复`;
-    const counter = `AI回复：${currentCounter}（偏移${ds.offset}）`;
-
-    if (!ds.planReady) {
-        return { waiting: true, waitNote: `等待导演排期（下次导演：第${nextFloor}楼）`, badge, counter };
-    }
-
-    const events = (ds.planAssignments || [])
-        .map((a) => ({ floor: a.floor, taskId: a.taskId, name: nameOf(a.taskId) }))
-        .sort((a, b) => a.floor - b.floor);
-
-    // 标签错层（与静态时间线同规则）
-    let prevLeft = -100;
-    events.forEach((ev) => {
-        const left = 10 + ((ev.floor - anchor) / span) * 80;
-        const gap = left - prevLeft;
-        ev._level = gap >= 20 ? 'l1' : gap >= 11 ? 'l2' : 'l3';
-        prevLeft = left;
-    });
-    for (let i = 1; i < events.length; i++) {
-        if (events[i]._level === 'l3' && events[i - 1]._level === 'l3' && i % 2 === 0) events[i]._level = 'l2';
-    }
-
-    let trackHtml = '<div class="cycle-track"><div class="cycle-axis"></div>';
-    trackHtml += `
-        <div class="cycle-marker l1" style="left:10%;">
-            <span class="marker-line" style="background:#C41E3A;"></span>
-            <span class="marker-dot director"></span>
-            <span class="marker-floor">第${anchor}楼</span>
-            <span class="marker-label" style="color:#C41E3A;font-weight:600;">🎬 导演</span>
-        </div>`;
-    events.forEach((ev) => {
-        const left = 10 + ((ev.floor - anchor) / span) * 80;
-        const done = ev.floor <= currentCounter;
-        trackHtml += `
-            <div class="cycle-marker ${ev._level}" style="left:${left}%;${done ? 'opacity:0.75;' : ''}">
-                <span class="marker-line task"></span>
-                <span class="marker-dot task"></span>
-                <span class="marker-floor">第${ev.floor}楼${done ? ' ✅' : ''}</span>
-                <span class="marker-label">${h(ev.name)}</span>
-            </div>`;
-    });
-    if (currentCounter > anchor && currentCounter < nextFloor) {
-        const left = 10 + ((currentCounter - anchor) / span) * 80;
-        trackHtml += `
-        <div class="cycle-marker l1" style="left:${left}%;">
-            <span class="marker-line" style="background:#2196f3;"></span>
-            <span class="marker-dot" style="background:#2196f3;"></span>
-            <span class="marker-floor" style="color:#2196f3;">当前</span>
-            <span class="marker-label" style="font-size:10px;color:#2196f3;">▶ 第${currentCounter}楼</span>
-        </div>`;
-    }
-    trackHtml += `
-        <div class="cycle-marker l1" style="left:96%;opacity:0.85;">
-            <span class="marker-line" style="background:#C41E3A;box-shadow:none;"></span>
-            <span class="marker-dot director"></span>
-            <span class="marker-floor">第${nextFloor}楼</span>
-            <span class="marker-label" style="font-size:10px;color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（导演自决）' : ''}</span>
-        </div>`;
-    trackHtml += '</div>';
-
-    let listHtml = `<div style="font-size:12px;font-weight:600;color:#666;margin-bottom:8px;">📋 导演计划（第${ds.runSeq}次执导${ds.aggressive ? '·激进' : ''}，按楼层）：</div>`;
-    events.forEach((ev, i) => {
-        const done = ev.floor <= currentCounter;
-        listHtml += `
-            <div class="cycle-task-item" style="${done ? 'background:#e8f5e9;' : ''}">
-                <span class="floor-badge" style="${done ? 'background:#2C5530;' : ''}">第${ev.floor}楼</span>
-                <span class="task-name">${i + 1}. ${h(ev.name)}${done ? ' ✅ 已触发' : ''}</span>
-                <span class="output-var">{{task_${ev.taskId}_Output}}</span>
-            </div>`;
-    });
-    listHtml += `
-        <div class="cycle-task-item" style="background:#fdf3f4;border-style:dashed;">
-            <span class="floor-badge" style="background:#C41E3A;">第${nextFloor}楼</span>
-            <span class="task-name" style="color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（间隔由导演自决）' : `（周期${ds.cycleLength}）`}</span>
-            <span class="output-var" style="color:#888;">导演排期</span>
-        </div>`;
-
-    return { waiting: false, badge, counter, track: trackHtml, list: listHtml };
-}
-
-/** 导演模式时间线（创作者面板任务页）：徽章 + 图表 + 任务列表分区渲染 */
-function renderDirectorCycle(ds, els) {
-    const { lengthBadge, counterBadge, timeline, taskList, currentCounter } = els;
-    const parts = buildDirectorCycleParts(ds, currentCounter);
-    lengthBadge.textContent = parts.badge;
-    counterBadge.textContent = parts.counter;
-    counterBadge.title = '当前AI回复楼层数；导演模式下以“自上次导演起的偏移”显示';
-    if (parts.waiting) {
-        timeline.innerHTML = `
-            <div class="cycle-track"><div class="cycle-axis"></div></div>
-            <div style="text-align:center;padding:16px;color:#666;position:relative;z-index:1;">${parts.waitNote}</div>`;
-        taskList.innerHTML = '<div style="font-size:12px;color:#666;padding:8px;">导演尚未生成本次计划——可在导演页手动执行一次排期</div>';
-        return;
-    }
-    timeline.innerHTML = parts.track;
-    taskList.innerHTML = parts.list;
-}
-
 async function saveCurrentSchemeFromUI() {
     const { data } = config.resolveConfig();
     const presets = data.presets;
@@ -2486,7 +2214,6 @@ async function saveCurrentSchemeFromUI() {
         referencePool: ui.refs,
         tasks: collectTasksFromUI(),
         nextTaskId: ui.nextTaskId,
-        director: config.normalizePreset({ director: collectDirectorFromUI() }).director,
     };
     config.saveConfigData(data);
 }
@@ -2513,326 +2240,8 @@ function loadSchemeToUI(presetId) {
 
     ui.tasks = preset.tasks ? preset.tasks.map((t) => ({ ...t })) : [];
     ui.nextTaskId = preset.nextTaskId || (ui.tasks.length > 0 ? Math.max(...ui.tasks.map((t) => t.id || 0)) + 1 : 1);
-    ui.director = preset.director ? config.normalizePreset({ director: preset.director }).director : config.normalizePreset({}).director;
     renderTaskSlots();
     renderCycleInfo();
-    if (ui.directorViewActive) renderDirectorView();
-}
-
-// ---------- 导演模式视图 ----------
-
-function renderDirectorRefs(dir) {
-    const refs = ui.refs || [];
-    if (refs.length === 0) {
-        return '<span style="color:#555;font-size:13px;">参考条目池为空——先在"参考条目"页扫描并加入条目，再回到这里勾选供导演阅读。</span>';
-    }
-    const selected = new Set(dir.useReferences || []);
-    return refs.map((ref) => `
-        <label><input type="checkbox" class="director-ref-cb" data-var="${h(ref.varName)}" ${selected.has(ref.varName) ? 'checked' : ''}> ${h(ref.label || ref.entryKey)}</label>
-    `).join('');
-}
-
-function renderDirectorTasks(tasks) {
-    return tasks.map((t) => `
-        <div class="director-task-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-            <span style="min-width:110px;font-weight:600;font-size:13px;">#${t.id} ${h(t.displayName || '')}</span>
-            <label style="font-size:12px;color:#666;display:flex;align-items:center;gap:4px;">优先级
-                <input type="number" class="director-priority w80" data-id="${t.id}" value="${Number(t.directorPriority) || 0}" min="0" max="99">
-            </label>
-            <input type="text" class="director-summary w250" data-id="${t.id}" value="${h(t.directorSummary || '')}" placeholder="任务简介（留空自动从提示词条目提取）">
-            <button type="button" class="btn outline small director-brief-preview" data-id="${t.id}" title="预览导演将收到的任务简介">👁 预览简介</button>
-        </div>
-    `).join('');
-}
-
-function updateDirectorStatus() {
-    const el = $('ra_director_status');
-    if (!el) return;
-    const ds = engine.getEngineState()?.director;
-    if (!ds?.enabled) {
-        el.innerHTML = '⚪ 导演周期未启用。勾选"启用导演周期"并保存后，导演将在下一条AI回复（周期位置1）自动排期。';
-        return;
-    }
-    const lines = [];
-    if (ds.planReady) {
-        const planText = (ds.planAssignments || []).map((a) => `第${a.floor}楼→task${a.taskId}`).join('，');
-        lines.push(`✅ 第${ds.runSeq}次执导计划就绪（${ds.planCount}个任务）${planText ? `：${planText}` : ''}`);
-    } else {
-        lines.push(`⚠️ 第${ds.runSeq}次执导暂无计划——等待导演运行${ds.lastRunOk === false ? '（上次运行失败，可手动重新执行）' : ''}`);
-    }
-    lines.push(`当前：偏移${ds.offset}（自上次导演起的AI回复数）｜下次导演：第${ds.nextDirectorFloor}楼${ds.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${ds.cycleLength}）`}｜已触发${ds.wokenCount || 0}｜本周期手动${ds.manualRuns || 0}次`);
-    lines.push(ds.apiOverride
-        ? `导演API：独立（model=${ds.apiOverride.model || '跟随模型'}｜url${ds.apiOverride.urlSet ? '已覆盖' : '跟随'}｜key${ds.apiOverride.keySet ? '已覆盖' : '跟随'}）`
-        : '导演API：跟随RUBY基础API（未勾选独立导演API）');
-    if (ds.lastRunOk === false && ds.lastRunReason) lines.push(`上次失败原因：${h(ds.lastRunReason)}`);
-    el.innerHTML = lines.join('<br>');
-}
-
-function renderDirectorView() {
-    const container = $('ra_director_view');
-    if (!container) return;
-    const dir = ui.director || config.normalizePreset({}).director;
-    ui.director = dir;
-    const enabledTasks = ui.tasks.filter((t) => t.enabled);
-
-    container.innerHTML = `
-        <div class="form-section">
-            <div class="form-header blue">■ 导演状态 <span class="director-help" data-help="导演每周期在位置1运行一次并生成调度表；此后每到计划位置自动唤醒对应任务。状态框实时显示当前周期、位置与计划覆盖情况。">?</span></div>
-            <div class="form-body">
-                <div id="ra_director_status" class="status-box">加载中...</div>
-                <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
-                    <button id="ra_director_run" class="btn red">🎬 立即执行导演排期</button>
-                </div>
-                <div class="tip" style="margin-top:8px;">手动执行会让导演立即重新规划本周期（重读正文生成新调度表），不影响已保存的周期参数。</div>
-            </div>
-        </div>
-        <div class="form-section">
-            <div class="form-header blue">■ 周期参数</div>
-            <div class="form-body">
-                <div class="form-row">
-                    <span class="form-label">启用导演周期 <span class="director-help" data-help="勾选并保存后导演接管调度：所有普通任务的静态周期位置被忽略，由导演在每周期位置1排出各任务的触发位置；没被排到的任务本周期不跑。停用后恢复静态位置调度（书签保留，不丢数据）。">?</span></span>
-                    <input type="checkbox" id="ra_director_enabled" class="director-enabled" ${dir.enabled ? 'checked' : ''}>
-                </div>
-                <div class="form-row">
-                    <span class="form-label">周期长短 <span class="director-help" data-help="一个周期包含多少次AI回复。导演固定位于周期位置1（启用后下一两条AI回复即首跑），任务由导演排到位置2~周期长短之间。修改周期长短后下个周期生效。">?</span></span>
-                    <input type="number" id="ra_director_cycle" class="director-cycle w120" min="2" max="200" value="${dir.cycleLength}">
-                    <span style="font-size:12px;color:#666;">次AI回复</span>
-                </div>
-                <div class="form-row">
-                    <span class="form-label">激进模式 <span class="director-help" data-help="勾选后导演可以自己决定下一次自己什么时候出现：每次排期时额外输出"下次导演间隔"（几条AI回复后再次执导），不再受固定周期长度约束——剧情密集处可频繁执导，铺垫期可长间隔。同时导演会收到上周期实际表现（计划数/触发数/手动次数）作为排期参考（非激进模式同样收到）。">?</span></span>
-                    <input type="checkbox" id="ra_director_aggressive" class="director-aggressive" ${dir.aggressive ? 'checked' : ''}>
-                </div>
-                <div class="form-row">
-                    <span class="form-label">最低任务间隔 <span class="director-help" data-help="相邻两次触发（含导演自己的位置1）至少间隔多少次AI回复。填0=完全由AI根据剧情节奏决定间隔；填N=硬性约束写入导演提示词，违反时仅记录警告不阻断。">?</span></span>
-                    <input type="number" id="ra_director_spacing" class="director-spacing w120" min="0" max="50" value="${dir.minSpacing}">
-                    <span style="font-size:12px;color:#666;">0 = 由AI决定</span>
-                </div>
-                <div class="form-row">
-                    <span class="form-label">失败自动重试 <span class="director-help" data-help="导演输出格式错乱或内容不完整时的自动重试次数（只有这类错误会重试；接口本身失败不重试）。重试耗尽弹出红色警告，本周期空转等下周期，可随时点上方按钮手动重新执行。">?</span></span>
-                    <input type="number" id="ra_director_retry" class="director-retry w120" min="0" max="10" value="${dir.retryLimit}">
-                    <span style="font-size:12px;color:#666;">次</span>
-                </div>
-                <div class="form-row">
-                    <span class="form-label">计划条目 <span class="director-help" data-help="导演排好的调度表写入这个聊天世界书条目，条目保持关闭状态、不注入对话，仅供引擎读取与排查。留空则不写条目（调度仍保存在聊天元数据里，功能不受影响）。">?</span></span>
-                    <input type="text" id="ra_director_plankey" class="director-plankey w250" value="${h(dir.planKey || '')}" placeholder="ruby导演计划">
-                </div>
-            </div>
-        </div>
-        <div class="form-section">
-            <div class="form-header blue">■ 参考条目 <span class="director-help" data-help="勾选世界书条目供导演阅读——创作者认为对排期重要的内容（世界观、人物关系等）会随调度提示词发给导演。与分析任务的参考条目池共用同一批条目，此处勾选只影响导演。导演API在玩家面板的API子页下配置。">?</span></div>
-            <div class="form-body">
-                <div id="ra_director_refs" class="checkbox-group">${renderDirectorRefs(dir)}</div>
-            </div>
-        </div>
-        <div class="form-section">
-            <div class="form-header blue">■ 任务优先级与简介 <span class="director-help" data-help="优先级：数字越大越优先（同数同级，0为普通），导演在同等条件下优先安排数字大的任务。简介：给导演看的一句话任务说明，留空则自动从任务的提示词条目里捕捉『该任务是为了/任务说明』等标记附近约200字作为切面简介。点预览按钮可查看实际捕捉到的内容。">?</span></div>
-            <div class="form-body">
-                <div id="ra_director_tasks">${renderDirectorTasks(enabledTasks)}</div>
-                ${enabledTasks.length === 0 ? '<div class="tip" style="margin-top:8px;">暂无启用的任务——请先在任务配置页添加并启用任务，导演才有可调度的对象。</div>' : ''}
-            </div>
-        </div>
-        <div class="btn-row" style="margin-top:12px;">
-            <button id="ra_director_save" class="btn blue">💾 保存导演配置</button>
-        </div>`;
-    updateDirectorStatus();
-    wireDirectorViewInputs(container);
-}
-
-function collectDirectorFromUI() {
-    const base = ui.director || config.normalizePreset({}).director;
-    const container = $('ra_director_view');
-    // 视图尚未渲染（或已切回任务页且内容被重建）时保留现有值
-    if (!container || !container.innerHTML.trim()) return base;
-    const num = (sel, def, min) => {
-        const v = parseInt(container.querySelector(sel)?.value, 10);
-        return Number.isFinite(v) ? Math.max(min, v) : def;
-    };
-    return {
-        ...base,
-        enabled: !!container.querySelector('.director-enabled')?.checked,
-        cycleLength: num('.director-cycle', base.cycleLength, 2),
-        aggressive: !!container.querySelector('.director-aggressive')?.checked,
-        minSpacing: num('.director-spacing', base.minSpacing, 0),
-        retryLimit: num('.director-retry', base.retryLimit, 0),
-        planKey: container.querySelector('.director-plankey')?.value.trim() || '',
-        useReferences: [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var),
-    };
-}
-
-function wireDirectorViewInputs(container) {
-    on(container.querySelector('.director-enabled'), 'change', (e) => {
-        ui.director.enabled = e.target.checked;
-        triggerAutoSave();
-        engine.reinit();
-        updateDirectorStatus();
-    });
-    on(container.querySelector('.director-cycle'), 'change', (e) => {
-        ui.director.cycleLength = Math.max(2, parseInt(e.target.value, 10) || 20);
-        e.target.value = ui.director.cycleLength;
-        triggerAutoSave();
-        engine.reinit();
-    });
-    on(container.querySelector('.director-aggressive'), 'change', (e) => {
-        ui.director.aggressive = e.target.checked;
-        triggerAutoSave();
-    });
-    on(container.querySelector('.director-spacing'), 'change', (e) => {
-        ui.director.minSpacing = Math.max(0, parseInt(e.target.value, 10) || 0);
-        e.target.value = ui.director.minSpacing;
-        triggerAutoSave();
-    });
-    on(container.querySelector('.director-retry'), 'change', (e) => {
-        ui.director.retryLimit = Math.max(0, parseInt(e.target.value, 10) || 0);
-        e.target.value = ui.director.retryLimit;
-        triggerAutoSave();
-    });
-    on(container.querySelector('.director-plankey'), 'change', (e) => {
-        ui.director.planKey = e.target.value.trim();
-        triggerAutoSave();
-    });
-    container.querySelectorAll('.director-ref-cb').forEach((cb) => on(cb, 'change', () => {
-        ui.director.useReferences = [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var);
-        triggerAutoSave();
-    }));
-    container.querySelectorAll('.director-priority').forEach((input) => on(input, 'change', () => {
-        const t = ui.tasks.find((x) => x.id === parseInt(input.dataset.id, 10));
-        if (t) t.directorPriority = Math.max(0, Math.round(Number(input.value) || 0));
-        triggerAutoSave();
-    }));
-    container.querySelectorAll('.director-summary').forEach((input) => on(input, 'change', () => {
-        const t = ui.tasks.find((x) => x.id === parseInt(input.dataset.id, 10));
-        if (t) t.directorSummary = input.value;
-        triggerAutoSave();
-    }));
-    on($('ra_director_run'), 'click', async () => {
-        try {
-            ui.director = collectDirectorFromUI();
-            await saveCurrentSchemeFromUI();
-            await engine.forceRun('director');
-        } catch (e) {
-            window.toastr?.error?.(e.message);
-        }
-        updateDirectorStatus();
-    });
-    on($('ra_director_save'), 'click', async () => {
-        try {
-            if (!config.getCharacterIdentity()) {
-                window.toastr?.warning?.('⚠️ 未打开角色卡：导演配置保存在全局层，不会随角色卡导出');
-            }
-            ui.director = collectDirectorFromUI();
-            await saveCurrentSchemeFromUI();
-            config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
-            engine.reinit();
-            window.toastr?.success?.('已保存导演配置');
-        } catch (e) {
-            window.toastr?.error?.('保存失败: ' + e.message);
-        }
-        updateDirectorStatus();
-    });
-    container.querySelectorAll('.director-brief-preview').forEach((btn) => on(btn, 'click', async (e) => {
-        e.stopPropagation();
-        const task = ui.tasks.find((x) => x.id === parseInt(btn.dataset.id, 10));
-        if (!task) return;
-        let title = '';
-        let text = '';
-        if (String(task.directorSummary || '').trim()) {
-            title = '✍️ 手动简介（优先使用）';
-            text = task.directorSummary;
-        } else {
-            try {
-                const charBook = await worldbook.getCharBookName();
-                const chatBook = await worldbook.getChatBookName();
-                const content = task.promptKey ? await worldbook.readEntry(charBook, chatBook, task.promptKey, true) : '';
-                const brief = director.extractTaskBrief(content);
-                if (brief) {
-                    title = '🔍 自动提取简介';
-                    text = brief;
-                } else {
-                    title = '⚠️ 未捕捉到简介';
-                    text = task.promptKey
-                        ? '提示词条目内容为空，或不含「该任务是为了/任务说明」等标记——导演将只收到任务名称。'
-                        : '该任务未配置提示词条目——导演将只收到任务名称。';
-                }
-            } catch (err) {
-                title = '⚠️ 提取失败';
-                text = String(err?.message || err);
-            }
-        }
-        showBriefPopup(btn, `#${task.id} ${task.displayName || ''}`, title, text);
-    }));
-}
-
-/** 简介预览小窗：显示导演实际会收到的简介内容，点击别处关闭 */
-function showBriefPopup(anchor, taskLabel, title, text) {
-    document.getElementById('ra_director_brief_pop')?.remove();
-    const pop = document.createElement('div');
-    pop.id = 'ra_director_brief_pop';
-    pop.innerHTML = `
-        <div class="brief-pop-title">${h(taskLabel)}·简介预览</div>
-        <div class="brief-pop-sub">${h(title)}</div>
-        <div class="brief-pop-body"></div>`;
-    pop.querySelector('.brief-pop-body').textContent = text;
-    document.body.appendChild(pop);
-    const r = anchor.getBoundingClientRect();
-    pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 340))}px`;
-    pop.style.top = `${Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 260))}px`;
-    const close = (e) => {
-        if (pop.contains(e.target)) return;
-        pop.remove();
-        document.removeEventListener('click', close);
-    };
-    setTimeout(() => document.addEventListener('click', close), 0);
-}
-
-function setDirectorView(active) {
-    ui.directorViewActive = active;
-    const tasksView = $('ra_tasks_view');
-    const dirView = $('ra_director_view');
-    const flipBtn = $('ra_director_flip');
-    if (!tasksView || !dirView) return;
-    tasksView.style.display = active ? 'none' : '';
-    dirView.style.display = active ? '' : 'none';
-    if (flipBtn) {
-        flipBtn.textContent = active ? '⬅ 返回任务配置' : '🎬 导演模式';
-        // 脉冲动画只在"进入导演模式"状态下播放，返回按钮保持安静
-        flipBtn.classList.toggle('director-enter', !active);
-    }
-    if (active) renderDirectorView();
-}
-
-/** 导演模式一次性接线：翻转按钮、?帮助弹窗（点击弹出/点别处关闭）、引擎状态联动刷新 */
-function wireDirectorControls() {
-    on($('ra_director_flip'), 'click', () => setDirectorView(!ui.directorViewActive));
-    document.addEventListener('click', (e) => {
-        const tip = e.target?.closest?.('.director-help');
-        const existing = $('ra_director_help_pop');
-        if (!tip) {
-            if (existing) existing.remove();
-            return;
-        }
-        e.stopPropagation();
-        if (existing) existing.remove();
-        const pop = document.createElement('div');
-        pop.id = 'ra_director_help_pop';
-        pop.textContent = tip.dataset.help || '';
-        document.body.appendChild(pop);
-        const r = tip.getBoundingClientRect();
-        pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 300))}px`;
-        pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - 140)}px`;
-    });
-    engine.onStateChange(() => {
-        if (ui.directorViewActive) updateDirectorStatus();
-        // 创作者时间线 + 玩家任务时间表都动态跟随导演计划
-        renderCycleInfo();
-        renderScheduleFromState();
-        updateDirectorApiHighlight();
-    });
-}
-
-/** 玩家主面板任务触发时间表按当前配置状态重渲染（引擎状态变化时联动） */
-function renderScheduleFromState() {
-    const { data, layer } = config.resolveConfig();
-    renderSchedule(data, layer);
 }
 
 function renderSchemeTabs() {
@@ -3121,20 +2530,6 @@ function renderPresetSummary() {
     el.innerHTML = html;
 }
 
-/** 导出前密钥擦除（纵深防御）：递归剔除一切密钥类字段，即使未来配置误含密钥也绝不随模板导出 */
-function scrubSecretsForExport(value, keyName = '') {
-    if (Array.isArray(value)) return value.map((v) => scrubSecretsForExport(v));
-    if (value && typeof value === 'object') {
-        const out = {};
-        for (const [k, v] of Object.entries(value)) {
-            if (/^(key|apikey|api_key|proxy_password|password|token|secret)$/i.test(k)) continue;
-            out[k] = scrubSecretsForExport(v, k);
-        }
-        return out;
-    }
-    return value;
-}
-
 function generateExportData() {
     const { data } = config.resolveConfig();
     return {
@@ -3142,7 +2537,7 @@ function generateExportData() {
             type: 'RUBY_ANALYZER_PRESET',
             version: '3.0.0',
             exportTime: new Date().toISOString(),
-            description: '由RUBY分析系统导出的配置模板（含多方案；密钥类字段已在导出前擦除）',
+            description: '由RUBY分析系统导出的配置模板（含多方案）',
             presetCount: (data.presets || []).length,
         },
         charName: data.charName || '',
@@ -3152,7 +2547,7 @@ function generateExportData() {
         jailbreak: jailbreak.normalizeJailbreakConfig(data.jailbreak),
         gen: data.gen || {},
         activePresetId: data.activePresetId,
-        presets: scrubSecretsForExport(data.presets),
+        presets: data.presets,
     };
 }
 
