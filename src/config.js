@@ -34,10 +34,16 @@ export const DEFAULT_DIRECTOR = {
     aggressive: false,      // 激进模式：导演自决下次出现时间（输出"下次导演间隔"）
     minSpacing: 0,          // 任务最低间隔（次AI回复）；0=完全由AI决定
     retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
-    api: null,              // null=完全跟随RUBY分析API；{url,key,model}=复制RUBY API后单独改模型
     planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
     useReferences: [],      // 导演可勾选参考条目池
 };
+
+const makeDefaultDirectorApi = () => ({
+    enabled: false,         // 玩家侧勾选：独立导演API（建议智商更高的模型）
+    url: '',                // 空=跟随RUBY分析API地址
+    key: '',                // 空=跟随RUBY分析API密钥
+    model: '',              // 空=跟随RUBY分析API模型
+});
 
 export const makeDefaultPreset = () => ({
     id: 'default',
@@ -131,8 +137,23 @@ export function getSettings() {
     }
     store.global = normalizeConfigData(store.global || makeDefaultConfigData());
     store.characterConfigs = (store.characterConfigs && typeof store.characterConfigs === 'object') ? store.characterConfigs : {};
+    store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
+    store.directorApi.enabled = !!store.directorApi.enabled;
     store.ui = { ...makeDefaultUi(), ...(store.ui || {}) };
     return store;
+}
+
+/** 玩家侧独立导演API（全局设置，不随角色卡）：空字段跟随RUBY分析API */
+export function getDirectorApiConfig() {
+    const store = getSettings();
+    return store ? store.directorApi : makeDefaultDirectorApi();
+}
+
+export function saveDirectorApiConfig(patch = {}) {
+    const store = getSettings();
+    if (!store) return;
+    store.directorApi = { ...store.directorApi, ...patch };
+    persist();
 }
 
 export function persist() {
@@ -200,9 +221,11 @@ export function normalizePreset(raw) {
         ? { url: String(rawApi.url || '').trim(), key: String(rawApi.key || ''), model: String(rawApi.model || '').trim() }
         : null;
     mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
-    // 独立传输设计已废除：导演就是分析任务，流式等传输方式完全跟随RUBY基础API设置
+    // 独立API设计已废除：导演就是分析任务，传输方式完全跟随RUBY基础API设置；
+    // 导演API选择移至玩家面板（全局设置 store.directorApi），不随角色卡走
     delete mergedDirector.apiMode;
     delete mergedDirector.customApi;
+    delete mergedDirector.api;
     preset.director = mergedDirector;
     return preset;
 }

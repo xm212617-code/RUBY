@@ -532,9 +532,11 @@ async function runDirectorTask(d, ctxObj) {
     if (!dmeta) throw new Error('聊天元数据不可用');
     const runSeq = dmeta.history.length + 1;
 
-    // 导演API=RUBY API的复制粘贴（可单独换模型）；流式等传输方式完全跟随RUBY基础API设置
-    const effApiCfg = dirCfg.api?.url
-        ? { ...apiCfg, url: dirCfg.api.url, key: dirCfg.api.key || apiCfg.key, model: dirCfg.api.model || apiCfg.model }
+    // 独立导演API（玩家面板勾选，全局设置）：仅覆盖 url/key/model，空字段跟随RUBY分析API；
+    // 流式等传输方式完全跟随RUBY基础API设置，不存在独立传输设计
+    const dirApi = config.getDirectorApiConfig();
+    const effApiCfg = dirApi.enabled
+        ? { ...apiCfg, url: dirApi.url || apiCfg.url, key: dirApi.key || apiCfg.key, model: dirApi.model || apiCfg.model }
         : apiCfg;
 
     // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读

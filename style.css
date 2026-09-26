@@ -1274,3 +1274,18 @@ body.ruby-dark #ra_director_flip.director-enter {
 body.ruby-dark #ra_director_brief_pop { background: #1f222a; border-color: #3d6ba8; color: #d5d9e0; }
 body.ruby-dark #ra_director_brief_pop .brief-pop-title { color: #7fa8d8; }
 body.ruby-dark #ra_director_brief_pop .brief-pop-body { background: #171a20; color: #c3c9d4; }
+
+/* ---------- 独立导演API：玩家面板高亮提醒 ---------- */
+#ra_dir_api_wrap.director-needed {
+    border: 1.5px solid #C41E3A;
+    background: #fdf3f4;
+    animation: ra-dir-needed-pulse 2.4s ease-in-out infinite;
+}
+@keyframes ra-dir-needed-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(196, 30, 58, 0); }
+    50% { box-shadow: 0 0 12px 3px rgba(196, 30, 58, 0.35); }
+}
+body.ruby-dark #ra_dir_api_wrap.director-needed {
+    border-color: #e05a72;
+    background: #2a1418;
+}
