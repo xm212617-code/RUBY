@@ -2362,7 +2362,7 @@ function renderDirectorView() {
             </div>
         </div>
         <div class="form-section">
-            <div class="form-header blue">■ 导演API <span class="director-help" data-help="导演调用哪个AI：沿用酒馆主API=走酒馆当前连接的原生raw调用（独立通道，要求主连接本身可用）；沿用RUBY分析API=与分析任务完全相同的通道和配置；使用其他API=独立填写地址/密钥/模型，但传输通道与任务一致（流式开关沿用RUBY分析API的设置）。调用失败会自动降级非流式重试一次。">?</span></div>
+            <div class="form-header blue">■ 导演API <span class="director-help" data-help="导演调用哪个AI：沿用酒馆主API=走酒馆当前连接的原生raw调用（独立通道，要求主连接本身可用）；沿用RUBY分析API=与分析任务完全相同的通道和配置；使用其他API=独立填写地址/密钥/模型，但传输方式（流式与否）完全沿用RUBY基础API设置，不存在任何独立的传输设计。">?</span></div>
             <div class="form-body">
                 <div style="display:flex;gap:14px;flex-wrap:wrap;">
                     ${apiRadio('main', '沿用酒馆主API')}

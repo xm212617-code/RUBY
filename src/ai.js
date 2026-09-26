@@ -68,13 +68,7 @@ async function callViaTavernService({ apiCfg, genParams, messages, signal }) {
         for await (const chunk of result()) {
             text = chunk.text || text;
         }
-        if (!text.trim()) {
-            // 标记为流式路径的空返回：假流式端点的 SSE 可能不含文本载体，
-            // 交由 callModel 降级非流式重试（与上游错误体重试同机制）
-            const err = new Error('API返回内容为空');
-            err.streamingEmpty = true;
-            throw err;
-        }
+        if (!text.trim()) throw new Error('API返回内容为空');
         return text;
     }
 
@@ -252,13 +246,14 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
             return await callViaBackendEndpoint({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages });
         } catch (e) {
             const msg = String(e?.message || e || '');
-            // 两类流式失败降级非流式重试：
-            // 1) 官方服务的流式路径会丢弃上游错误体（tryParseStreamingError 的 throw 被自身 catch
-            //    吞掉，只剩 "Got response status NNN"）——非流式可拿到供应商真实报错；
-            // 2) 流式建立成功但内容为空（streamingEmpty，假流式端点的 SSE 不含文本载体）——
-            //    非流式直接拿完整响应。两者都沿用同一通道（同一后端端点/同一apiCfg），只换传输方式。
-            if (/^Got response status/.test(msg) || e?.streamingEmpty) {
-                warn(`${e?.streamingEmpty ? 'streaming produced empty content' : `upstream rejected the request (${msg})`}; retrying without stream`);
+            // 官方服务的流式路径会丢弃上游错误体（tryParseStreamingError 的 throw 被
+            // 自身 catch 吞掉，只剩 "Got response status NNN"）。此时用非流式重试一次：
+            // 非流式的上游错误会以 JSON 原样返回，能拿到供应商真实报错；
+            // 若供应商只是不支持流式，重试会直接成功。
+            // 注意：流式建立成功但内容为空不在此列——传输方式必须完全跟随RUBY基础API设置，
+            // 不做任何独立的降级/切换设计。
+            if (/^Got response status/.test(msg)) {
+                warn(`upstream rejected the request (${msg}); retrying without stream to surface the provider error`);
                 const text = await callViaBackendEndpoint({ apiCfg, genParams, messages, forceNonStream: true });
                 if (apiCfg.stream !== false && !providerNonStreamOnly) {
                     providerNonStreamOnly = true;
