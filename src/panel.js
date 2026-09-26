@@ -1071,6 +1071,17 @@ function renderSchedule(data, layer) {
         return;
     }
 
+    // 导演模式：任务触发时间表动态跟随导演计划（图表化，与创作者面板时间线同源）
+    const ds = engine.getEngineState()?.director;
+    if (ds?.enabled) {
+        const c = ctx();
+        const parts = buildDirectorCycleParts(ds, c ? countAiReplies(c.chat) : 0);
+        el.innerHTML = parts.waiting
+            ? `<div style="text-align:center;padding:10px;color:#666;">${h(parts.waitNote)}</div>`
+            : `<div style="font-size:12px;font-weight:600;color:#666;margin-bottom:6px;">${h(parts.badge)}｜${h(parts.counter)}</div>${parts.track}${parts.list}`;
+        return;
+    }
+
     if (preset.startupTask?.enabled && scheduler.taskMatchesCharacter(preset.startupTask, identity)) {
         const positions = scheduler.startupPositions(preset.startupTask).join(',');
         lines.push(`<div>📌 位置<strong>${positions}</strong> → ${h(preset.startupTask.displayName || '开局分析')}</div>`);
@@ -2354,9 +2365,8 @@ function renderCycleInfo() {
     taskList.innerHTML = listHtml;
 }
 
-/** 导演模式时间线：动态跟随导演计划（绝对楼层）——🎬导演起点 → 任务点位（已触发✅）→ ▶当前 → 🎬下次导演 */
-function renderDirectorCycle(ds, els) {
-    const { lengthBadge, counterBadge, timeline, taskList, currentCounter } = els;
+/** 导演计划图表构建（创作者时间线与玩家任务时间表共用）：🎬起点→任务点位（已触发✅）→▶当前→🎬下次导演 */
+function buildDirectorCycleParts(ds, currentCounter) {
     const anchor = ds.anchor || 0;
     const nextFloor = ds.nextDirectorFloor || (anchor + ds.cycleLength);
     const span = Math.max(1, nextFloor - anchor);
@@ -2364,17 +2374,11 @@ function renderDirectorCycle(ds, els) {
         const t = ui.tasks.find((x) => x.id === taskId);
         return t ? (t.displayName || `任务#${t.id}`) : `任务#${taskId}`;
     };
-
-    lengthBadge.textContent = ds.aggressive ? `导演间隔：由导演自决（下次第${nextFloor}楼）` : `周期长度：${ds.cycleLength} 次AI回复`;
-    counterBadge.textContent = `AI回复：${currentCounter}（偏移${ds.offset}）`;
-    counterBadge.title = '当前AI回复楼层数；导演模式下以“自上次导演起的偏移”显示';
+    const badge = ds.aggressive ? `导演间隔：由导演自决（下次第${nextFloor}楼）` : `周期长度：${ds.cycleLength} 次AI回复`;
+    const counter = `AI回复：${currentCounter}（偏移${ds.offset}）`;
 
     if (!ds.planReady) {
-        timeline.innerHTML = `
-            <div class="cycle-track"><div class="cycle-axis"></div></div>
-            <div style="text-align:center;padding:16px;color:#666;position:relative;z-index:1;">等待导演排期（下次导演：第${nextFloor}楼）</div>`;
-        taskList.innerHTML = '<div style="font-size:12px;color:#666;padding:8px;">导演尚未生成本次计划——可在导演页手动执行一次排期</div>';
-        return;
+        return { waiting: true, waitNote: `等待导演排期（下次导演：第${nextFloor}楼）`, badge, counter };
     }
 
     const events = (ds.planAssignments || [])
@@ -2430,7 +2434,6 @@ function renderDirectorCycle(ds, els) {
             <span class="marker-label" style="font-size:10px;color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（导演自决）' : ''}</span>
         </div>`;
     trackHtml += '</div>';
-    timeline.innerHTML = trackHtml;
 
     let listHtml = `<div style="font-size:12px;font-weight:600;color:#666;margin-bottom:8px;">📋 导演计划（第${ds.runSeq}次执导${ds.aggressive ? '·激进' : ''}，按楼层）：</div>`;
     events.forEach((ev, i) => {
@@ -2448,7 +2451,26 @@ function renderDirectorCycle(ds, els) {
             <span class="task-name" style="color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（间隔由导演自决）' : `（周期${ds.cycleLength}）`}</span>
             <span class="output-var" style="color:#888;">导演排期</span>
         </div>`;
-    taskList.innerHTML = listHtml;
+
+    return { waiting: false, badge, counter, track: trackHtml, list: listHtml };
+}
+
+/** 导演模式时间线（创作者面板任务页）：徽章 + 图表 + 任务列表分区渲染 */
+function renderDirectorCycle(ds, els) {
+    const { lengthBadge, counterBadge, timeline, taskList, currentCounter } = els;
+    const parts = buildDirectorCycleParts(ds, currentCounter);
+    lengthBadge.textContent = parts.badge;
+    counterBadge.textContent = parts.counter;
+    counterBadge.title = '当前AI回复楼层数；导演模式下以“自上次导演起的偏移”显示';
+    if (parts.waiting) {
+        timeline.innerHTML = `
+            <div class="cycle-track"><div class="cycle-axis"></div></div>
+            <div style="text-align:center;padding:16px;color:#666;position:relative;z-index:1;">${parts.waitNote}</div>`;
+        taskList.innerHTML = '<div style="font-size:12px;color:#666;padding:8px;">导演尚未生成本次计划——可在导演页手动执行一次排期</div>';
+        return;
+    }
+    timeline.innerHTML = parts.track;
+    taskList.innerHTML = parts.list;
 }
 
 async function saveCurrentSchemeFromUI() {
@@ -2800,10 +2822,17 @@ function wireDirectorControls() {
     });
     engine.onStateChange(() => {
         if (ui.directorViewActive) updateDirectorStatus();
-        // 玩家面板周期时间线动态跟随导演计划（计划生成/楼层推进/执行状态变化即刷新）
+        // 创作者时间线 + 玩家任务时间表都动态跟随导演计划
         renderCycleInfo();
+        renderScheduleFromState();
         updateDirectorApiHighlight();
     });
+}
+
+/** 玩家主面板任务触发时间表按当前配置状态重渲染（引擎状态变化时联动） */
+function renderScheduleFromState() {
+    const { data, layer } = config.resolveConfig();
+    renderSchedule(data, layer);
 }
 
 function renderSchemeTabs() {
