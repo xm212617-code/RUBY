@@ -2319,8 +2319,6 @@ function renderDirectorView() {
     const dir = ui.director || config.normalizePreset({}).director;
     ui.director = dir;
     const enabledTasks = ui.tasks.filter((t) => t.enabled);
-    const apiRadio = (mode, label) => `
-        <label class="inline"><input type="radio" name="ra_director_api" value="${mode}" class="director-api" ${dir.apiMode === mode ? 'checked' : ''}> ${label}</label>`;
 
     container.innerHTML = `
         <div class="form-section">
@@ -2362,21 +2360,6 @@ function renderDirectorView() {
             </div>
         </div>
         <div class="form-section">
-            <div class="form-header blue">■ 导演API <span class="director-help" data-help="导演调用哪个AI：沿用酒馆主API=走酒馆当前连接的原生raw调用（独立通道，要求主连接本身可用）；沿用RUBY分析API=与分析任务完全相同的通道和配置；使用其他API=独立填写地址/密钥/模型，但传输方式（流式与否）完全沿用RUBY基础API设置，不存在任何独立的传输设计。">?</span></div>
-            <div class="form-body">
-                <div style="display:flex;gap:14px;flex-wrap:wrap;">
-                    ${apiRadio('main', '沿用酒馆主API')}
-                    ${apiRadio('analyzer', '沿用RUBY分析API')}
-                    ${apiRadio('custom', '使用其他API')}
-                </div>
-                <div id="ra_director_custom_api" style="display:${dir.apiMode === 'custom' ? '' : 'none'};margin-top:8px;">
-                    <div class="form-row"><span class="form-label">API地址</span><input type="text" id="ra_director_api_url" class="director-api-url w250" value="${h(dir.customApi?.url || '')}" placeholder="https://api.example.com/v1"></div>
-                    <div class="form-row"><span class="form-label">API密钥</span><input type="password" id="ra_director_api_key" class="director-api-key w250" value="${h(dir.customApi?.key || '')}" placeholder="sk-..."></div>
-                    <div class="form-row"><span class="form-label">模型</span><input type="text" id="ra_director_api_model" class="director-api-model w250" value="${h(dir.customApi?.model || '')}" placeholder="模型名"></div>
-                </div>
-            </div>
-        </div>
-        <div class="form-section">
             <div class="form-header blue">■ 参考条目 <span class="director-help" data-help="勾选世界书条目供导演阅读——创作者认为对排期重要的内容（世界观、人物关系等）会随调度提示词发给导演。与分析任务的参考条目池共用同一批条目，此处勾选只影响导演。">?</span></div>
             <div class="form-body">
                 <div id="ra_director_refs" class="checkbox-group">${renderDirectorRefs(dir)}</div>
@@ -2412,12 +2395,6 @@ function collectDirectorFromUI() {
         minSpacing: num('.director-spacing', base.minSpacing, 0),
         retryLimit: num('.director-retry', base.retryLimit, 0),
         planKey: container.querySelector('.director-plankey')?.value.trim() || '',
-        apiMode: container.querySelector('.director-api:checked')?.value || base.apiMode,
-        customApi: {
-            url: container.querySelector('.director-api-url')?.value.trim() || '',
-            key: container.querySelector('.director-api-key')?.value || '',
-            model: container.querySelector('.director-api-model')?.value.trim() || '',
-        },
         useReferences: [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var),
     };
 }
@@ -2449,16 +2426,6 @@ function wireDirectorViewInputs(container) {
         ui.director.planKey = e.target.value.trim();
         triggerAutoSave();
     });
-    container.querySelectorAll('.director-api').forEach((radio) => on(radio, 'change', () => {
-        ui.director.apiMode = radio.value;
-        const custom = $('ra_director_custom_api');
-        if (custom) custom.style.display = radio.value === 'custom' ? '' : 'none';
-        triggerAutoSave();
-    }));
-    ['url', 'key', 'model'].forEach((k) => on(container.querySelector(`.director-api-${k}`), 'change', (e) => {
-        ui.director.customApi[k] = e.target.value;
-        triggerAutoSave();
-    }));
     container.querySelectorAll('.director-ref-cb').forEach((cb) => on(cb, 'change', () => {
         ui.director.useReferences = [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var);
         triggerAutoSave();

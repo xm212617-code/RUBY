@@ -176,7 +176,7 @@ export function reinit() {
     state.cycleLength = dirActive ? dirCfg.cycleLength : len;
     state.armed = true;
     state.baseline = reader.countAiReplies(c.chat);
-    log(`engine armed | character=${state.identity.name} | layer=${layer} | preset=${preset.name} | ${dirActive ? `director cycle=${dirCfg.cycleLength} minSpacing=${dirCfg.minSpacing} retry=${dirCfg.retryLimit} api=${dirCfg.apiMode}` : `cycle=${len}`} | AI replies=${state.baseline} | position=${scheduler.positionFor(state.baseline, state.cycleLength)}/${state.cycleLength}`);
+    log(`engine armed | character=${state.identity.name} | layer=${layer} | preset=${preset.name} | ${dirActive ? `director cycle=${dirCfg.cycleLength} minSpacing=${dirCfg.minSpacing} retry=${dirCfg.retryLimit}` : `cycle=${len}`} | AI replies=${state.baseline} | position=${scheduler.positionFor(state.baseline, state.cycleLength)}/${state.cycleLength}`);
     emitState();
 }
 
@@ -550,9 +550,8 @@ async function runDirectorTask(d, ctxObj) {
         refSections,
     });
     const messages = buildMessages('导演模式', prompt, cfgData);
-    const directorApi = director.resolveDirectorApiCfg(dirCfg.apiMode, apiCfg, dirCfg.customApi);
 
-    // 解析 + 自动重试（仅格式错乱/内容不完整；接口本身失败直接上抛不重试）
+    // 导演就是分析任务：apiCfg/genParams/messages 与任务循环完全一致，无任何独立通道
     notify('info', '🎬 导演排期中...', { timeOut: 4000 });
     const maxAttempts = 1 + Math.max(0, Math.round(dirCfg.retryLimit || 0));
     let parsed = null;
@@ -561,7 +560,7 @@ async function runDirectorTask(d, ctxObj) {
     while (attempts < maxAttempts) {
         attempts++;
         const result = await ai.callModel({
-            apiCfg: directorApi,
+            apiCfg,
             genParams,
             messages,
             taskLabel: `导演模式${attempts > 1 ? `(重试${attempts - 1})` : ''}`,

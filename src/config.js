@@ -33,8 +33,6 @@ export const DEFAULT_DIRECTOR = {
     cycleLength: 20,        // 周期长短（次AI回复）；导演永远位于周期位置1
     minSpacing: 0,          // 任务最低间隔（次AI回复）；0=完全由AI决定
     retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
-    apiMode: 'analyzer',    // 'main'=酒馆主API | 'analyzer'=RUBY分析API | 'custom'=其他API
-    customApi: { url: '', key: '', model: '' },
     planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
     useReferences: [],      // 导演可勾选参考条目池
 };
@@ -190,12 +188,13 @@ export function normalizePreset(raw) {
     preset.startupTask = mergedStartup;
     const rawDirector = (p.director && typeof p.director === 'object') ? p.director : {};
     const mergedDirector = { ...clone(DEFAULT_DIRECTOR), ...rawDirector };
-    mergedDirector.customApi = { ...clone(DEFAULT_DIRECTOR.customApi), ...(rawDirector.customApi && typeof rawDirector.customApi === 'object' ? rawDirector.customApi : {}) };
     mergedDirector.cycleLength = Math.max(2, Math.round(Number(rawDirector.cycleLength) || DEFAULT_DIRECTOR.cycleLength));
     mergedDirector.minSpacing = Math.max(0, Math.round(Number(rawDirector.minSpacing) || 0));
     mergedDirector.retryLimit = Math.min(10, Math.max(0, Math.round(Number(rawDirector.retryLimit) ?? DEFAULT_DIRECTOR.retryLimit)));
-    if (!['main', 'analyzer', 'custom'].includes(mergedDirector.apiMode)) mergedDirector.apiMode = 'analyzer';
     mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
+    // 独立API设计已废除：导演就是分析任务，通道/配置与任务完全一致
+    delete mergedDirector.apiMode;
+    delete mergedDirector.customApi;
     preset.director = mergedDirector;
     return preset;
 }
