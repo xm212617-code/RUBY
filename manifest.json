@@ -1,12 +1,12 @@
 {
-    "display_name": "RUBY Analyzer",
-    "loading_order": 20,
-    "requires": [],
-    "optional": [],
-    "js": "index.js",
-    "css": "style.css",
-    "author": "RUBY Project",
-    "version": "1.6.0",
-    "homePage": "",
-    "auto_update": true
+  "display_name": "RUBY Analyzer",
+  "loading_order": 20,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "RUBY Project",
+  "version": "1.7.0",
+  "homePage": "",
+  "auto_update": true
 }

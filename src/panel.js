@@ -3121,6 +3121,20 @@ function renderPresetSummary() {
     el.innerHTML = html;
 }
 
+/** 导出前密钥擦除（纵深防御）：递归剔除一切密钥类字段，即使未来配置误含密钥也绝不随模板导出 */
+function scrubSecretsForExport(value, keyName = '') {
+    if (Array.isArray(value)) return value.map((v) => scrubSecretsForExport(v));
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(value)) {
+            if (/^(key|apikey|api_key|proxy_password|password|token|secret)$/i.test(k)) continue;
+            out[k] = scrubSecretsForExport(v, k);
+        }
+        return out;
+    }
+    return value;
+}
+
 function generateExportData() {
     const { data } = config.resolveConfig();
     return {
@@ -3128,7 +3142,7 @@ function generateExportData() {
             type: 'RUBY_ANALYZER_PRESET',
             version: '3.0.0',
             exportTime: new Date().toISOString(),
-            description: '由RUBY分析系统导出的配置模板（含多方案）',
+            description: '由RUBY分析系统导出的配置模板（含多方案；密钥类字段已在导出前擦除）',
             presetCount: (data.presets || []).length,
         },
         charName: data.charName || '',
@@ -3138,7 +3152,7 @@ function generateExportData() {
         jailbreak: jailbreak.normalizeJailbreakConfig(data.jailbreak),
         gen: data.gen || {},
         activePresetId: data.activePresetId,
-        presets: data.presets,
+        presets: scrubSecretsForExport(data.presets),
     };
 }
 

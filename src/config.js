@@ -215,14 +215,9 @@ export function normalizePreset(raw) {
     mergedDirector.aggressive = !!rawDirector.aggressive;
     mergedDirector.minSpacing = Math.max(0, Math.round(Number(rawDirector.minSpacing) || 0));
     mergedDirector.retryLimit = Math.min(10, Math.max(0, Math.round(Number(rawDirector.retryLimit) ?? DEFAULT_DIRECTOR.retryLimit)));
-    // 导演API=RUBY API的复制粘贴（可单独换模型）；空/缺字段回落到分析API
-    const rawApi = (rawDirector.api && typeof rawDirector.api === 'object') ? rawDirector.api : null;
-    mergedDirector.api = rawApi && (String(rawApi.url || '').trim() || String(rawApi.model || '').trim())
-        ? { url: String(rawApi.url || '').trim(), key: String(rawApi.key || ''), model: String(rawApi.model || '').trim() }
-        : null;
     mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
-    // 独立API设计已废除：导演就是分析任务，传输方式完全跟随RUBY基础API设置；
-    // 导演API选择移至玩家面板（全局设置 store.directorApi），不随角色卡走
+    // 密钥绝不入卡：导演API是玩家侧全局设置（store.directorApi），不随角色卡走；
+    // 旧版残留的密钥类字段（apiMode/customApi/api）一律剔除
     delete mergedDirector.apiMode;
     delete mergedDirector.customApi;
     delete mergedDirector.api;
