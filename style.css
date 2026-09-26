@@ -1289,3 +1289,13 @@ body.ruby-dark #ra_dir_api_wrap.director-needed {
     border-color: #e05a72;
     background: #2a1418;
 }
+
+/* ---------- 导演模式：玩家面板周期时间线的导演标记 ---------- */
+#ra_cycle_timeline .marker-dot.director {
+    background: #C41E3A;
+    box-shadow: 0 0 0 3px rgba(196, 30, 58, 0.25);
+}
+body.ruby-dark #ra_cycle_timeline .marker-dot.director {
+    background: #e05a72;
+    box-shadow: 0 0 0 3px rgba(224, 90, 114, 0.25);
+}

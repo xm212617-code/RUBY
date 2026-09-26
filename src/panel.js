@@ -2249,6 +2249,13 @@ function renderCycleInfo() {
     const c = ctx();
     const currentCounter = c ? countAiReplies(c.chat) : 0;
 
+    // 导演模式：时间线动态跟随导演计划（绝对楼层），不再读静态周期位置
+    const ds = engine.getEngineState()?.director;
+    if (ds?.enabled) {
+        renderDirectorCycle(ds, { lengthBadge, counterBadge, timeline, taskList, currentCounter });
+        return;
+    }
+
     const tasksFromUI = [];
     document.querySelectorAll('.task-card[data-id]').forEach((card) => {
         const taskId = parseInt(card.dataset.id, 10);
@@ -2343,6 +2350,103 @@ function renderCycleInfo() {
             <span class="floor-badge" style="background:#666;">位置${maxPosition}后</span>
             <span class="task-name" style="color:#666;">🔄 新周期开始，回到位置1</span>
             <span class="output-var" style="color:#888;">周期循环</span>
+        </div>`;
+    taskList.innerHTML = listHtml;
+}
+
+/** 导演模式时间线：动态跟随导演计划（绝对楼层）——🎬导演起点 → 任务点位（已触发✅）→ ▶当前 → 🎬下次导演 */
+function renderDirectorCycle(ds, els) {
+    const { lengthBadge, counterBadge, timeline, taskList, currentCounter } = els;
+    const anchor = ds.anchor || 0;
+    const nextFloor = ds.nextDirectorFloor || (anchor + ds.cycleLength);
+    const span = Math.max(1, nextFloor - anchor);
+    const nameOf = (taskId) => {
+        const t = ui.tasks.find((x) => x.id === taskId);
+        return t ? (t.displayName || `任务#${t.id}`) : `任务#${taskId}`;
+    };
+
+    lengthBadge.textContent = ds.aggressive ? `导演间隔：由导演自决（下次第${nextFloor}楼）` : `周期长度：${ds.cycleLength} 次AI回复`;
+    counterBadge.textContent = `AI回复：${currentCounter}（偏移${ds.offset}）`;
+    counterBadge.title = '当前AI回复楼层数；导演模式下以“自上次导演起的偏移”显示';
+
+    if (!ds.planReady) {
+        timeline.innerHTML = `
+            <div class="cycle-track"><div class="cycle-axis"></div></div>
+            <div style="text-align:center;padding:16px;color:#666;position:relative;z-index:1;">等待导演排期（下次导演：第${nextFloor}楼）</div>`;
+        taskList.innerHTML = '<div style="font-size:12px;color:#666;padding:8px;">导演尚未生成本次计划——可在导演页手动执行一次排期</div>';
+        return;
+    }
+
+    const events = (ds.planAssignments || [])
+        .map((a) => ({ floor: a.floor, taskId: a.taskId, name: nameOf(a.taskId) }))
+        .sort((a, b) => a.floor - b.floor);
+
+    // 标签错层（与静态时间线同规则）
+    let prevLeft = -100;
+    events.forEach((ev) => {
+        const left = 10 + ((ev.floor - anchor) / span) * 80;
+        const gap = left - prevLeft;
+        ev._level = gap >= 20 ? 'l1' : gap >= 11 ? 'l2' : 'l3';
+        prevLeft = left;
+    });
+    for (let i = 1; i < events.length; i++) {
+        if (events[i]._level === 'l3' && events[i - 1]._level === 'l3' && i % 2 === 0) events[i]._level = 'l2';
+    }
+
+    let trackHtml = '<div class="cycle-track"><div class="cycle-axis"></div>';
+    trackHtml += `
+        <div class="cycle-marker l1" style="left:10%;">
+            <span class="marker-line" style="background:#C41E3A;"></span>
+            <span class="marker-dot director"></span>
+            <span class="marker-floor">第${anchor}楼</span>
+            <span class="marker-label" style="color:#C41E3A;font-weight:600;">🎬 导演</span>
+        </div>`;
+    events.forEach((ev) => {
+        const left = 10 + ((ev.floor - anchor) / span) * 80;
+        const done = ev.floor <= currentCounter;
+        trackHtml += `
+            <div class="cycle-marker ${ev._level}" style="left:${left}%;${done ? 'opacity:0.75;' : ''}">
+                <span class="marker-line task"></span>
+                <span class="marker-dot task"></span>
+                <span class="marker-floor">第${ev.floor}楼${done ? ' ✅' : ''}</span>
+                <span class="marker-label">${h(ev.name)}</span>
+            </div>`;
+    });
+    if (currentCounter > anchor && currentCounter < nextFloor) {
+        const left = 10 + ((currentCounter - anchor) / span) * 80;
+        trackHtml += `
+        <div class="cycle-marker l1" style="left:${left}%;">
+            <span class="marker-line" style="background:#2196f3;"></span>
+            <span class="marker-dot" style="background:#2196f3;"></span>
+            <span class="marker-floor" style="color:#2196f3;">当前</span>
+            <span class="marker-label" style="font-size:10px;color:#2196f3;">▶ 第${currentCounter}楼</span>
+        </div>`;
+    }
+    trackHtml += `
+        <div class="cycle-marker l1" style="left:96%;opacity:0.85;">
+            <span class="marker-line" style="background:#C41E3A;box-shadow:none;"></span>
+            <span class="marker-dot director"></span>
+            <span class="marker-floor">第${nextFloor}楼</span>
+            <span class="marker-label" style="font-size:10px;color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（导演自决）' : ''}</span>
+        </div>`;
+    trackHtml += '</div>';
+    timeline.innerHTML = trackHtml;
+
+    let listHtml = `<div style="font-size:12px;font-weight:600;color:#666;margin-bottom:8px;">📋 导演计划（第${ds.runSeq}次执导${ds.aggressive ? '·激进' : ''}，按楼层）：</div>`;
+    events.forEach((ev, i) => {
+        const done = ev.floor <= currentCounter;
+        listHtml += `
+            <div class="cycle-task-item" style="${done ? 'background:#e8f5e9;' : ''}">
+                <span class="floor-badge" style="${done ? 'background:#2C5530;' : ''}">第${ev.floor}楼</span>
+                <span class="task-name">${i + 1}. ${h(ev.name)}${done ? ' ✅ 已触发' : ''}</span>
+                <span class="output-var">{{task_${ev.taskId}_Output}}</span>
+            </div>`;
+    });
+    listHtml += `
+        <div class="cycle-task-item" style="background:#fdf3f4;border-style:dashed;">
+            <span class="floor-badge" style="background:#C41E3A;">第${nextFloor}楼</span>
+            <span class="task-name" style="color:#C41E3A;">🎬 下次导演${ds.aggressive ? '（间隔由导演自决）' : `（周期${ds.cycleLength}）`}</span>
+            <span class="output-var" style="color:#888;">导演排期</span>
         </div>`;
     taskList.innerHTML = listHtml;
 }
@@ -2696,6 +2800,8 @@ function wireDirectorControls() {
     });
     engine.onStateChange(() => {
         if (ui.directorViewActive) updateDirectorStatus();
+        // 玩家面板周期时间线动态跟随导演计划（计划生成/楼层推进/执行状态变化即刷新）
+        renderCycleInfo();
         updateDirectorApiHighlight();
     });
 }
