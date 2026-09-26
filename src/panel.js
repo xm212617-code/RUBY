@@ -1289,7 +1289,13 @@ function wirePlayerSections() {
                 $('ra_dir_api_model_text').value = apiCfg.model || '';
             }
         }
-        config.saveDirectorApiConfig({ enabled });
+        // 勾选时立即持久化全部字段（否则复制的值只存在DOM里，重载即丢）
+        config.saveDirectorApiConfig({
+            enabled,
+            url: $('ra_dir_api_url').value.trim(),
+            key: $('ra_dir_api_key').value,
+            model: $('ra_dir_api_model_text').value.trim(),
+        });
         syncDirectorApiUi();
         updateDirectorApiHighlight();
         window.toastr?.success?.(enabled ? '已启用独立导演API（默认沿用当前RUBY API，可重选模型）' : '已停用独立导演API，导演跟随RUBY分析API');
@@ -2429,6 +2435,9 @@ function updateDirectorStatus() {
         lines.push(`⚠️ 第${ds.runSeq}次执导暂无计划——等待导演运行${ds.lastRunOk === false ? '（上次运行失败，可手动重新执行）' : ''}`);
     }
     lines.push(`当前：偏移${ds.offset}（自上次导演起的AI回复数）｜下次导演：第${ds.nextDirectorFloor}楼${ds.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${ds.cycleLength}）`}｜已触发${ds.wokenCount || 0}｜本周期手动${ds.manualRuns || 0}次`);
+    lines.push(ds.apiOverride
+        ? `导演API：独立（model=${ds.apiOverride.model || '跟随模型'}｜url${ds.apiOverride.urlSet ? '已覆盖' : '跟随'}｜key${ds.apiOverride.keySet ? '已覆盖' : '跟随'}）`
+        : '导演API：跟随RUBY基础API（未勾选独立导演API）');
     if (ds.lastRunOk === false && ds.lastRunReason) lines.push(`上次失败原因：${h(ds.lastRunReason)}`);
     el.innerHTML = lines.join('<br>');
 }

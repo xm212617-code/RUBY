@@ -52,11 +52,13 @@ function directorStateSnapshot() {
         const meta = readDirectorMeta();
         const anchored = Number.isFinite(meta?.anchor);
         const plan = (meta?.plan && Number.isFinite(meta.plan.runFloor)) ? meta.plan : null;
+        const dirApiCfg = config.getDirectorApiConfig();
         return {
             enabled: true,
             cycleLength: dirCfg.cycleLength,
             aggressive: !!dirCfg.aggressive,
             minSpacing: dirCfg.minSpacing,
+            apiOverride: dirApiCfg.enabled ? { model: dirApiCfg.model || '', urlSet: !!dirApiCfg.url, keySet: !!dirApiCfg.key } : null,
             anchor: anchored ? meta.anchor : 0,
             runSeq: (meta?.history?.length || 0) + 1,
             offset: anchored ? aiCount - meta.anchor : 0,
@@ -538,6 +540,9 @@ async function runDirectorTask(d, ctxObj) {
     const effApiCfg = dirApi.enabled
         ? { ...apiCfg, url: dirApi.url || apiCfg.url, key: dirApi.key || apiCfg.key, model: dirApi.model || apiCfg.model }
         : apiCfg;
+    log(`director api: ${dirApi.enabled
+        ? `独立（model=${effApiCfg.model || '未设置'}｜url=${dirApi.url ? '已覆盖' : '跟随'}｜key=${dirApi.key ? '已覆盖' : '跟随'}）`
+        : '未启用 — 跟随RUBY基础API'}`);
 
     // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读
     let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
