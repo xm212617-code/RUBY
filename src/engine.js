@@ -51,16 +51,21 @@ function directorStateSnapshot() {
         const aiCount = reader.countAiReplies(c.chat);
         const meta = readDirectorMeta();
         const anchored = Number.isFinite(meta?.anchor);
+        const plan = (meta?.plan && Number.isFinite(meta.plan.runFloor)) ? meta.plan : null;
         return {
             enabled: true,
             cycleLength: dirCfg.cycleLength,
+            aggressive: !!dirCfg.aggressive,
             minSpacing: dirCfg.minSpacing,
-            round: anchored ? director.directorRound(aiCount, meta.anchor, dirCfg.cycleLength) : 0,
-            position: anchored ? director.directorPosition(aiCount, meta.anchor, dirCfg.cycleLength) : 0,
-            planReady: !!(meta?.plan && meta.plan.round === (anchored ? director.directorRound(aiCount, meta.anchor, dirCfg.cycleLength) : -1)),
-            planCount: meta?.plan?.assignments?.length || 0,
-            planAssignments: (meta?.plan?.assignments || []).map((a) => ({ position: a.position, taskId: a.taskId })),
+            anchor: anchored ? meta.anchor : 0,
+            runSeq: (meta?.history?.length || 0) + 1,
+            offset: anchored ? aiCount - meta.anchor : 0,
+            planReady: !!plan,
+            planCount: plan?.assignments?.length || 0,
+            planAssignments: (plan?.assignments || []).map((a) => ({ floor: a.floor, taskId: a.taskId })),
+            nextDirectorFloor: meta?.nextDirectorFloor || 0,
             wokenCount: meta?.woken?.length || 0,
+            manualRuns: meta?.manualRuns || 0,
             lastRunOk: meta?.lastDirectorRun ? !!meta.lastDirectorRun.ok : null,
             lastRunReason: meta?.lastDirectorRun?.reason || '',
         };
@@ -208,6 +213,25 @@ function handleMessagesDeleted(cc) {
     }
     if (deletedOrdinals.length === 0) return;
 
+    // 导演模式（v2 绝对楼层调度）：删除使楼层前移，计划/下次导演/锚点同步前移，
+    // 清空导演幂等键与已触发记录（前移后的计划楼层可能落在已跑区间，重触发一次可接受）
+    const dirMeta = cc.chatMetadata?.extensions?.RubyAnalyzer?.director;
+    if (dirMeta?.v === 2) {
+        const shiftFor = (floor) => deletedOrdinals.filter((d) => d <= floor).length;
+        if (dirMeta.plan?.runFloor !== undefined) {
+            for (const a of dirMeta.plan.assignments || []) a.floor -= shiftFor(a.floor);
+            dirMeta.plan.runFloor -= shiftFor(dirMeta.plan.runFloor);
+        }
+        if (Number.isFinite(dirMeta.nextDirectorFloor)) dirMeta.nextDirectorFloor -= shiftFor(dirMeta.nextDirectorFloor);
+        if (Number.isFinite(dirMeta.anchor)) dirMeta.anchor -= shiftFor(dirMeta.anchor);
+        for (const key of [...state.triggered]) {
+            if (String(key).startsWith('dir_')) state.triggered.delete(key);
+        }
+        dirMeta.woken = [];
+        saveDirectorMeta();
+        log(`director resync: plan/next-director floors shifted for ${deletedOrdinals.length} deletion(s), dir idempotent keys cleared`);
+    }
+
     const len = state.cycleLength > 0 ? state.cycleLength : 1;
     const fromRound = Math.ceil(deletedOrdinals[0] / len);
     let clearedKeys = 0;
@@ -241,36 +265,56 @@ function saveDirectorMeta() {
     if (typeof c?.saveMetadataDebounced === 'function') c.saveMetadataDebounced();
 }
 
-/** 取导演元数据；无锚点时以当前AI回复数锚定——启用后的下一条AI回复即周期位置1（回复1~2后首跑） */
+/**
+ * 取导演元数据（v2：绝对楼层调度）。
+ * - anchor: 上次导演运行（或启用锚定）时的AI楼层数
+ * - nextDirectorFloor: 下次导演运行的绝对楼层（普通模式=runFloor+周期长度；激进模式=导演自决）
+ * - plan: { runFloor, assignments:[{floor,taskId}] }（位置换算为绝对楼层：runFloor+位置-1）
+ * - history: 近5周期 {runFloor, taskIds, planned, woken, manual}（迭代学习统计）
+ * - manualRuns: 本周期玩家手动执行的分析次数
+ * 无锚点时以当前AI回复数锚定——启用后的下一条AI回复即导演首跑（回复1~2后开始）。
+ * 旧格式（v1 周期位置制）自动重置，导演重跑一次即可。
+ */
 function ensureDirectorMeta(aiCount) {
     const c = ctx();
     const ns = c?.chatMetadata?.extensions;
     if (!ns) return null;
     ns.RubyAnalyzer ||= {};
     let d = ns.RubyAnalyzer.director;
-    if (!d || typeof d !== 'object' || !Number.isFinite(d.anchor)) {
-        d = ns.RubyAnalyzer.director = { anchor: aiCount, plan: null, history: [], woken: [] };
-        log(`director anchored at AI reply ${aiCount}: first run right after the next reply`);
+    if (!d || typeof d !== 'object' || d.v !== 2 || !Number.isFinite(d.anchor)) {
+        d = ns.RubyAnalyzer.director = {
+            v: 2,
+            anchor: aiCount,
+            nextDirectorFloor: aiCount + 1,
+            plan: null,
+            history: [],
+            woken: [],
+            manualRuns: 0,
+        };
+        log(`director anchored at AI reply ${aiCount}: first run right after the next reply (floor ${aiCount + 1})`);
         saveDirectorMeta();
     }
     d.history ||= [];
     d.woken ||= [];
+    d.manualRuns ||= 0;
     return d;
 }
 
-/** 久未触发统计：当前计划（排期前）与近5周期历史中未出现的任务，按未触发周期数降序 */
-function computeOverdue(dmeta, taskList, round) {
-    const lastSeen = new Map();
-    const record = (r, assignments) => {
-        for (const a of assignments || []) {
-            const prev = lastSeen.get(a.taskId);
-            if (prev === undefined || r > prev) lastSeen.set(a.taskId, r);
-        }
+/** 久未触发统计（按"执导次数"计）：当前生效计划=上一次执导，历史依次回溯 */
+function computeOverdue(dmeta, taskList, runSeq) {
+    const lastSeenSeq = new Map();
+    const see = (taskId, seq) => {
+        const prev = lastSeenSeq.get(taskId);
+        if (prev === undefined || seq > prev) lastSeenSeq.set(taskId, seq);
     };
-    if (dmeta?.plan?.assignments) record(dmeta.plan.round, dmeta.plan.assignments);
-    for (const h of dmeta?.history || []) record(h.round, h.assignments);
+    if (dmeta?.plan?.assignments) {
+        for (const a of dmeta.plan.assignments) see(a.taskId, runSeq - 1);
+    }
+    (dmeta?.history || []).forEach((h, idx) => {
+        for (const taskId of h.taskIds || []) see(taskId, runSeq - 2 - idx);
+    });
     return taskList
-        .map((t) => ({ id: t.id, name: t.name, cyclesAgo: lastSeen.has(t.id) ? round - lastSeen.get(t.id) : round }))
+        .map((t) => ({ id: t.id, name: t.name, cyclesAgo: lastSeenSeq.has(t.id) ? runSeq - lastSeenSeq.get(t.id) : runSeq }))
         .filter((t) => t.cyclesAgo >= 1)
         .sort((a, b) => b.cyclesAgo - a.cyclesAgo)
         .slice(0, 6);
@@ -325,53 +369,39 @@ async function tick() {
     const dirCfg = preset.director;
     const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled));
 
-    // —— 导演模式：位置1跑导演，其余位置按计划查表唤醒（静态位置配置被接管）——
+    // —— 导演模式：绝对楼层调度——导演在 nextDirectorFloor 运行，任务按计划楼层唤醒（静态位置被接管）——
     if (dirActive) {
-        const L = dirCfg.cycleLength;
         const dmeta = ensureDirectorMeta(aiCount);
         if (!dmeta) return;
-        const pos = director.directorPosition(aiCount, dmeta.anchor, L);
-        const round = director.directorRound(aiCount, dmeta.anchor, L);
-        if (pos <= 0) return;
         state.baseline = aiCount;
-        state.cycleLength = L;
+        state.cycleLength = dirCfg.cycleLength;
 
         const batch = [];
-        if (pos === 1) {
-            const idemKey = `${round}_1_director`;
+        if (aiCount === dmeta.nextDirectorFloor) {
+            const idemKey = `dir_${aiCount}_director`;
             if (!state.triggered.has(idemKey)) {
                 state.triggered.add(idemKey);
                 batch.push({ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: aiCount, source: 'auto' });
             }
-        } else {
-            const plan = dmeta.plan;
-            if (!plan || plan.round !== round) {
-                // 重试耗尽仍失败/计划缺失：本周期空转等下周期（书签未动不丢数据），只警告一次
-                if (dmeta.planWarnedRound !== round) {
-                    dmeta.planWarnedRound = round;
-                    saveDirectorMeta();
-                    warn(`director plan missing for round ${round} (position ${pos}) — cycle idles until next director run`);
+        } else if (dmeta.plan) {
+            for (const a of dmeta.plan.assignments.filter((x) => x.floor === aiCount)) {
+                const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
+                if (!task) continue;
+                const type = `task_${task.id}`;
+                const idemKey = `dir_${aiCount}_${type}`;
+                if (state.triggered.has(idemKey)) {
+                    log(`idempotent skip: ${task.displayName} (floor ${aiCount})`);
+                    continue;
                 }
-            } else {
-                for (const a of plan.assignments.filter((x) => x.position === pos)) {
-                    const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
-                    if (!task) continue;
-                    const type = `task_${task.id}`;
-                    const idemKey = `${round}_${pos}_${type}`;
-                    if (state.triggered.has(idemKey)) {
-                        log(`idempotent skip: ${task.displayName} (round ${round} position ${pos})`);
-                        continue;
-                    }
-                    state.triggered.add(idemKey);
-                    batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: pos, sourceFloor: aiCount, source: 'director' });
-                    dmeta.woken.push({ position: pos, taskId: task.id });
-                    saveDirectorMeta();
-                }
+                state.triggered.add(idemKey);
+                batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: aiCount - dmeta.plan.runFloor + 1, sourceFloor: aiCount, source: 'director' });
+                dmeta.woken.push({ floor: aiCount, taskId: task.id });
+                saveDirectorMeta();
             }
         }
         emitState();
         if (batch.length === 0) return;
-        log(`director trigger at AI reply ${aiCount} (round ${round} position ${pos}): ${batch.map((t) => t.displayName).join(', ')}`);
+        log(`director trigger at AI reply ${aiCount}: ${batch.map((t) => t.displayName).join(', ')}`);
         await runPipeline(batch);
         if (state.needTick) {
             state.needTick = false;
@@ -475,6 +505,15 @@ export async function forceRun(kind, taskId) {
         throw new Error(`unknown forceRun kind: ${kind}`);
     }
 
+    // 手动执行计入导演迭代统计（本周期玩家手动分析次数）
+    if (kind !== 'director') {
+        const dm = readDirectorMeta();
+        if (dm) {
+            dm.manualRuns = (dm.manualRuns || 0) + batch.length;
+            saveDirectorMeta();
+        }
+    }
+
     await runPipeline(batch);
     return `${batch.map((t) => t.displayName).join(', ')} 执行完毕`;
 }
@@ -491,6 +530,12 @@ async function runDirectorTask(d, ctxObj) {
     const L = dirCfg.cycleLength;
     const dmeta = ensureDirectorMeta(c ? reader.countAiReplies(c.chat) : 0);
     if (!dmeta) throw new Error('聊天元数据不可用');
+    const runSeq = dmeta.history.length + 1;
+
+    // 导演API=RUBY API的复制粘贴（可单独换模型）；流式等传输方式完全跟随RUBY基础API设置
+    const effApiCfg = dirCfg.api?.url
+        ? { ...apiCfg, url: dirCfg.api.url, key: dirCfg.api.key || apiCfg.key, model: dirCfg.api.model || apiCfg.model }
+        : apiCfg;
 
     // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读
     let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
@@ -530,28 +575,52 @@ async function runDirectorTask(d, ctxObj) {
         }
     }
 
-    const round = director.directorRound(inc.endFloor || dmeta.anchor + 1, dmeta.anchor, L);
+    const round = runSeq;
     const prevPlan = dmeta.plan;
     const nameOf = (taskId) => taskList.find((t) => t.id === taskId)?.name || `任务#${taskId}`;
-    const lastCycle = (prevPlan && prevPlan.round === round - 1 ? prevPlan.assignments : [])
-        .map((a) => ({ position: a.position, taskId: a.taskId, name: nameOf(a.taskId) }));
-    const woken = (dmeta.woken || []).map((a) => ({ position: a.position, taskId: a.taskId, name: nameOf(a.taskId) }));
+    const lastCycle = (prevPlan?.assignments || []).map((a) => ({
+        position: a.floor - prevPlan.runFloor + 1,
+        taskId: a.taskId,
+        name: nameOf(a.taskId),
+    }));
+    const woken = (dmeta.woken || []).map((a) => ({
+        position: prevPlan ? a.floor - prevPlan.runFloor + 1 : a.floor,
+        taskId: a.taskId,
+        name: nameOf(a.taskId),
+    }));
     const overdue = computeOverdue(dmeta, taskList, round);
+    const lastStats = prevPlan ? {
+        planned: prevPlan.assignments.length,
+        woken: dmeta.woken.length,
+        manual: dmeta.manualRuns || 0,
+    } : null;
 
     const prompt = director.buildDirectorPrompt({
         tasks: taskList,
         cycleLength: L,
         minSpacing: dirCfg.minSpacing,
+        aggressive: !!dirCfg.aggressive,
         round,
         lastCycle,
         woken,
         overdue,
+        lastStats,
         contextText,
         refSections,
     });
     const messages = buildMessages('导演模式', prompt, cfgData);
 
-    // 导演就是分析任务：apiCfg/genParams/messages 与任务循环完全一致，无任何独立通道
+    // gemini 3.5 及以上（含pro/flash）已取消assistant预填充支持：破限预填充消息自动降为user
+    const effModel = String(effApiCfg.model || '');
+    if (director.isGeminiPostPrefillDrop(effModel)) {
+        let converted = 0;
+        for (const m of messages) {
+            if (m.role === 'assistant') { m.role = 'user'; converted++; }
+        }
+        if (converted > 0) log(`gemini 3.5+ model detected (${effModel}): ${converted} prefill assistant message(s) -> user`);
+    }
+
+    // 导演就是分析任务：genParams/messages 与任务循环完全一致；apiCfg 仅按导演页的复制粘贴覆盖 url/key/model
     notify('info', '🎬 导演排期中...', { timeOut: 4000 });
     const maxAttempts = 1 + Math.max(0, Math.round(dirCfg.retryLimit || 0));
     let parsed = null;
@@ -560,7 +629,7 @@ async function runDirectorTask(d, ctxObj) {
     while (attempts < maxAttempts) {
         attempts++;
         const result = await ai.callModel({
-            apiCfg,
+            apiCfg: effApiCfg,
             genParams,
             messages,
             taskLabel: `导演模式${attempts > 1 ? `(重试${attempts - 1})` : ''}`,
@@ -585,17 +654,35 @@ async function runDirectorTask(d, ctxObj) {
         return;
     }
 
-    const validated = director.validateSchedule(parsed.assignments, { cycleLength: L, minSpacing: dirCfg.minSpacing, taskList });
+    // 下次导演间隔：激进模式由导演自决（"下次导演间隔"字段），普通模式=周期长度
+    const runFloor = inc.endFloor || dmeta.anchor + 1;
+    const gap = dirCfg.aggressive && Number.isFinite(parsed.directorGap) && parsed.directorGap >= 2
+        ? Math.min(parsed.directorGap, 60)
+        : L;
+    const validated = director.validateSchedule(parsed.assignments, { maxPosition: gap - 1, minSpacing: dirCfg.minSpacing, taskList });
     for (const w of validated.warnings) warn(`director schedule: ${w}`);
 
-    // 历史轮转：上一周期计划进历史（最多5条），新计划覆盖，本周期已触发清零
-    if (prevPlan && Number.isFinite(prevPlan.round) && prevPlan.round !== round) {
-        dmeta.history.unshift({ round: prevPlan.round, assignments: prevPlan.assignments });
+    // 历史轮转：上一周期计划连同实际表现（计划数/触发数/手动次数）进历史，供迭代学习（最多5条）
+    if (prevPlan && Number.isFinite(prevPlan.runFloor)) {
+        dmeta.history.unshift({
+            runFloor: prevPlan.runFloor,
+            taskIds: prevPlan.assignments.map((a) => a.taskId),
+            planned: prevPlan.assignments.length,
+            woken: dmeta.woken.length,
+            manual: dmeta.manualRuns || 0,
+        });
         dmeta.history = dmeta.history.slice(0, 5);
     }
-    dmeta.plan = { round, assignments: validated.assignments, createdAt: Date.now() };
+    dmeta.plan = {
+        runFloor,
+        assignments: validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, taskId: a.taskId })),
+        createdAt: Date.now(),
+    };
+    dmeta.nextDirectorFloor = runFloor + gap;
+    dmeta.anchor = runFloor;
     dmeta.woken = [];
-    dmeta.lastDirectorRun = { round, at: Date.now(), ok: true };
+    dmeta.manualRuns = 0;
+    dmeta.lastDirectorRun = { floor: runFloor, at: Date.now(), ok: true, gap, aggressive: !!dirCfg.aggressive };
     saveDirectorMeta();
     reader.saveBookmark('director', inc.endFloor);
 
@@ -603,9 +690,9 @@ async function runDirectorTask(d, ctxObj) {
     if (chatBook && dirCfg.planKey) {
         try {
             const content = [
-                `【RUBY导演计划·周期${round}】（自动生成，请保持条目关闭，仅供导演引擎读取）`,
-                '位置1: 导演（本计划生成点）',
-                ...validated.assignments.map((a) => `位置${a.position}: task${a.taskId} ${nameOf(a.taskId)}`),
+                `【RUBY导演计划·第${round}次执导】（自动生成，请保持条目关闭，仅供导演引擎读取）`,
+                `导演运行楼层: ${runFloor}｜下次导演: 第${dmeta.nextDirectorFloor}楼${dirCfg.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${L}）`}`,
+                ...validated.assignments.map((a) => `第${a.floor}楼: task${a.taskId} ${nameOf(a.taskId)}`),
             ].join('\n');
             await worldbook.writeOutputEntry(chatBook, { key: dirCfg.planKey, content, disable: true });
             await worldbook.persistBook(chatBook);
@@ -616,10 +703,10 @@ async function runDirectorTask(d, ctxObj) {
 
     state.lastRunAt = Date.now();
     state.lastRunSummary = validated.assignments.length > 0
-        ? `导演计划：${validated.assignments.length}个任务（周期${round}）`
-        : `导演计划：本周期不排任务（周期${round}）`;
-    notify('success', `🎬 导演计划已生成（周期${round}）：${validated.assignments.map((a) => `位置${a.position}→task${a.taskId}`).join('，') || '本周期无任务'}`, { timeOut: 8000 });
-    log(`director plan ready: ${JSON.stringify(validated.assignments)}`);
+        ? `导演计划：${validated.assignments.length}个任务（第${round}次执导，下次导演第${dmeta.nextDirectorFloor}楼）`
+        : `导演计划：本周期不排任务（第${round}次执导）`;
+    notify('success', `🎬 导演计划已生成（第${round}次执导）：${validated.assignments.map((a) => `第${a.floor}楼→task${a.taskId}`).join('，') || '本周期无任务'}｜下次导演第${dmeta.nextDirectorFloor}楼`, { timeOut: 8000 });
+    log(`director plan ready: ${JSON.stringify(dmeta.plan.assignments)} | nextDirectorFloor=${dmeta.nextDirectorFloor}`);
     emitState();
 }
 

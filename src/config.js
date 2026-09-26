@@ -31,8 +31,10 @@ export const DEFAULT_DIRECTOR = {
     enabled: false,
     displayName: '导演模式',
     cycleLength: 20,        // 周期长短（次AI回复）；导演永远位于周期位置1
+    aggressive: false,      // 激进模式：导演自决下次出现时间（输出"下次导演间隔"）
     minSpacing: 0,          // 任务最低间隔（次AI回复）；0=完全由AI决定
     retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
+    api: null,              // null=完全跟随RUBY分析API；{url,key,model}=复制RUBY API后单独改模型
     planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
     useReferences: [],      // 导演可勾选参考条目池
 };
@@ -189,10 +191,16 @@ export function normalizePreset(raw) {
     const rawDirector = (p.director && typeof p.director === 'object') ? p.director : {};
     const mergedDirector = { ...clone(DEFAULT_DIRECTOR), ...rawDirector };
     mergedDirector.cycleLength = Math.max(2, Math.round(Number(rawDirector.cycleLength) || DEFAULT_DIRECTOR.cycleLength));
+    mergedDirector.aggressive = !!rawDirector.aggressive;
     mergedDirector.minSpacing = Math.max(0, Math.round(Number(rawDirector.minSpacing) || 0));
     mergedDirector.retryLimit = Math.min(10, Math.max(0, Math.round(Number(rawDirector.retryLimit) ?? DEFAULT_DIRECTOR.retryLimit)));
+    // 导演API=RUBY API的复制粘贴（可单独换模型）；空/缺字段回落到分析API
+    const rawApi = (rawDirector.api && typeof rawDirector.api === 'object') ? rawDirector.api : null;
+    mergedDirector.api = rawApi && (String(rawApi.url || '').trim() || String(rawApi.model || '').trim())
+        ? { url: String(rawApi.url || '').trim(), key: String(rawApi.key || ''), model: String(rawApi.model || '').trim() }
+        : null;
     mergedDirector.useReferences = Array.isArray(rawDirector.useReferences) ? rawDirector.useReferences.map(String) : [];
-    // 独立API设计已废除：导演就是分析任务，通道/配置与任务完全一致
+    // 独立传输设计已废除：导演就是分析任务，流式等传输方式完全跟随RUBY基础API设置
     delete mergedDirector.apiMode;
     delete mergedDirector.customApi;
     preset.director = mergedDirector;

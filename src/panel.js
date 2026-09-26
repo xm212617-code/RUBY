@@ -2298,17 +2298,17 @@ function updateDirectorStatus() {
     if (!el) return;
     const ds = engine.getEngineState()?.director;
     if (!ds?.enabled) {
-        el.innerHTML = '⚪ 导演周期未启用。勾选"启用导演周期"并保存后，导演将在每周期位置1（一条AI回复后）自动排期。';
+        el.innerHTML = '⚪ 导演周期未启用。勾选"启用导演周期"并保存后，导演将在下一条AI回复（周期位置1）自动排期。';
         return;
     }
     const lines = [];
     if (ds.planReady) {
-        const planText = (ds.planAssignments || []).map((a) => `位置${a.position}→task${a.taskId}`).join('，');
-        lines.push(`✅ 周期${ds.round}计划就绪（${ds.planCount}个任务）${planText ? `：${planText}` : ''}`);
+        const planText = (ds.planAssignments || []).map((a) => `第${a.floor}楼→task${a.taskId}`).join('，');
+        lines.push(`✅ 第${ds.runSeq}次执导计划就绪（${ds.planCount}个任务）${planText ? `：${planText}` : ''}`);
     } else {
-        lines.push(`⚠️ 周期${ds.round}暂无计划——等待导演在位置1运行${ds.lastRunOk === false ? '（上次运行失败，可手动重新执行）' : ''}`);
+        lines.push(`⚠️ 第${ds.runSeq}次执导暂无计划——等待导演运行${ds.lastRunOk === false ? '（上次运行失败，可手动重新执行）' : ''}`);
     }
-    lines.push(`当前进度：周期${ds.round} 位置${ds.position}/${ds.cycleLength}（AI回复计数，已触发${ds.wokenCount || 0}个）`);
+    lines.push(`当前：偏移${ds.offset}（自上次导演起的AI回复数）｜下次导演：第${ds.nextDirectorFloor}楼${ds.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${ds.cycleLength}）`}｜已触发${ds.wokenCount || 0}｜本周期手动${ds.manualRuns || 0}次`);
     if (ds.lastRunOk === false && ds.lastRunReason) lines.push(`上次失败原因：${h(ds.lastRunReason)}`);
     el.innerHTML = lines.join('<br>');
 }
@@ -2319,6 +2319,7 @@ function renderDirectorView() {
     const dir = ui.director || config.normalizePreset({}).director;
     ui.director = dir;
     const enabledTasks = ui.tasks.filter((t) => t.enabled);
+    const analyzerApi = config.getApiConfig();
 
     container.innerHTML = `
         <div class="form-section">
@@ -2344,6 +2345,10 @@ function renderDirectorView() {
                     <span style="font-size:12px;color:#666;">次AI回复</span>
                 </div>
                 <div class="form-row">
+                    <span class="form-label">激进模式 <span class="director-help" data-help="勾选后导演可以自己决定下一次自己什么时候出现：每次排期时额外输出"下次导演间隔"（几条AI回复后再次执导），不再受固定周期长度约束——剧情密集处可频繁执导，铺垫期可长间隔。同时导演会收到上周期实际表现（计划数/触发数/手动次数）作为排期参考（非激进模式同样收到）。">?</span></span>
+                    <input type="checkbox" id="ra_director_aggressive" class="director-aggressive" ${dir.aggressive ? 'checked' : ''}>
+                </div>
+                <div class="form-row">
                     <span class="form-label">最低任务间隔 <span class="director-help" data-help="相邻两次触发（含导演自己的位置1）至少间隔多少次AI回复。填0=完全由AI根据剧情节奏决定间隔；填N=硬性约束写入导演提示词，违反时仅记录警告不阻断。">?</span></span>
                     <input type="number" id="ra_director_spacing" class="director-spacing w120" min="0" max="50" value="${dir.minSpacing}">
                     <span style="font-size:12px;color:#666;">0 = 由AI决定</span>
@@ -2357,6 +2362,15 @@ function renderDirectorView() {
                     <span class="form-label">计划条目 <span class="director-help" data-help="导演排好的调度表写入这个聊天世界书条目，条目保持关闭状态、不注入对话，仅供引擎读取与排查。留空则不写条目（调度仍保存在聊天元数据里，功能不受影响）。">?</span></span>
                     <input type="text" id="ra_director_plankey" class="director-plankey w250" value="${h(dir.planKey || '')}" placeholder="ruby导演计划">
                 </div>
+            </div>
+        </div>
+        <div class="form-section">
+            <div class="form-header blue">■ 导演API（RUBY API 的复制，可单独换模型） <span class="director-help" data-help="默认复制RUBY分析API的当前配置；创作者可单独为导演任务更换模型（或地址/密钥）。留空的字段跟随RUBY API。传输方式（流式与否）完全沿用RUBY基础API设置，不存在独立传输设计；模型为gemini 3.5及以上（含pro/flash）时自动把破限预填充的assistant消息改为user（谷歌已取消预填充支持）。">?</span></div>
+            <div class="form-body">
+                <div class="form-row"><span class="form-label">API地址</span><input type="text" id="ra_director_api_url" class="director-api-url w250" value="${h(dir.api?.url || '')}" placeholder="${h(analyzerApi.url || '（空=跟随RUBY API）')}"></div>
+                <div class="form-row"><span class="form-label">API密钥</span><input type="password" id="ra_director_api_key" class="director-api-key w250" value="${h(dir.api?.key || '')}" placeholder="（空=跟随RUBY API）"></div>
+                <div class="form-row"><span class="form-label">模型 <span class="director-help" data-help="单独为导演任务选用的模型；留空=使用RUBY API当前模型。">?</span></span><input type="text" id="ra_director_api_model" class="director-api-model w250" value="${h(dir.api?.model || '')}" placeholder="${h(analyzerApi.model || '（空=跟随RUBY API）')}"></div>
+                <div style="margin-top:6px;"><button type="button" id="ra_director_api_reset" class="btn outline small">↺ 清空并恢复为RUBY API</button></div>
             </div>
         </div>
         <div class="form-section">
@@ -2392,9 +2406,16 @@ function collectDirectorFromUI() {
         ...base,
         enabled: !!container.querySelector('.director-enabled')?.checked,
         cycleLength: num('.director-cycle', base.cycleLength, 2),
+        aggressive: !!container.querySelector('.director-aggressive')?.checked,
         minSpacing: num('.director-spacing', base.minSpacing, 0),
         retryLimit: num('.director-retry', base.retryLimit, 0),
         planKey: container.querySelector('.director-plankey')?.value.trim() || '',
+        api: (() => {
+            const url = container.querySelector('.director-api-url')?.value.trim() || '';
+            const key = container.querySelector('.director-api-key')?.value || '';
+            const model = container.querySelector('.director-api-model')?.value.trim() || '';
+            return (url || model) ? { url, key, model } : null;
+        })(),
         useReferences: [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var),
     };
 }
@@ -2411,6 +2432,24 @@ function wireDirectorViewInputs(container) {
         e.target.value = ui.director.cycleLength;
         triggerAutoSave();
         engine.reinit();
+    });
+    on(container.querySelector('.director-aggressive'), 'change', (e) => {
+        ui.director.aggressive = e.target.checked;
+        triggerAutoSave();
+    });
+    ['url', 'key', 'model'].forEach((k) => on(container.querySelector(`.director-api-${k}`), 'change', (e) => {
+        ui.director.api = ui.director.api || { url: '', key: '', model: '' };
+        ui.director.api[k] = e.target.value;
+        triggerAutoSave();
+    }));
+    on($('ra_director_api_reset'), 'click', () => {
+        ui.director.api = null;
+        for (const sel of ['.director-api-url', '.director-api-key', '.director-api-model']) {
+            const input = container.querySelector(sel);
+            if (input) input.value = '';
+        }
+        triggerAutoSave();
+        window.toastr?.success?.('已清空导演API覆盖，恢复跟随RUBY分析API');
     });
     on(container.querySelector('.director-spacing'), 'change', (e) => {
         ui.director.minSpacing = Math.max(0, parseInt(e.target.value, 10) || 0);
