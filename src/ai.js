@@ -65,15 +65,28 @@ async function callViaTavernService({ apiCfg, genParams, messages, signal }) {
             throw new Error('流式响应格式异常');
         }
         let text = '';
+        let chunkCount = 0;
+        let lastChunkDump = '';
         for await (const chunk of result()) {
+            chunkCount++;
             text = chunk.text || text;
+            lastChunkDump = JSON.stringify(chunk)?.slice(0, 300) || String(chunk);
         }
-        if (!text.trim()) throw new Error('API返回内容为空');
+        if (!text.trim()) {
+            // 诊断：流跑完但累计文本为空——打出 chunk 数与最后一个 chunk 的原始形状，
+            // 区分三种情况：端点真的没吐文本（安全拦截/假流式空壳）、
+            // 只吐了 reasoning_content（思考型模型没输出正文）、chunk 字段形态不匹配
+            warn(`streaming finished with empty text: ${chunkCount} chunk(s) received, last chunk = ${lastChunkDump || '(no chunks)'}`);
+            throw new Error('API返回内容为空');
+        }
         return text;
     }
 
     const content = result?.content;
-    if (!content || String(content).trim().length < 1) throw new Error('API返回内容为空');
+    if (!content || String(content).trim().length < 1) {
+        warn(`non-stream response empty: ${JSON.stringify(result)?.slice(0, 300)}`);
+        throw new Error('API返回内容为空');
+    }
     return String(content);
 }
 
@@ -229,7 +242,12 @@ let providerNonStreamOnly = false;
 
 export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     const viaMain = apiCfg.provider !== 'custom';
-    log(`AI call: ${taskLabel || 'task'} | channel=${viaMain ? 'tavern generateRaw quiet (主通道，绕过预设注入)' : 'tavern ChatCompletionService (自定义端点)'} | url=${viaMain ? '-' : (apiCfg.url || '未配置')} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')}`);
+    // 载荷摘要：每次调用都打印消息数/角色序列/总字符数——任务与导演同通道并排对照，
+    // 空返回时直接比对两边载荷差异，不再靠猜
+    const payloadSummary = Array.isArray(messages)
+        ? `${messages.length}条 [${messages.map((m) => m?.role || '?').join(',')}] ${messages.reduce((sum, m) => sum + String(m?.content ?? '').length, 0)}字符`
+        : `非数组载荷: ${typeof messages}`;
+    log(`AI call: ${taskLabel || 'task'} | channel=${viaMain ? 'tavern generateRaw quiet (主通道，绕过预设注入)' : 'tavern ChatCompletionService (自定义端点)'} | url=${viaMain ? '-' : (apiCfg.url || '未配置')} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')} | stream=${viaMain ? '(主通道自身)' : (apiCfg.stream !== false)} | payload=${payloadSummary}`);
 
     if (viaMain) {
         return callMainApi({ genParams, messages });
