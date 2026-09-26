@@ -1233,3 +1233,44 @@ body.ruby-dark #ra_panel .preset-summary-meta { color: #9aa0aa; }
 body.ruby-dark #ra_panel .director-task-row { background: #1f222a; border-color: #454b56; }
 body.ruby-dark #ra_director_help_pop { background: #2a2415; border-color: #8a7a30; color: #e8dcb0; }
 body.ruby-dark #ra_panel .director-help { background: #3d6ba8; }
+
+/* ---------- 导演模式：入口按钮醒目化 + 简介预览弹窗 ---------- */
+#ra_director_flip.director-enter {
+    background: linear-gradient(135deg, #C41E3A 0%, #8B1226 100%);
+    color: #fff;
+    border: none;
+    letter-spacing: 1px;
+    animation: ra-director-pulse 2.2s ease-in-out infinite;
+}
+#ra_director_flip.director-enter:hover { filter: brightness(1.15); }
+@keyframes ra-director-pulse {
+    0%, 100% { box-shadow: 0 2px 10px rgba(196, 30, 58, 0.45); transform: scale(1); }
+    50% { box-shadow: 0 4px 20px rgba(196, 30, 58, 0.8); transform: scale(1.02); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #ra_director_flip.director-enter { animation: none; }
+}
+body.ruby-dark #ra_director_flip.director-enter {
+    background: linear-gradient(135deg, #a01830 0%, #5e0a18 100%);
+}
+#ra_director_brief_pop {
+    position: fixed;
+    z-index: 10010;
+    width: 320px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1.5px solid #1E4B8E;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #1a1a1a;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+#ra_director_brief_pop .brief-pop-title { font-weight: 700; font-size: 13px; color: #1E4B8E; margin-bottom: 4px; }
+#ra_director_brief_pop .brief-pop-sub { font-size: 11px; color: #2C5530; font-weight: 600; margin-bottom: 6px; }
+#ra_director_brief_pop .brief-pop-body { white-space: pre-wrap; word-break: break-word; background: #f6f7f9; border-radius: 4px; padding: 8px 10px; }
+body.ruby-dark #ra_director_brief_pop { background: #1f222a; border-color: #3d6ba8; color: #d5d9e0; }
+body.ruby-dark #ra_director_brief_pop .brief-pop-title { color: #7fa8d8; }
+body.ruby-dark #ra_director_brief_pop .brief-pop-body { background: #171a20; color: #c3c9d4; }

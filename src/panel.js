@@ -9,6 +9,7 @@ import * as cardwriter from './cardwriter.js';
 import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, getBaibaibookStatus, ordinalForIndex } from './reader.js';
 import { isDarkMode } from './settings.js';
 import { BUILTIN_REFERENCES, findShadowingKey } from './builtin-refs.js';
+import * as director from './director.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -488,7 +489,7 @@ function buildShellHtml() {
 
                 <div class="sub-content" data-subcontent="tasks" style="padding:0;display:none;">
                     <div id="ra_director_flip_bar" style="padding:10px 16px 0;display:flex;gap:8px;align-items:center;">
-                        <button id="ra_director_flip" class="btn blue" style="flex:1;padding:10px;font-size:14px;font-weight:700;">🎬 导演模式</button>
+                        <button id="ra_director_flip" class="btn director-flip-btn director-enter" style="flex:1;padding:10px;font-size:14px;font-weight:700;">🎬 导演模式</button>
                         <span class="director-help" data-help="导演模式：开启后，Ruby作为导演在本周期位置1（一条AI回复后）运行一次，根据剧情发展、任务优先级与近5周期历史，为本周期排出各分析任务的触发位置。导演排期后普通任务的静态周期位置被接管；导演排中的任务到点即跑（忽略关键词扫描）。点击左侧按钮进入导演配置页。">?</span>
                     </div>
                     <div id="ra_tasks_view">
@@ -2287,6 +2288,7 @@ function renderDirectorTasks(tasks) {
                 <input type="number" class="director-priority w80" data-id="${t.id}" value="${Number(t.directorPriority) || 0}" min="0" max="99">
             </label>
             <input type="text" class="director-summary w250" data-id="${t.id}" value="${h(t.directorSummary || '')}" placeholder="任务简介（留空自动从提示词条目提取）">
+            <button type="button" class="btn outline small director-brief-preview" data-id="${t.id}" title="预览导演将收到的任务简介">👁 预览简介</button>
         </div>
     `).join('');
 }
@@ -2381,11 +2383,14 @@ function renderDirectorView() {
             </div>
         </div>
         <div class="form-section">
-            <div class="form-header blue">■ 任务优先级与简介 <span class="director-help" data-help="优先级：数字越大越优先（同数同级，0为普通），导演在同等条件下优先安排数字大的任务。简介：给导演看的一句话任务说明，留空则自动从任务的提示词条目里捕捉『该任务是为了/任务说明』等标记附近约200字作为切面简介。">?</span></div>
+            <div class="form-header blue">■ 任务优先级与简介 <span class="director-help" data-help="优先级：数字越大越优先（同数同级，0为普通），导演在同等条件下优先安排数字大的任务。简介：给导演看的一句话任务说明，留空则自动从任务的提示词条目里捕捉『该任务是为了/任务说明』等标记附近约200字作为切面简介。点预览按钮可查看实际捕捉到的内容。">?</span></div>
             <div class="form-body">
                 <div id="ra_director_tasks">${renderDirectorTasks(enabledTasks)}</div>
                 ${enabledTasks.length === 0 ? '<div class="tip" style="margin-top:8px;">暂无启用的任务——请先在任务配置页添加并启用任务，导演才有可调度的对象。</div>' : ''}
             </div>
+        </div>
+        <div class="btn-row" style="margin-top:12px;">
+            <button id="ra_director_save" class="btn blue">💾 保存导演配置</button>
         </div>`;
     updateDirectorStatus();
     wireDirectorViewInputs(container);
@@ -2478,6 +2483,74 @@ function wireDirectorViewInputs(container) {
         }
         updateDirectorStatus();
     });
+    on($('ra_director_save'), 'click', async () => {
+        try {
+            if (!config.getCharacterIdentity()) {
+                window.toastr?.warning?.('⚠️ 未打开角色卡：导演配置保存在全局层，不会随角色卡导出');
+            }
+            ui.director = collectDirectorFromUI();
+            await saveCurrentSchemeFromUI();
+            config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
+            engine.reinit();
+            window.toastr?.success?.('已保存导演配置');
+        } catch (e) {
+            window.toastr?.error?.('保存失败: ' + e.message);
+        }
+        updateDirectorStatus();
+    });
+    container.querySelectorAll('.director-brief-preview').forEach((btn) => on(btn, 'click', async (e) => {
+        e.stopPropagation();
+        const task = ui.tasks.find((x) => x.id === parseInt(btn.dataset.id, 10));
+        if (!task) return;
+        let title = '';
+        let text = '';
+        if (String(task.directorSummary || '').trim()) {
+            title = '✍️ 手动简介（优先使用）';
+            text = task.directorSummary;
+        } else {
+            try {
+                const charBook = await worldbook.getCharBookName();
+                const chatBook = await worldbook.getChatBookName();
+                const content = task.promptKey ? await worldbook.readEntry(charBook, chatBook, task.promptKey, true) : '';
+                const brief = director.extractTaskBrief(content);
+                if (brief) {
+                    title = '🔍 自动提取简介';
+                    text = brief;
+                } else {
+                    title = '⚠️ 未捕捉到简介';
+                    text = task.promptKey
+                        ? '提示词条目内容为空，或不含「该任务是为了/任务说明」等标记——导演将只收到任务名称。'
+                        : '该任务未配置提示词条目——导演将只收到任务名称。';
+                }
+            } catch (err) {
+                title = '⚠️ 提取失败';
+                text = String(err?.message || err);
+            }
+        }
+        showBriefPopup(btn, `#${task.id} ${task.displayName || ''}`, title, text);
+    }));
+}
+
+/** 简介预览小窗：显示导演实际会收到的简介内容，点击别处关闭 */
+function showBriefPopup(anchor, taskLabel, title, text) {
+    document.getElementById('ra_director_brief_pop')?.remove();
+    const pop = document.createElement('div');
+    pop.id = 'ra_director_brief_pop';
+    pop.innerHTML = `
+        <div class="brief-pop-title">${h(taskLabel)}·简介预览</div>
+        <div class="brief-pop-sub">${h(title)}</div>
+        <div class="brief-pop-body"></div>`;
+    pop.querySelector('.brief-pop-body').textContent = text;
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 340))}px`;
+    pop.style.top = `${Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 260))}px`;
+    const close = (e) => {
+        if (pop.contains(e.target)) return;
+        pop.remove();
+        document.removeEventListener('click', close);
+    };
+    setTimeout(() => document.addEventListener('click', close), 0);
 }
 
 function setDirectorView(active) {
@@ -2488,7 +2561,11 @@ function setDirectorView(active) {
     if (!tasksView || !dirView) return;
     tasksView.style.display = active ? 'none' : '';
     dirView.style.display = active ? '' : 'none';
-    if (flipBtn) flipBtn.textContent = active ? '⬅ 返回任务配置' : '🎬 导演模式';
+    if (flipBtn) {
+        flipBtn.textContent = active ? '⬅ 返回任务配置' : '🎬 导演模式';
+        // 脉冲动画只在"进入导演模式"状态下播放，返回按钮保持安静
+        flipBtn.classList.toggle('director-enter', !active);
+    }
     if (active) renderDirectorView();
 }
 
