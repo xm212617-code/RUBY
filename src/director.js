@@ -76,6 +76,16 @@ export function isGeminiPostPrefillDrop(model) {
     return major > 3 || (major === 3 && minor >= 5);
 }
 
+/**
+ * 消息删除后的楼层位移：只有被删楼层 < 目标楼层 且 ≤ 删除后总楼数（真实改变了后续编号）时前移。
+ * 重新生成本楼层（ST 的 regenerate 先删尾楼再重建同序数楼层）不满足条件——
+ * 否则每次重新生成都会让下次导演/计划楼层靠近1楼，累积导致周期异常快推进。
+ * swipe 为原地改写不触发删除事件，天然不受影响。
+ */
+export function floorShift(deletedOrdinals, floor, aiCountAfter) {
+    return (deletedOrdinals || []).filter((d) => d < floor && d <= aiCountAfter).length;
+}
+
 // ---------- 提示词组装 ----------
 
 /**

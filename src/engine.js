@@ -219,7 +219,13 @@ function handleMessagesDeleted(cc) {
     // 清空导演幂等键与已触发记录（前移后的计划楼层可能落在已跑区间，重触发一次可接受）
     const dirMeta = cc.chatMetadata?.extensions?.RubyAnalyzer?.director;
     if (dirMeta?.v === 2) {
-        const shiftFor = (floor) => deletedOrdinals.filter((d) => d <= floor).length;
+        // 位移规则：只有"真正改变后续楼层编号"的删除才前移——被删楼层必须小于目标楼层
+        // 且小于删除后的总楼数。重新生成本楼层（ST 的 regenerate 会先删尾楼再重建，见
+        // ST Generate(): chat.length -= 1 + MESSAGE_DELETED）属于尾楼删除：删除后立刻重建
+        // 同序数楼层，后续编号不变——若也前移，每次重新生成都会让下次导演/计划楼层
+        // 靠近1楼，累积导致周期异常快推进。swipe 为原地改写，不触发删除事件。
+        // 位移规则见 director.floorShift：重新生成（删尾楼重建）不前移，防止周期异常快推进
+        const shiftFor = (floor) => director.floorShift(deletedOrdinals, floor, aiCount);
         if (dirMeta.plan?.runFloor !== undefined) {
             for (const a of dirMeta.plan.assignments || []) a.floor -= shiftFor(a.floor);
             dirMeta.plan.runFloor -= shiftFor(dirMeta.plan.runFloor);
@@ -856,10 +862,11 @@ export async function runPipeline(taskBatch) {
                 log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)`);
 
                 if (inc.count === 0 || !inc.text) {
-                    if (current.source === 'force') {
+                    // force 或导演计划重触发（重新生成的楼层内容变化）：重置书签重读该楼层
+                    if (current.source === 'force' || current.source === 'director') {
                         reader.resetBookmark(taskKey);
                         inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!providerSummary });
-                        log(`force run: bookmark reset, re-reading ${inc.count} floors`);
+                        log(`bookmark reset, re-reading ${inc.count} floors (${current.source})`);
                         if (inc.count === 0 || !inc.text) {
                             warn(`skip ${taskDisplayName}: no readable text in chat`);
                             continue;
