@@ -185,6 +185,26 @@ export function reinit() {
     state.baseline = reader.countAiReplies(c.chat);
     log(`engine armed | character=${state.identity.name} | layer=${layer} | preset=${preset.name} | ${dirActive ? `director cycle=${dirCfg.cycleLength} minSpacing=${dirCfg.minSpacing} retry=${dirCfg.retryLimit}` : `cycle=${len}`} | AI replies=${state.baseline} | position=${scheduler.positionFor(state.baseline, state.cycleLength)}/${state.cycleLength}`);
     emitState();
+    sanitizeLegacyOutputFilters(preset);
+}
+
+/**
+ * 自动清理历史缺陷残留：早前版本会给绿灯输出条目错误写入 "nsfw" 过滤关键词（keysecondary）。
+ * 仅在聊天书已绑定时执行（不主动创建书）；任务面板勾选「使用可选过滤关键词」并填入内容的任务不受影响。
+ */
+async function sanitizeLegacyOutputFilters(preset) {
+    if (state.running) return;
+    try {
+        const chatBook = await worldbook.getExistingChatBookName();
+        if (!chatBook) return;
+        const tasks = [preset?.startupTask, ...(preset?.tasks || [])].filter(Boolean);
+        const cleaned = await worldbook.sanitizeOutputFilters(chatBook, tasks);
+        if (cleaned > 0) {
+            notify('info', `🧹 已自动清理 ${cleaned} 个分析输出条目上错误残留的过滤关键词`, { timeOut: 6000 });
+        }
+    } catch (e) {
+        warn(`output filter sanitize failed: ${e?.message || e}`);
+    }
 }
 
 /**
@@ -1034,7 +1054,8 @@ export async function runPipeline(taskBatch) {
                     depth: taskConfig.depth ?? 4,
                     order: taskConfig.order ?? 100,
                     selective: !!taskConfig.selective,
-                    selectiveKeys: taskConfig.selectiveKeys,
+                    // 过滤关键词仅在任务勾选「使用可选过滤关键词」并填入内容时生效，未勾选一律传空（清空残留）
+                    selectiveKeys: (taskConfig.selectiveKeysEnabled && Array.isArray(taskConfig.selectiveKeys)) ? taskConfig.selectiveKeys : [],
                 });
                 wroteToChatBook = true;
 

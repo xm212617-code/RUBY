@@ -15,6 +15,7 @@ export const DEFAULT_STARTUP = {
     outputConstant: false,
     outputDisable: 0,
     selective: false,
+    selectiveKeysEnabled: false,
     selectiveKeys: [],
     noRecursion: false,
     position: 0,
@@ -245,7 +246,12 @@ export function normalizeTask(raw) {
         outputConstant: !!t.outputConstant,
         outputDisable: t.outputDisable ? 1 : 0,
         selective: !!t.selective,
-        selectiveKeys: Array.isArray(t.selectiveKeys) ? t.selectiveKeys : [],
+        // 过滤关键词（keysecondary）是高效用字段：仅勾选「使用可选过滤关键词」并填入内容才生效，
+        // 未勾选时强制清空，绝不使用任何默认值兜底
+        selectiveKeysEnabled: !!t.selectiveKeysEnabled,
+        selectiveKeys: t.selectiveKeysEnabled && Array.isArray(t.selectiveKeys)
+            ? t.selectiveKeys.map((k) => String(k ?? '').trim()).filter(Boolean)
+            : [],
         noRecursion: !!t.noRecursion,
         position: Number.isFinite(Number(t.position)) ? Number(t.position) : 0,
         depth: Number.isFinite(Number(t.depth)) ? Number(t.depth) : 4,

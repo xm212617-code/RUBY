@@ -1923,6 +1923,10 @@ function collectTasksFromUI() {
             outputConstant: !!card.querySelector(`.task-const[data-id="${id}"]`)?.checked,
             outputDisable: card.querySelector(`.task-hide[data-id="${id}"]`)?.checked ? 1 : 0,
             selective: !!card.querySelector(`.task-sel[data-id="${id}"]`)?.checked,
+            selectiveKeysEnabled: !!card.querySelector(`.task-selkeys-enabled[data-id="${id}"]`)?.checked,
+            selectiveKeys: (card.querySelector(`.task-selkeys-enabled[data-id="${id}"]`)?.checked
+                ? (card.querySelector(`.task-selkeys-input[data-id="${id}"]`)?.value || '').split(',').map((s) => s.trim()).filter(Boolean)
+                : []),
             keywordScanEnabled: !!card.querySelector(`.task-keyword-scan-enabled[data-id="${id}"]`)?.checked,
             keywordScanKeywords: [...card.querySelectorAll(`.task-keyword-scan-input[data-id="${id}"]`)].map((input) => input.value.trim()).filter(Boolean),
             noRecursion: !!card.querySelector(`.task-no-recursion[data-id="${id}"]`)?.checked,
@@ -2060,6 +2064,14 @@ function renderTaskSlots() {
                     🔵蓝灯=始终激活 | 🟢绿灯=关键词触发 | ⚫禁用条目=不注入故事 | 🚫不可递归=禁止递归触发
                 </div>
                 <div class="form-row">
+                    <span class="form-label">过滤关键词</span>
+                    <span class="form-value" style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;">
+                        <label class="inline"><input type="checkbox" class="task-selkeys-enabled" data-id="${task.id}" ${task.selectiveKeysEnabled ? 'checked' : ''}> 使用可选过滤关键词</label>
+                        <input class="task-selkeys-input w250" data-id="${task.id}" value="${h((Array.isArray(task.selectiveKeys) ? task.selectiveKeys : []).join(', '))}" placeholder="逗号分隔，如：nsfw" ${task.selectiveKeysEnabled ? '' : 'hidden'}>
+                        <span class="tip" style="padding:4px 8px;font-size:11px;">仅 🟢绿灯 输出条目生效：勾选并填入内容后，条目需「主关键词＋过滤关键词」同时命中才激活；不勾选时输出条目绝不携带任何过滤关键词（历史残留会被自动清理）。</span>
+                    </span>
+                </div>
+                <div class="form-row">
                     <span class="form-label">📍 插入位置</span>
                     <span class="form-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                         <select class="task-position w150" data-id="${task.id}">
@@ -2159,6 +2171,12 @@ function renderTaskSlots() {
             container.querySelectorAll(`.output-mode-radio[data-group="${group}"]`).forEach((other) => {
                 if (other !== cb) other.checked = false;
             });
+        });
+    });
+    container.querySelectorAll('.task-selkeys-enabled').forEach((cb) => {
+        on(cb, 'change', () => {
+            const input = container.querySelector(`.task-selkeys-input[data-id="${cb.dataset.id}"]`);
+            if (input) input.hidden = !cb.checked;
         });
     });
     container.querySelectorAll('.task-keyword-scan-enabled').forEach((cb) => {

@@ -141,6 +141,80 @@ export async function disableCharEntry(charBook, entryKey) {
     }
 }
 
+/** 查询当前聊天已绑定的世界书名；未绑定时返回 ''（不创建书） */
+export async function getExistingChatBookName() {
+    try {
+        return String(await st('/getchatbook create=false')).trim();
+    } catch {
+        return '';
+    }
+}
+
+let sanitizingFilters = false;
+
+/**
+ * 自动清理历史缺陷残留：早前版本的 writeOutputEntry 在任务未配置过滤关键词时，
+ * 会给绿灯输出条目错误写入 "nsfw" 副关键词（keysecondary）。这里按当前任务配置
+ * 自动清理聊天书中的分析输出条目（仅按任务 outputKey 精确匹配，绝不触碰创作者
+ * 手写的其他条目）：
+ * - 任务勾选「使用可选过滤关键词」并填入内容 → 副关键词以配置为准；
+ * - 未勾选 → 清空副关键词（绿灯仅按主关键词触发）；
+ * - 非绿灯任务 → 顺带复位 selective=0 并清空副关键词。
+ * 返回清理的条目数（0=无需清理或未绑定聊天书）。
+ */
+export async function sanitizeOutputFilters(chatBook, tasks) {
+    if (sanitizingFilters) return 0;
+    if (!chatBook || !Array.isArray(tasks) || tasks.length === 0) return 0;
+    sanitizingFilters = true;
+    try {
+        const data = await loadBookData(chatBook);
+        if (!data?.entries || typeof data.entries !== 'object') return 0;
+
+        const fixes = [];
+        for (const task of tasks) {
+            const outputKey = String(task?.outputKey || '').trim();
+            if (!outputKey) continue;
+            const found = Object.entries(data.entries).find(([, entry]) => entryKeys(entry).includes(outputKey));
+            if (!found) continue;
+            const uid = parseInt(found[0], 10);
+            if (isNaN(uid)) continue;
+            const entry = found[1];
+            const wantSelective = !!task?.selective;
+            const wantKeys = wantSelective && task?.selectiveKeysEnabled && Array.isArray(task?.selectiveKeys)
+                ? task.selectiveKeys.map((k) => String(k ?? '').trim()).filter(Boolean)
+                : [];
+            const currentKeys = Array.isArray(entry?.keysecondary)
+                ? entry.keysecondary.map((k) => String(k ?? '').trim()).filter(Boolean)
+                : [];
+            const keysDiffer = currentKeys.join('\u0001') !== wantKeys.join('\u0001');
+            const selectiveDiffers = !!entry?.selective !== wantSelective;
+            if (!keysDiffer && !selectiveDiffers) continue;
+            fixes.push({ uid, outputKey, keysDiffer, selectiveDiffers, wantKeys, wantSelective, currentKeys });
+        }
+        if (fixes.length === 0) return 0;
+
+        for (const fix of fixes) {
+            if (fix.keysDiffer) {
+                if (fix.wantKeys.length > 0) {
+                    const selVar = `_ruby_sel_${Date.now()}_${fix.uid}`;
+                    await st(`/setvar key=${selVar} ${q(fix.wantKeys.join(', '))}`);
+                    await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary`);
+                } else {
+                    await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary ""`);
+                }
+            }
+            if (fix.selectiveDiffers) {
+                await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=selective ${fix.wantSelective ? 1 : 0}`);
+            }
+            log(`output filter sanitized: ${fix.outputKey} (uid ${fix.uid}) keysecondary [${fix.currentKeys.join(', ')}] -> [${fix.wantKeys.join(', ')}]`);
+        }
+        await persistBook(chatBook);
+        return fixes.length;
+    } finally {
+        sanitizingFilters = false;
+    }
+}
+
 export async function writeOutputEntry(chatBook, options) {
     const {
         key, extraKeys = '', content, comment = '', constant = false, disable = false,
@@ -193,13 +267,21 @@ export async function writeOutputEntry(chatBook, options) {
         await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=depth ${depth}`);
     }
 
-    if (selective) {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selective 1`);
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selectiveLogic 0`);
-        const keys = selectiveKeys?.length ? selectiveKeys : ['nsfw'];
+    // 副关键词（过滤关键词）是高效用字段，严禁任何默认值兜底：
+    // 只有调用方显式传入非空 selectiveKeys 才写入，否则一律清空；
+    // 非绿灯条目一律复位 selective=0 并清空副关键词，防止旧状态残留。
+    const filterKeys = (Array.isArray(selectiveKeys) ? selectiveKeys : [])
+        .map((k) => String(k ?? '').trim()).filter(Boolean);
+    if (filterKeys.length > 0) {
         const selVar = `_ruby_sel_${Date.now()}`;
-        await st(`/setvar key=${selVar} ${q(keys.join(', '))}`);
+        await st(`/setvar key=${selVar} ${q(filterKeys.join(', '))}`);
         await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary`);
+    } else {
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary ""`);
+    }
+    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selective ${selective ? 1 : 0}`);
+    if (selective) {
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selectiveLogic 0`);
     }
     log(`output written: ${key}${extraKeysList.length ? ` (keys: ${allKeys})` : ''}`);
 }
