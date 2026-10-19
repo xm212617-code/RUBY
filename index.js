@@ -78,6 +78,37 @@ async function rubyCommandCallback(args, text) {
             const enabled = (target.tasks || []).filter((t) => t.enabled).length;
             return `preset switched: ${target.name || target.id} | tasks: ${enabled}/${(target.tasks || []).length} enabled${versionNote} | engine re-armed`;
         }
+        if (sub === 'read') {
+            // /ruby read <关键词> [key=...] [json=true] [all=true] [book=chat|char] [raw=true]
+            // 消息内 HTML 前端的只读数据通道：检索世界书条目（RUBY 分析输出/写卡记录/设定），
+            // loadWorldInfo 解析真实 uid，零 toastr、零副作用（不创建书、不写条目）。
+            // 默认：聊天世界书（RUBY 分析输出所在）、最佳单条、content 经宏替换。
+            // book=char 读角色（主）世界书；raw=true 保留 {{user}} 等宏原文；json=true 返回结构化记录。
+            const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
+            const positional = rawText.split(/\s+/).slice(1).join(' ').trim();
+            const key = String(args?.key ?? positional).trim();
+            const asJson = flag(args?.json);
+            const asAll = flag(args?.all);
+            const raw = flag(args?.raw);
+            const book = String(args?.book || 'chat').toLowerCase();
+            try {
+                const records = book === 'char'
+                    ? await worldbook.readCharBookEntries(key, { all: asAll })
+                    : await worldbook.readChatBookEntries(key, { all: asAll });
+                if (records.length === 0) {
+                    return asJson ? '[]' : (key ? `entry not found: ${key}` : 'no worldbook entries');
+                }
+                if (!raw) {
+                    for (const r of records) r.content = worldbook.substitute(r.content);
+                }
+                if (asJson) {
+                    return JSON.stringify(asAll ? records : records[0]);
+                }
+                return records.map((r) => String(r.content).trim()).filter(Boolean).join('\n\n---\n\n') || '(empty content)';
+            } catch (e) {
+                return `read failed: ${e?.message || e}`;
+            }
+        }
         if (sub === 'status') {
             const es = getEngineState();
             const lines = [
@@ -116,7 +147,7 @@ async function rubyCommandCallback(args, text) {
             }
             return await forceRun('task', taskId);
         }
-        return 'usage: /ruby [panel | status | run | reload | preset <名称>]  (run: task=<id> | startup=true | all=true | director=true)';
+        return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char] [raw=true] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
     } catch (e) {
         return `RUBY error: ${e.message}`;
     }

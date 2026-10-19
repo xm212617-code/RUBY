@@ -48,7 +48,7 @@ SillyTavern/public/scripts/extensions/third-party/ruby-analyzer
 
 主 API 与独立导演 API 的模型名称均为**输入框常驻、可自由填写**（拉取列表前后都可直接手输任意模型名，覆盖中转站的自定义模型、`model:deepseek/chat` 之类的带前缀写法等）。点击「连接/拉取模型」后出现的下拉只作快捷选择：选中即回填输入框并保存；头部占位项「— 从列表选择 / 输入框自由填写 —」不动输入框已填的自定义值，不在列表中的填写值在重新拉取后也会保留。保存与运行一律以输入框的值为准。
 
-## 斜杠命令
+## 斜杠命令              
 
 ```
 /ruby                    打开面板
@@ -65,6 +65,53 @@ SillyTavern/public/scripts/extensions/third-party/ruby-analyzer
 /ruby cw action=start    开始写卡会话（可加 step=Step3 指定起始步骤）
 /ruby cw action=end      结束写卡会话（草稿保留）
 ```
+
+## 消息内 HTML 数据接口：/ruby read
+
+给消息内 HTML 前端（``` 围栏 → iframe 通道，可调宿主斜杠执行器）提供的**只读数据通道**。HTML 由此可以读取 RUBY 写入世界书的任何内容（分析输出、写卡记录、设定条目），自行做特征识别与渲染——渲染成什么由前端自己决定，本接口不预设任何格式。
+
+### 语法
+
+```
+/ruby read <关键词> [key=同前] [json=true] [all=true] [book=chat|char] [raw=true]
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `<关键词>` / `key=` | 空 | 检索词。精确命中（条目关键词数组含逗号拆分逐一比对）优先；无精确命中取包含式模糊命中的第一条 |
+| `json=true` | 关 | 返回结构化 JSON 记录；默认返回纯文本 content |
+| `all=true` | 关 | 返回全部命中（JSON 数组）；无关键词 + all = 整本书导出（含 disabled 条目） |
+| `book=chat` | chat | `chat`=聊天世界书（RUBY 分析输出所在）；`char`=角色（主）世界书（设定/参考条目所在） |
+| `raw=true` | 关 | 保留 `{{user}}` 等宏原文；默认 content 经宏替换后返回 |
+
+### 返回契约（json=true）
+
+单条：`{"uid":12,"book":"ruby-角色名·剧情分析","keys":["沛霖内心","沛霖"],"comment":"…","content":"…","disabled":false,"constant":false}`
+全部（all=true）：同结构数组；无命中：`[]`（合法 JSON）；执行异常：文本 `read failed: …`（前端需兜底 parse 失败）。
+
+### 特性
+
+- **零副作用**：纯读。不创建书、不写条目、不改状态；`loadWorldInfo` 解析真实 uid，不触发宿主 toastr
+- **未绑定探测**：聊天未绑定书时，按 RUBY 输出书命名规则（`ruby-<角色名>·剧情分析`）探测已存在的书，找不到返回空
+- **disabled 可读**：被停用的条目照常返回（`disabled` 字段标注），写卡记录/历史分析都能取
+
+### HTML 端调用范式（任何前端通用）
+
+```js
+async function runSlash(command) {
+    if (typeof STscript === 'function') return String((await STscript(command))?.pipe ?? '');
+    if (typeof executeSlashCommands === 'function') return String((await executeSlashCommands(command))?.pipe ?? '');
+    if (typeof triggerSlash === 'function') return String((await triggerSlash(command))?.pipe ?? '');
+    throw new Error('宿主未提供斜杠执行接口');
+}
+// 例：拉取沛霖的内心分析（JSON），自行识别字段并渲染
+const raw = await runSlash('/ruby read key="沛霖内心" json=true');
+const rec = JSON.parse(raw);           // 失败时 raw 是错误文本——先 try/catch
+const fields = parseMyYaml(rec.content); // 解析方式由前端自定（宽松抓 "k: v" 行即可）
+renderMyOwn(rec, fields);              // 怎么渲染、识别什么特征，全是前端的事
+```
+
+触发方式照项目惯例：卡内正则字面捕捉标记（如 `【状态面板】`，placement `[1,2]` = 用户输入+AI 输出，markdownOnly）替换为你的 HTML 文件（文件首尾 ``` 围栏，内部脚本经 iframe 通道执行）。
 
 ## 写卡模式（第三页签 ✍️）
 

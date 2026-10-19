@@ -81,7 +81,81 @@ export async function findEntry(book, exactKey) {
     return null;
 }
 
-const substitute = (text) => {
+/**
+ * 通用只读检索：在一本已知名的世界书里按关键词找条目。
+ * 匹配顺序：精确命中（key 数组含逗号拆分）优先，其次包含式模糊命中。
+ * all=true 返回全部命中（无关键词时返回整本书）；默认返回最佳单条。
+ * 纯读：不创建书、不写条目、不改状态。
+ */
+async function readEntriesFromBook(book, key, { all = false } = {}) {
+    const wanted = String(key || '').trim();
+    const data = await loadBookData(book);
+    if (!data?.entries || typeof data.entries !== 'object') return [];
+
+    const recordOf = (uid, entry) => ({
+        uid: parseInt(uid, 10),
+        book,
+        keys: entryKeys(entry),
+        comment: String(entry?.comment || ''),
+        content: String(entry?.content ?? ''),
+        disabled: !!entry?.disable,
+        constant: !!entry?.constant,
+    });
+
+    const exact = [];
+    const fuzzy = [];
+    for (const [uid, entry] of Object.entries(data.entries)) {
+        const keys = entryKeys(entry);
+        if (keys.length === 0 && !wanted) continue; // 无关键词时跳过无键条目
+        if (!wanted) {
+            fuzzy.push(recordOf(uid, entry));
+        } else if (keys.includes(wanted)) {
+            exact.push(recordOf(uid, entry));
+        } else if (keys.some((k) => k.includes(wanted))) {
+            fuzzy.push(recordOf(uid, entry));
+        }
+    }
+
+    if (all) {
+        const exactUids = new Set(exact.map((r) => r.uid));
+        return [...exact, ...fuzzy.filter((r) => !exactUids.has(r.uid))];
+    }
+    return exact.length ? [exact[0]] : (fuzzy.length ? [fuzzy[0]] : []);
+}
+
+/**
+ * 只读接口（供 /ruby read 与消息内 HTML 前端使用）：检索聊天世界书条目。
+ * 已绑定的聊天书直接用；未绑定时按 RUBY 输出书的命名规则探测已存在的书（不创建）。
+ */
+export async function readChatBookEntries(key, { all = false } = {}) {
+    const c = ctx();
+    const wanted = String(key || '').trim();
+
+    let book = '';
+    try { book = String(await st('/getchatbook')).trim(); } catch { /* 无聊天书 */ }
+    if (!book) {
+        let charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '';
+        if (!charName) {
+            try { charName = String(await st('/getcharbook')).trim(); } catch { /* ignore */ }
+        }
+        for (const name of buildChatBookCandidates(charName)) {
+            const probe = await loadBookData(name);
+            if (probe?.entries && Object.keys(probe.entries).length > 0) { book = name; break; }
+        }
+    }
+    if (!book) return [];
+    return readEntriesFromBook(book, wanted, { all });
+}
+
+/** 只读接口：检索角色（主）世界书条目——设定/参考条目所在的书。 */
+export async function readCharBookEntries(key, { all = false } = {}) {
+    let book = '';
+    try { book = String(await st('/getcharbook')).trim(); } catch { /* 无主世界书 */ }
+    if (!book) return [];
+    return readEntriesFromBook(book, String(key || '').trim(), { all });
+}
+
+export const substitute = (text) => {
     const c = ctx();
     const s = String(text ?? '');
     if (typeof c?.substituteParams !== 'function') return s;
