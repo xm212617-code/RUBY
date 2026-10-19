@@ -484,6 +484,26 @@ async function tick() {
     }
 }
 
+/**
+ * 任务解析：id 数字 / displayName / promptKey / outputKey / 捕捉关键词 → 任务对象。
+ * 供手动执行（/ruby run、HTML 按钮前端）使用——前端只知道条目关键词也能精确落点。
+ */
+export function resolveTask(spec, preset) {
+    const s = String(spec ?? '').trim();
+    if (!s) return null;
+    const tasks = preset?.tasks || [];
+    if (/^\d+$/.test(s)) {
+        const num = parseInt(s, 10);
+        return tasks.find((t) => t.id === num) || null;
+    }
+    return tasks.find((t) => t.displayName === s)
+        || tasks.find((t) => t.promptKey === s)
+        || tasks.find((t) => t.outputKey === s)
+        || tasks.find((t) => (t.keywordScanKeywords || []).includes(s))
+        || tasks.find((t) => String(t.displayName || '').includes(s))
+        || null;
+}
+
 export async function forceRun(kind, taskId) {
     const c = ctx();
     if (!c) throw new Error('SillyTavern context unavailable');
@@ -509,17 +529,31 @@ export async function forceRun(kind, taskId) {
             sourceFloor: aiCount,
             source: 'force',
         }];
-    } else if (kind === 'task') {
-        const task = preset.tasks.find((t) => t.id === taskId && t.enabled);
-        if (!task) throw new Error(`未找到启用的任务 #${taskId}`);
-        batch = [{
+    } else if (kind === 'task' || kind === 'tasks') {
+        // spec 支持逗号分隔多任务与名字解析：1,3 / 沛霖内心,沛霖生理 / promptKey / 捕捉关键词
+        const specs = (Array.isArray(taskId) ? taskId : String(taskId ?? '').split(','))
+            .map((s) => String(s).trim()).filter(Boolean);
+        const resolved = [];
+        const missing = [];
+        for (const spec of specs) {
+            const task = resolveTask(spec, preset);
+            if (task && task.enabled) resolved.push(task);
+            else missing.push(spec);
+        }
+        if (missing.length) {
+            warn(`force run: tasks not found or disabled: ${missing.join(', ')}`);
+        }
+        if (resolved.length === 0) {
+            throw new Error(`未找到启用的任务：${specs.join(', ')}（可用：${preset.tasks.filter((t) => t.enabled).map((t) => `#${t.id} ${t.displayName}`).join('、') || '无'}）`);
+        }
+        batch = resolved.map((task) => ({
             type: `task_${task.id}`,
             config: task,
             displayName: task.displayName || `任务#${task.id}`,
             triggeredAt: scheduler.positionFor(aiCount, len),
             sourceFloor: aiCount,
             source: 'force',
-        }];
+        }));
     } else if (kind === 'all') {
         batch = scheduler.allEnabledTasks(preset.startupTask, preset.tasks, state.identity)
             .map((t) => ({ ...t, triggeredAt: scheduler.positionFor(aiCount, len), sourceFloor: aiCount, source: 'force' }));
@@ -542,8 +576,17 @@ export async function forceRun(kind, taskId) {
         }
     }
 
-    await runPipeline(batch);
-    return `${batch.map((t) => t.displayName).join(', ')} 执行完毕`;
+    const runResults = await runPipeline(batch);
+    // 结构化结果：HTML 前端拿 outputs 里的 outputKey 逐个 /ruby read 刷新
+    const completed = runResults.filter((r) => r.ok).length;
+    const failed = runResults.length - completed;
+    return {
+        ok: failed === 0 && runResults.length > 0,
+        summary: `${batch.map((t) => t.displayName).join(', ')} 执行完毕（${completed}/${runResults.length} 成功）`,
+        completed,
+        failed,
+        tasks: runResults,
+    };
 }
 
 /**
@@ -744,7 +787,7 @@ async function runDirectorTask(d, ctxObj) {
 }
 
 export async function runPipeline(taskBatch) {
-    if (!taskBatch || taskBatch.length === 0) return;
+    if (!taskBatch || taskBatch.length === 0) return [];
 
     const c = ctx();
     const chatIdAtStart = c.getCurrentChatId?.();
@@ -767,6 +810,7 @@ export async function runPipeline(taskBatch) {
     let completedCount = 0;
     let failedCount = 0;
     let wroteToChatBook = false;
+    const runResults = [];
 
     try {
         const charBook = await worldbook.getCharBookName();
@@ -1017,13 +1061,14 @@ export async function runPipeline(taskBatch) {
                     warn(`${taskDisplayName}: result empty or too short`);
                     notify('error', `${taskDisplayName}分析失败：内容过短`);
                     failedCount++;
+                    runResults.push({ name: taskDisplayName, ok: false, reason: '内容过短' });
                     continue;
                 }
                 log(`generation done: ${result.length} chars`);
 
                 if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
                     warn(`${taskDisplayName}: chat changed during generation, result discarded`);
-                    return;
+                    return runResults;
                 }
 
                 const outputKey = taskConfig.outputKey;
@@ -1034,12 +1079,14 @@ export async function runPipeline(taskBatch) {
                     outputValues[outputVarName] = result.trim();
                     reader.saveBookmark(taskKey, inc.endFloor);
                     completedCount++;
+                    runResults.push({ name: taskDisplayName, ok: true, outputKey: '' });
                     continue;
                 }
 
                 if (!chatBook) {
                     warn('chat world book not found');
                     failedCount++;
+                    runResults.push({ name: taskDisplayName, ok: false, reason: '无聊天世界书' });
                     continue;
                 }
 
@@ -1063,12 +1110,14 @@ export async function runPipeline(taskBatch) {
                 outputValues[outputVarName] = result.trim();
                 reader.saveBookmark(taskKey, inc.endFloor);
                 completedCount++;
+                runResults.push({ name: taskDisplayName, ok: true, outputKey });
                 log(`✅ ${taskDisplayName} done (bookmark at floor ${inc.endFloor})`);
 
             } catch (taskErr) {
                 warn(`task ${taskDisplayName} failed: ${taskErr.message}`);
                 notify('error', `${taskDisplayName} 失败: ${taskErr.message}`, { timeOut: 6000 });
                 failedCount++;
+                runResults.push({ name: taskDisplayName, ok: false, reason: taskErr.message });
             }
         }
 
@@ -1104,10 +1153,12 @@ export async function runPipeline(taskBatch) {
             notify('success', `✅ ${taskBatch[0]?.displayName || '任务'} 完成`);
         }
         log(`pipeline finished: ${state.lastRunSummary}`);
+        return runResults;
     } catch (err) {
         state.lastError = err?.message || String(err);
         warn(`pipeline error: ${state.lastError}`, err?.stack);
         notify('error', `RUBY分析失败: ${state.lastError}`, { timeOut: 8000 });
+        return runResults;
     } finally {
         state.running = false;
         emitState();

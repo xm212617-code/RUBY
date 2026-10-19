@@ -131,21 +131,32 @@ async function rubyCommandCallback(args, text) {
             return 'engine reloaded';
         }
         if (sub === 'run') {
-            const taskArg = args?.task;
-            if (args?.startup || String(args?.startup ?? '').toLowerCase() === 'true') {
-                return await forceRun('startup');
+            // /ruby run task=<spec> [json=true] —— 手动执行接口（消息内 HTML 按钮的数据通道之一）。
+            // spec：任务 id（1）/ displayName / promptKey / outputKey / 捕捉关键词，逗号分隔可批量：
+            //   /ruby run task=沛霖内心,沛霖生理 json=true
+            // 默认返回文本摘要；json=true 返回 {ok, summary, completed, failed, tasks:[{name, ok, outputKey}]}——
+            // 前端拿 tasks[].outputKey 逐个 /ruby read 即可刷新面板。
+            // await 到分析完成（AI 生成 + 世界书写入）才返回。
+            const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
+            const asJson = flag(args?.json);
+            const format = (r) => {
+                if (r && typeof r === 'object') return asJson ? JSON.stringify(r) : r.summary;
+                return String(r);
+            };
+            if (args?.startup || flag(args?.startup)) {
+                return format(await forceRun('startup'));
             }
             if (args?.all) {
-                return await forceRun('all');
+                return format(await forceRun('all'));
             }
-            if (args?.director || String(args?.director ?? '').toLowerCase() === 'true') {
-                return await forceRun('director');
+            if (args?.director || flag(args?.director)) {
+                return format(await forceRun('director'));
             }
-            const taskId = parseInt(String(taskArg ?? ''), 10);
-            if (!Number.isFinite(taskId)) {
-                return 'usage: /ruby run task=1 | /ruby run startup=true | /ruby run all=true | /ruby run director=true';
+            const taskSpec = String(args?.task ?? args?.tasks ?? '').trim();
+            if (!taskSpec) {
+                return 'usage: /ruby run task=<id|任务名|关键词>[,...] [json=true] | /ruby run startup=true | /ruby run all=true | /ruby run director=true';
             }
-            return await forceRun('task', taskId);
+            return format(await forceRun('task', taskSpec));
         }
         return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char] [raw=true] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
     } catch (e) {
@@ -163,8 +174,20 @@ function registerRubyCommand() {
         namedArgs.push(
             c.SlashCommandNamedArgument.fromProps({
                 name: 'task',
-                description: 'task id to force-run',
-                typeList: [c.ARGUMENT_TYPE.NUMBER],
+                description: 'task to force-run: id, displayName, promptKey, outputKey or scan keyword; comma-separated for multiple',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'tasks',
+                description: 'alias of task',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'json',
+                description: 'return structured JSON result (for HTML frontends)',
+                typeList: [c.ARGUMENT_TYPE.BOOLEAN],
                 isRequired: false,
             }),
             c.SlashCommandNamedArgument.fromProps({
@@ -199,7 +222,7 @@ function registerRubyCommand() {
             returns: 'status text',
             unnamedArgumentList: unnamedArgs,
             namedArgumentList: namedArgs,
-            helpString: 'RUBY analyzer control: open panel, check status, force-run tasks, reload config.<br>Examples: <code>/ruby panel</code>, <code>/ruby status</code>, <code>/ruby run task=1</code>, <code>/ruby run startup=true</code>, <code>/ruby reload</code>',
+            helpString: 'RUBY analyzer control: open panel, check status, force-run tasks, reload config, switch presets, read worldbook entries.<br>Examples: <code>/ruby panel</code>, <code>/ruby status</code>, <code>/ruby run task=沛霖内心 json=true</code>, <code>/ruby read 沛霖内心 json=true</code>, <code>/ruby reload</code>',
             aliases: ['rubyanalyzer'],
             callback: rubyCommandCallback,
         }));

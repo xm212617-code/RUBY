@@ -66,6 +66,49 @@ SillyTavern/public/scripts/extensions/third-party/ruby-analyzer
 /ruby cw action=end      结束写卡会话（草稿保留）
 ```
 
+## 消息内 HTML 接口之二：/ruby run（手动分析触发）
+
+HTML 按钮的**动作通道**：触发一个或多个分析任务手动执行，`await` 到分析完成（AI 生成 + 输出写入聊天世界书）才返回——返回后立刻 `/ruby read` 即可拿到新数据重渲染面板，玩家看到的就是"点按钮 → 状态栏更新"。
+
+### 语法
+
+```
+/ruby run task=<spec>[,<spec>...] [json=true]
+/ruby run all=true [json=true]
+```
+
+| 参数 | 说明 |
+|---|---|
+| `task=` 的 spec | 任务 id（`1`）/ 任务名（`沛霖内心`）/ promptKey / outputKey / 捕捉关键词——前端只知道条目关键词也能精确落点；逗号分隔批量执行 |
+| `json=true` | 返回结构化 JSON；默认返回文本摘要 |
+| `all=true` | 全部启用任务 |
+
+### 返回契约（json=true）
+
+```json
+{"ok":true,"summary":"沛霖内心, 沛霖生理 执行完毕（2/2 成功）","completed":2,"failed":0,
+ "tasks":[{"name":"沛霖内心","ok":true,"outputKey":"沛霖内心"}]}
+```
+
+`tasks[].outputKey` 是本次更新的世界书条目键——前端逐个 `/ruby read key=<outputKey> json=true` 刷新对应卡片。任务失败时该条 `ok:false` 带 `reason`；引擎正忙返回错误文本（`RUBY error: 已有分析任务正在执行中…`），前端 parse 失败要兜底显示。
+
+### HTML 端组合范式（按钮 → 分析 → 刷新）
+
+```js
+async function analyzeAndRefresh(specs, rerender) {
+    const out = await runSlash(`/ruby run task=${specs} json=true`);
+    let result;
+    try { result = JSON.parse(out); } catch { return showError(out); } // 忙/未绑定等错误文本
+    if (!result.ok) return showError(result.summary);
+    for (const t of result.tasks.filter((t) => t.ok && t.outputKey)) {
+        await rerender(t.outputKey);   // 内部 /ruby read + 自行渲染
+    }
+}
+// 按钮: <button onclick="analyzeAndRefresh('沛霖内心,沛霖生理', rerenderCard)">手动分析</button>
+```
+
+与 `/ruby read` 组合即完整闭环：`read`（读）+ `run`（写）。渲染成状态栏、图鉴、进度条还是别的什么，全由前端决定——接口不预设格式。
+
 ## 消息内 HTML 数据接口：/ruby read
 
 给消息内 HTML 前端（``` 围栏 → iframe 通道，可调宿主斜杠执行器）提供的**只读数据通道**。HTML 由此可以读取 RUBY 写入世界书的任何内容（分析输出、写卡记录、设定条目），自行做特征识别与渲染——渲染成什么由前端自己决定，本接口不预设任何格式。
