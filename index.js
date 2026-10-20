@@ -1,6 +1,6 @@
 import { ctx, log, warn } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
-import { initCardWriter, startSession, endSession, getState as getCwState } from './src/cardwriter.js';
+import { initCardWriter, startSession, endSession, getState as getCwState, composeFromChat } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
 import { initSettingsDrawer, initTheme } from './src/settings.js';
 import { openPanel } from './src/panel.js';
@@ -25,6 +25,9 @@ async function rubyCommandCallback(args, text) {
             }
             if (action === 'end') {
                 return await endSession({ keepDrafts: true }) ? 'cardwriter session ended (drafts kept)' : 'cardwriter session end failed';
+            }
+            if (action === 'compose' || action === 'build') {
+                return await composeFromChat();
             }
             const cw = getCwState();
             if (action === 'status') {

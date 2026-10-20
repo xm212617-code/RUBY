@@ -674,6 +674,7 @@ export async function startSession(stepId = 'StepW') {
         await writeProgress({ stepId, stepName: getStep(stepId)?.name || '', book });
         emitState();
         notify('success', `RUBY写卡会话已开始（${stepId} ${getStep(stepId)?.name || ''}），规则与路线图已注入`);
+        setTimeout(() => { scanAndPromptManifest().catch(() => { }); }, 0);
         return true;
     } catch (e) {
         state.lastError = e.message;
@@ -1074,6 +1075,75 @@ async function buildCharacterCardFromManifest(manifest) {
     return { cardName, entryCount, taskCount };
 }
 
+// ---------- 合成清单补扫（历史楼层） ----------
+
+function manifestWatermark() {
+    const v = readProgress()?.manifestPrompted;
+    return typeof v === 'number' ? v : -1;
+}
+
+function findLatestManifestInChat(chat, fromIndex = 0) {
+    for (let i = chat.length - 1; i >= fromIndex; i--) {
+        const m = chat[i];
+        if (m?.is_user !== false) continue;
+        const manifest = extractManifest(String(m.mes || ''));
+        if (manifest) return { manifest, index: i };
+    }
+    return null;
+}
+
+async function promptManifestChoice(manifest, stepId, messageIndex) {
+    try { await writeProgress({ manifestPrompted: messageIndex }); } catch { /* ignore */ }
+    try {
+        const choice = await showBuildConfirm(manifest);
+        if (choice !== 'build') {
+            state.lastAction = `${stepId} 检测到合成清单 → 创作者选择再改改`;
+            return null;
+        }
+        const result = await buildCharacterCardFromManifest(manifest);
+        Object.assign(state, {
+            active: false,
+            stepId: null,
+            lastStepId: null,
+            lastHandledMessage: -1,
+            lastAction: `合成完成 → ${result.cardName}（条目 ${result.entryCount} · 任务 ${result.taskCount}）`,
+        });
+        clearProgress();
+        notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
+        return result;
+    } catch (e) {
+        state.lastError = e.message;
+        warn(`[cardwriter] build failed: ${e.message}`);
+        notify('error', `RUBY写卡：合成失败（${e.message}）`, { timeOut: 8000 });
+        try { await writeProgress({ manifestPrompted: -1 }); } catch { /* 失败后同楼可重试 */ }
+        return null;
+    }
+}
+
+async function scanAndPromptManifest({ ignoreWatermark = false } = {}) {
+    if (!state.active || state.busy || !state.stepId) return null;
+    const c = ctx();
+    if (!Array.isArray(c?.chat)) return null;
+    const from = ignoreWatermark ? 0 : manifestWatermark() + 1;
+    const hit = findLatestManifestInChat(c.chat, from);
+    if (!hit) return null;
+    state.busy = true;
+    try {
+        const result = await promptManifestChoice(hit.manifest, state.stepId, hit.index);
+        return result ? 'built' : 'declined';
+    } finally {
+        state.busy = false;
+        emitState();
+    }
+}
+
+export async function composeFromChat() {
+    if (!state.active) return '写卡会话未激活：请先开始写卡会话（/ruby cw action=start），或让 Ruby 重新输出 <ruby合成> 清单';
+    const res = await scanAndPromptManifest({ ignoreWatermark: true });
+    if (!res) return '聊天中未找到可用的 <ruby合成> 清单（需含 ```json 围栏的完整 JSON）';
+    return res === 'built' ? `合成完成：${state.lastAction}` : '已弹出确认，创作者选择再改改';
+}
+
 // ---------- 消息监听 ----------
 
 async function handleGenerationEnded() {
@@ -1097,8 +1167,15 @@ async function handleGenerationEnded() {
     const texts = pending.map((p) => String(p.message.mes || ''));
     const text = texts.join('\n\n');
 
-    // 合成标记：任意步骤检测到 <ruby合成> JSON → 同楼记录先落库 → 立刻弹窗询问是否现在下载 → 确认后构建下载
-    const manifest = extractManifest(text);
+    // 合成标记：任意步骤的 <ruby合成> JSON（逐楼扫描，跳过已询问过的楼层）→ 同楼记录先落库 → 立刻弹窗询问是否现在下载
+    const watermark = manifestWatermark();
+    let manifest = null;
+    let manifestIdx = -1;
+    for (const p of pending) {
+        if (p.index <= watermark) continue;
+        const m = extractManifest(String(p.message.mes || ''));
+        if (m) { manifest = m; manifestIdx = p.index; break; }
+    }
 
     // 记录阶段：捕捉 <ruby新条目>/<ruby更新条目 编号>；随后处理 <ruby切换/>（记录与切换可同楼共存；有合成标记时切换忽略）
     let records = extractRecords(text);
@@ -1136,27 +1213,7 @@ async function handleGenerationEnded() {
 
         // 合成标记：同楼记录已落库 → 立刻弹窗询问是否现在下载，确认后构建并下载
         if (manifest) {
-            try {
-                const choice = await showBuildConfirm(manifest);
-                if (choice !== 'build') {
-                    state.lastAction = `${stepId} 检测到合成清单 → 创作者选择再改改`;
-                    return;
-                }
-                const result = await buildCharacterCardFromManifest(manifest);
-                Object.assign(state, {
-                    active: false,
-                    stepId: null,
-                    lastStepId: null,
-                    lastHandledMessage: -1,
-                    lastAction: `合成完成 → ${result.cardName}（条目 ${result.entryCount} · 任务 ${result.taskCount}）`,
-                });
-                clearProgress();
-                notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
-            } catch (e) {
-                state.lastError = e.message;
-                warn(`[cardwriter] build failed: ${e.message}`);
-                notify('error', `RUBY写卡：合成失败（${e.message}）`, { timeOut: 8000 });
-            }
+            await promptManifestChoice(manifest, stepId, manifestIdx);
             return;
         }
 
@@ -1215,6 +1272,7 @@ export function initCardWriter() {
                 notify('info', `RUBY写卡：检测到本聊天的写卡进度（${progress.stepId}），已恢复`);
             }
             emitState();
+            if (state.active) scanAndPromptManifest().catch(() => { });
         }, 400);
     });
 
