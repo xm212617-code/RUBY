@@ -93,11 +93,18 @@ async function rubyCommandCallback(args, text) {
             const asJson = flag(args?.json);
             const asAll = flag(args?.all);
             const raw = flag(args?.raw);
-            const book = String(args?.book || 'chat').toLowerCase();
+            const bookRaw = String(args?.book || 'chat').trim();
+            const book = bookRaw.toLowerCase();
             try {
-                const records = book === 'char'
-                    ? await worldbook.readCharBookEntries(key, { all: asAll })
-                    : await worldbook.readChatBookEntries(key, { all: asAll });
+                let records;
+                if (book === 'char') {
+                    records = await worldbook.readCharBookEntries(key, { all: asAll });
+                } else if (book === 'chat') {
+                    records = await worldbook.readChatBookEntries(key, { all: asAll });
+                } else {
+                    // 任意书名：全局导入的世界书（无需绑定）；书不存在返回 []
+                    records = await worldbook.readBookEntriesByName(bookRaw, key, { all: asAll });
+                }
                 if (records.length === 0) {
                     return asJson ? '[]' : (key ? `entry not found: ${key}` : 'no worldbook entries');
                 }
@@ -161,7 +168,7 @@ async function rubyCommandCallback(args, text) {
             }
             return format(await forceRun('task', taskSpec));
         }
-        return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char] [raw=true] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
+        return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char|<任意书名>] [raw=true] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
     } catch (e) {
         return `RUBY error: ${e.message}`;
     }

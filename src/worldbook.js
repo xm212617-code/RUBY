@@ -155,6 +155,15 @@ export async function readCharBookEntries(key, { all = false } = {}) {
     return readEntriesFromBook(book, String(key || '').trim(), { all });
 }
 
+/** 只读接口：按书名检索任意已存在的世界书（全局导入的书等，无需绑定聊天/角色）。 */
+export async function readBookEntriesByName(bookName, key, { all = false } = {}) {
+    const name = String(bookName || '').trim();
+    if (!name) return [];
+    const probe = await loadBookData(name);
+    if (!probe?.entries || typeof probe.entries !== 'object') return [];
+    return readEntriesFromBook(name, String(key || '').trim(), { all });
+}
+
 export const substitute = (text) => {
     const c = ctx();
     const s = String(text ?? '');

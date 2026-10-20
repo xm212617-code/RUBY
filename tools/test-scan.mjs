@@ -198,5 +198,43 @@ ok(!downloaded, 'E: 未触发下载');
 ok(String(cw.getState().lastError || '').includes('RUBY流程条目，禁止引用'), 'E: 错误指明 RUBY 流程条目: ' + cw.getState().lastError);
 ok(String(cw.getState().lastError || '').includes(`《${CHAT_BOOK}》`), 'E: 错误带聊天书名与条目数');
 
+// ---------- 场景F：任意书名引用（全局导入的书，无需绑定） ----------
+console.log('=== 场景F：任意书名引用 ===');
+BOOKS['导入的外部书'] = { entries: {
+    0: { uid: 0, key: ['外部设定'], comment: '外部设定', content: '来自全局导入书的内容。', constant: true, disable: false, position: 0, order: 1, depth: 4 },
+    1: { uid: 1, key: ['外部NPC'], comment: '外部NPC', content: '外部NPC内容。', constant: false, disable: false, position: 1, order: 2, depth: 4 },
+} };
+downloaded = null;
+await cw.startSession('StepW');
+const manifestF = {
+    卡名: '外部书卡',
+    角色描述来源: '导入的外部书:0',
+    条目: [
+        { 书: '导入的外部书', uid: 0 },
+        { 记录: null, 书: '导入的外部书', uid: 1, 灯位: '蓝灯' },
+    ],
+    分析任务: [],
+};
+// 条目里第二个对象带 记录:null —— resolveInto 的 refField=null 路径会取 uid 引用，应正常
+const extBefore = JSON.stringify(BOOKS['导入的外部书'].entries);
+await pushAi(`确认。\n<ruby合成>\n\`\`\`json\n${JSON.stringify(manifestF, null, 2)}\n\`\`\`\n</ruby合成>`);
+ok(!!downloaded, 'F: 合成触发下载');
+if (downloaded) {
+    const json = JSON.parse(downloaded.parts.join(''));
+    ok(json.data.description === '来自全局导入书的内容。', 'F: description 来自外部书 uid0');
+    const entries = json.data.character_book.entries;
+    ok(entries.length === 2, 'F: 2 条条目');
+    ok(entries[0].comment === '外部设定' && entries[0].constant === true, 'F: uid0 沿用蓝灯');
+    ok(entries[1].comment === '外部NPC' && entries[1].constant === true, 'F: uid1 覆盖为蓝灯');
+    ok(JSON.stringify(BOOKS['导入的外部书'].entries) === extBefore, 'F: 外部书未被改动');
+}
+// 不存在的书名 → 明确报错
+downloaded = null;
+await cw.startSession('StepW');
+const manifestF2 = { 卡名: '坏卡', 条目: [{ 书: '不存在的书', uid: 0 }], 分析任务: [] };
+await pushAi(`确认。\n<ruby合成>\n\`\`\`json\n${JSON.stringify(manifestF2, null, 2)}\n\`\`\`\n</ruby合成>`);
+ok(!downloaded, 'F2: 不存在的书未触发下载');
+ok(String(cw.getState().lastError || '').includes('《不存在的书》不存在或为空'), 'F2: 错误指明书不存在: ' + String(cw.getState().lastError || '').slice(0, 60));
+
 console.log(fails === 0 ? '\n=== 特殊步骤回归全部通过 ===' : `\n=== ${fails} 项失败 ===`);
 process.exit(fails ? 1 : 0);

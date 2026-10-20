@@ -1086,34 +1086,45 @@ async function buildCharacterCardFromManifest(manifest) {
     };
     const contentOf = (entry) => String(entry?.content || '').replace(/```yaml[ \t]*\r?\n?/g, '').replace(/```[ \t]*\r?\n?/g, '').trim();
 
-    // ---- 既有条目引用：主世界书 / 聊天世界书 的 "书:uid"（对象或字符串形式） ----
+    // ---- 既有条目引用：主世界书 / 聊天世界书 / 任意书名（全局导入的书）的 "书:uid" ----
     let charBookName = '';
     try { charBookName = String(await st('/getcharbook')).trim(); } catch { /* 无主世界书 */ }
-    const extBooks = { 主世界书: null, 聊天世界书: data };
-    if (charBookName) {
-        try { extBooks.主世界书 = await loadBookData(charBookName); } catch { /* 主世界书不可读 */ }
-    }
+    const bookDataCache = new Map([['聊天世界书', data]]);
+    const getBookData = async (scope) => {
+        if (bookDataCache.has(scope)) return bookDataCache.get(scope);
+        let d = null;
+        try {
+            if (scope === '主世界书') {
+                if (charBookName) d = await loadBookData(charBookName);
+            } else {
+                d = await loadBookData(scope); // 任意书名：全局导入的世界书，无需绑定
+            }
+            if (d && (!d.entries || Object.keys(d.entries).length === 0)) d = null; // 不存在/空书一律视为无此书
+        } catch { d = null; }
+        bookDataCache.set(scope, d);
+        return d;
+    };
     const parseBookRef = (ref) => {
         if (ref && typeof ref === 'object' && ref.uid != null) {
-            const scope = String(ref.书 || ref.book || ref.source || '');
-            if (/主|char/i.test(scope)) return { scope: '主世界书', uid: parseInt(ref.uid, 10) };
-            if (/聊天|chat/i.test(scope)) return { scope: '聊天世界书', uid: parseInt(ref.uid, 10) };
-            return null;
+            const raw = String(ref.书 || ref.book || ref.source || '').trim();
+            const uid = parseInt(ref.uid, 10);
+            if (!raw || isNaN(uid)) return null;
+            if (raw === '主世界书' || /^(char|character)\s*book$/i.test(raw)) return { scope: '主世界书', uid };
+            if (raw === '聊天世界书' || /^chat\s*book$/i.test(raw)) return { scope: '聊天世界书', uid };
+            return { scope: raw, uid }; // 任意书名（全局导入的世界书）
         }
-        const m = String(ref || '').match(/^(主世界书|聊天世界书)\s*[:：]\s*#?(\d+)\s*$/);
-        return m ? { scope: m[1], uid: parseInt(m[2], 10) } : null;
+        const m = String(ref || '').match(/^(.+?)\s*[:：]\s*#?(\d+)\s*$/);
+        if (!m || !m[1].trim()) return null;
+        return { scope: m[1].trim(), uid: parseInt(m[2], 10) };
     };
-    const bookEntryOf = (pr) => {
-        const d = extBooks[pr.scope];
-        const e = d?.entries?.[pr.uid];
-        return e ? e : null;
-    };
-    /** 统一解析：记录引用 → 草稿记录内容；书:uid 引用 → 既有条目内容 + 来源数据（供默认值沿用） */
-    const resolveRef = (ref) => {
+    /** 统一解析（异步）：记录引用 → 草稿记录内容；书:uid 引用 → 既有条目内容 + 来源数据（供默认值沿用） */
+    const resolveRef = async (ref) => {
         const pr = parseBookRef(ref);
         if (pr) {
-            const hit = bookEntryOf(pr);
-            if (!hit) return null;
+            const d = await getBookData(pr.scope);
+            if (!d) return { notFoundBook: pr };
+            const hit = d.entries[pr.uid];
+            if (!hit) return { notFoundUid: pr };
             return { content: String(hit.content ?? ''), source: hit, bookRef: pr };
         }
         const rec = recordOf(ref);
@@ -1124,14 +1135,16 @@ async function buildCharacterCardFromManifest(manifest) {
         if (ref && typeof ref === 'object') return `${ref.书 || '书'}:${ref.uid}`;
         return String(ref ?? '');
     };
-    const resolveInto = (holder, refField, required = false) => {
+    const resolveInto = async (holder, refField, required = false) => {
         const ref = refField ? holder[refField] : (holder.uid != null ? { 书: holder.书, uid: holder.uid } : holder.记录);
         if (ref == null || ref === '') {
             if (required) missing.push(`${refField || '条目'}未指定来源`);
             return !required;
         }
-        const r = resolveRef(ref);
+        const r = await resolveRef(ref);
         if (!r) { missing.push(refDisplay(ref)); return false; }
+        if (r.notFoundBook) { missing.push(`${r.notFoundBook.scope}:${r.notFoundBook.uid}（世界书《${r.notFoundBook.scope}》不存在或为空）`); return false; }
+        if (r.notFoundUid) { missing.push(`${r.notFoundUid.scope}:${r.notFoundUid.uid}（该书没有这个 uid）`); return false; }
         // 聊天书引用命中 RUBY 流程条目（规则/人设/路线图等）→ 拒绝，防止绑错书时静默合成垃圾卡
         if (r.bookRef?.scope === '聊天世界书') {
             const primary = String(Array.isArray(r.source?.key) ? r.source.key[0] : '');
@@ -1148,18 +1161,19 @@ async function buildCharacterCardFromManifest(manifest) {
 
     // 引用解析 + 缺失检查（条目 / 分析任务 / 角色描述来源 / 开场白来源）
     const missing = [];
-    for (const mEntry of (manifest.条目 || [])) resolveInto(mEntry, null, true);
-    for (const t of (manifest.分析任务 || [])) resolveInto(t, '记录', true);
-    resolveInto(manifest, '角色描述来源');
+    for (const mEntry of (manifest.条目 || [])) await resolveInto(mEntry, null, true);
+    for (const t of (manifest.分析任务 || [])) await resolveInto(t, '记录', true);
+    await resolveInto(manifest, '角色描述来源');
     const description = manifest._content || '';
     manifest._content = undefined;
-    resolveInto(manifest, '开场白来源');
+    await resolveInto(manifest, '开场白来源');
     const first_mes = manifest._content || '';
     manifest._content = undefined;
     if (missing.length) {
         const chatCount = Object.keys(data.entries).length;
-        const charCount = extBooks.主世界书 ? Object.keys(extBooks.主世界书.entries || {}).length : 0;
-        throw new Error(`清单引用了无效或不存在的条目：${[...new Set(missing)].join('、')}。当前聊天世界书《${book}》共 ${chatCount} 条${charBookName ? `，主世界书《${charBookName}》共 ${charCount} 条` : '，主世界书未绑定'}——uid 请以【世界书现状】清点为准（若清单指向的书与实际绑定不符，请先绑定正确的书或改用对应 "书:uid" 引用）`);
+        const charData = await getBookData('主世界书');
+        const charCount = charData ? Object.keys(charData.entries).length : 0;
+        throw new Error(`清单引用了无效或不存在的条目：${[...new Set(missing)].join('、')}。当前聊天世界书《${book}》共 ${chatCount} 条${charBookName ? `，主世界书《${charBookName}》共 ${charCount} 条` : '，主世界书未绑定'}——uid 引用支持 "主世界书:N" / "聊天世界书:N" / "任意书名:N"（全局导入的书无需绑定），实际 uid 可用 /ruby read all=true json=true book=书名 查询`);
     }
 
     // 既有条目默认值：清单省略的字段沿用来源条目现状（位置/顺序/深度/灯位/关键词等）
