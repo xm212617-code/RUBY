@@ -1301,7 +1301,7 @@ async function promptManifestChoice(manifest, stepId, messageIndex) {
     } catch (e) {
         state.lastError = e.message;
         warn(`[cardwriter] build failed: ${e.message}`);
-        notify('error', `RUBY写卡：合成失败（${e.message}）`, { timeOut: 8000 });
+        notify('error', `RUBY写卡：合成失败（第 ${messageIndex + 1} 楼的清单：${e.message}）`, { timeOut: 10000 });
         try { await writeProgress({ manifestPrompted: -1 }); } catch { /* 失败后同楼可重试 */ }
         return null;
     }
