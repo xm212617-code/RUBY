@@ -113,5 +113,25 @@ if (downloaded) {
     ok(json.data.name === '手动卡', 'B: 卡名=手动卡');
 }
 
+// ---------- 场景C：用户楼层手动粘贴清单 → 自动检测不触发，手动合成触发 ----------
+console.log('=== 场景C：用户粘贴清单 + 手动合成 ===');
+await freshSession();
+chat.push({ is_user: true, mes: manifestOf({ 卡名: '粘贴卡' }) });
+eventSource.emit(eventTypes.GENERATION_ENDED); // 用户楼层不应被自动检测
+await new Promise((r) => setTimeout(r, 1500));
+ok(!downloaded, 'C: 用户楼层清单不被自动检测（仅 AI 楼层）');
+const resC = await cw.composeFromChat();
+ok(String(resC).includes('合成完成'), 'C: 手动合成接受用户楼层清单: ' + resC);
+ok(!!downloaded, 'C: 触发下载');
+if (downloaded) {
+    const json = JSON.parse(downloaded.parts.join(''));
+    ok(json.data.name === '粘贴卡', 'C: 卡名=粘贴卡');
+}
+// 非法 JSON（悬空逗号）→ 不误判（合成成功后 会话已结束，先重开）
+await freshSession();
+chat.push({ is_user: true, mes: '清单确认。\n<ruby合成>\n```json\n{"卡名": "坏卡", "开场白来源": ,}\n```\n</ruby合成>' });
+const resBad = await cw.composeFromChat();
+ok(String(resBad).includes('未找到'), 'C: 非法 JSON 清单被拒绝: ' + resBad);
+
 console.log(fails === 0 ? '\n=== 回补弹窗回归全部通过 ===' : `\n=== ${fails} 项失败 ===`);
 process.exit(fails ? 1 : 0);

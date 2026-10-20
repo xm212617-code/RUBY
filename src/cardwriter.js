@@ -1267,10 +1267,10 @@ function manifestWatermark() {
     return typeof v === 'number' ? v : -1;
 }
 
-function findLatestManifestInChat(chat, fromIndex = 0) {
+function findLatestManifestInChat(chat, fromIndex = 0, { includeUser = false } = {}) {
     for (let i = chat.length - 1; i >= fromIndex; i--) {
         const m = chat[i];
-        if (m?.is_user !== false) continue;
+        if (m?.is_user !== false && !(includeUser && m?.is_user === true)) continue;
         const manifest = extractManifest(String(m.mes || ''));
         if (manifest) return { manifest, index: i };
     }
@@ -1307,12 +1307,12 @@ async function promptManifestChoice(manifest, stepId, messageIndex) {
     }
 }
 
-async function scanAndPromptManifest({ ignoreWatermark = false } = {}) {
+async function scanAndPromptManifest({ ignoreWatermark = false, includeUser = false } = {}) {
     if (!state.active || state.busy || !state.stepId) return null;
     const c = ctx();
     if (!Array.isArray(c?.chat)) return null;
     const from = ignoreWatermark ? 0 : manifestWatermark() + 1;
-    const hit = findLatestManifestInChat(c.chat, from);
+    const hit = findLatestManifestInChat(c.chat, from, { includeUser });
     if (!hit) return null;
     state.busy = true;
     try {
@@ -1326,8 +1326,9 @@ async function scanAndPromptManifest({ ignoreWatermark = false } = {}) {
 
 export async function composeFromChat() {
     if (!state.active) return '写卡会话未激活：请先开始写卡会话（/ruby cw action=start），或让 Ruby 重新输出 <ruby合成> 清单';
-    const res = await scanAndPromptManifest({ ignoreWatermark: true });
-    if (!res) return '聊天中未找到可用的 <ruby合成> 清单（需含 ```json 围栏的完整 JSON）';
+    // 手动合成接受任意楼层的清单：AI 楼层（Ruby 输出）与用户楼层（创作者手动粘贴测试）均可
+    const res = await scanAndPromptManifest({ ignoreWatermark: true, includeUser: true });
+    if (!res) return '聊天中未找到可用的 <ruby合成> 清单（需含 ```json 围栏的完整合法 JSON——注意逗号/引号完整性）';
     return res === 'built' ? `合成完成：${state.lastAction}` : '已弹出确认，创作者选择再改改';
 }
 
