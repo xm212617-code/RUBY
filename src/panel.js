@@ -758,10 +758,12 @@ function buildShellHtml() {
                                     <button id="ra_cw_end" class="btn red">⏹️ 结束会话</button>
                                     <button id="ra_cw_end_clear" class="btn red">🧹 结束并清空写卡条目</button>
                                     <button id="ra_cw_open_book" class="btn outline">📖 打开《ruby写卡初稿》</button>
+                                    <button id="ra_cw_compose" class="btn green">📦 手动合成</button>
                                 </div>
                                 <div class="tip" style="margin-top:10px;">
                                     开始会话后，RUBY 在聊天附加世界书注入规则/人设、流程路线图、编号知识与当前步骤指令；
-                                    你用自己的预设和 API 正常对话，RUBY 只监听。检测到 <ruby新条目>/<ruby更新条目> 标记即入库记录，不自动切换步骤——每个步骤都可以反复工作。
+                                    你用自己的预设和 API 正常对话，RUBY 只监听。检测到 <ruby新条目>/<ruby更新条目> 标记即入库记录，不自动切换步骤——每个步骤都可以反复工作。<br>
+                                    📦 手动合成：立即检查当前楼层（及聊天历史）里的 &lt;ruby合成&gt; 清单——找到就弹窗确认下载；已有世界书时清单可用 "主世界书:uid" / "聊天世界书:uid" 引用既有条目（字段省略=沿用现状），无需记录编号。
                                 </div>
                             </div>
                         </div>
@@ -3444,12 +3446,16 @@ function renderCardWriterTab() {
     const stepsEl = $('ra_cw_steps');
     if (stepsEl) {
         const steps = cardwriter.getSteps();
-        stepsEl.innerHTML = steps.map((st) => {
+        const main = steps.filter((st) => !st.special);
+        const special = steps.filter((st) => st.special);
+        const stepBtn = (st) => {
             const isCur = s.active && s.stepId === st.id;
             const cls = isCur ? 'cw-step cur' : 'cw-step';
-            const tag = st.id === 'Overview' ? '🏁收尾' : (st.tool ? '🔧工具' : (st.optional ? '◇可选' : ''));
-            return `<button class="${cls}" data-step="${h(st.id)}" title="切换到 ${h(st.id)} ${h(st.name)}">${isCur ? '✦ ' : ''}${h(st.id === 'Overview' ? '' : st.id + ' ')}${h(st.name)}${tag ? ` <span class="cw-tag">${tag}</span>` : ''}</button>`;
-        }).join('');
+            const tag = st.id === 'Overview' ? '🏁收尾' : (st.special ? '📦仅手动' : (st.tool ? '🔧工具' : (st.optional ? '◇可选' : '')));
+            return `<button class="${cls}" data-step="${h(st.id)}" title="切换到 ${h(st.id)} ${h(st.name)}${st.special ? '（仅手动进入；重新点击可刷新清点）' : ''}">${isCur ? '✦ ' : ''}${h(st.id === 'Overview' ? '' : st.id + ' ')}${h(st.name)}${tag ? ` <span class="cw-tag">${tag}</span>` : ''}</button>`;
+        };
+        stepsEl.innerHTML = main.map(stepBtn).join('')
+            + (special.length ? `<div class="cw-steps-divider">特殊步骤（仅手动进入 · 重新点击刷新清点）</div>` + special.map(stepBtn).join('') : '');
         stepsEl.querySelectorAll('.cw-step').forEach((btn) => {
             btn.addEventListener('click', async () => {
                 if (!cardwriter.getState().active) {
@@ -3495,6 +3501,13 @@ function wireCardWriterControls() {
     on($('ra_cw_open_book'), 'click', async () => {
         await cardwriter.openDraftBook();
         cwPushLog('打开《ruby写卡初稿》世界书');
+    });
+    on($('ra_cw_compose'), 'click', async () => {
+        cwPushLog('手动合成：扫描聊天中的 <ruby合成> 清单…');
+        const res = await cardwriter.composeFromChat();
+        cwPushLog(`手动合成 → ${res}`);
+        window.toastr?.[String(res).includes('合成完成') ? 'success' : 'warning']?.(String(res));
+        renderCardWriterTab();
     });
     on(draftEl, 'change', () => {
         cardwriter.saveSettings({ draftToBook: !!draftEl.checked });

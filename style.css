@@ -208,6 +208,15 @@
     color: #fff;
 }
 #ra_panel .cw-step .cw-tag { font-size: 11px; opacity: .75; font-weight: 400; }
+#ra_panel .cw-steps-divider {
+    flex-basis: 100%;
+    font-size: 12px;
+    font-weight: 700;
+    color: #7a6a2f;
+    border-top: 1px dashed #b5a95f;
+    padding-top: 6px;
+    margin-top: 2px;
+}
 
 /* 步骤说明气泡（写卡模式切换时在悬浮球旁弹出） */
 #ruby_cw_bubble {
@@ -1140,6 +1149,7 @@ body.ruby-dark #ra_panel .scheme-tab.active { background: #191b22; color: #8fb8f
 body.ruby-dark #ra_panel .cw-step { background: #262a33; border-color: #555c68; color: #d3d7df; }
 body.ruby-dark #ra_panel .cw-step:hover { border-color: #3d7c47; background: #233528; }
 body.ruby-dark #ra_panel .cw-step.cur { background: #3d7c47; color: #fff; border-color: #3d7c47; }
+body.ruby-dark #ra_panel .cw-steps-divider { color: #c9b96a; border-top-color: #6a5f35; }
 
 /* ---------- 步骤说明气泡 ---------- */
 body.ruby-dark #ruby_cw_bubble { background: #191b22; border-color: #3d7c47; color: #d3d7df; }

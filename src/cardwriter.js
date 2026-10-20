@@ -18,6 +18,7 @@ const APPENDIX_KEY = 'RUBY分析器原理附录';
 const STEP_PREFIX = 'RUBY写卡';
 const ROADMAP_KEY = 'RUBY写卡_路线图';
 const REGISTRY_KEY = 'RUBY写卡_编号知识';
+const INVENTORY_KEY = 'RUBY写卡_世界书现状';
 const HOLD_KEY = 'RUBY写卡_继续聊聊';
 const RECORD_PREFIX = 'ruby记录_';
 const LEGACY_DRAFT_PREFIX = 'ruby草稿_';
@@ -59,7 +60,11 @@ export function getStep(stepId) {
 }
 
 export function getSteps() {
-    return CARDWRITER_DATA.steps.map(({ id, name, optional, tool }) => ({ id, name, optional, tool }));
+    return CARDWRITER_DATA.steps.map(({ id, name, optional, tool, special }) => ({ id, name, optional, tool, special: !!special }));
+}
+
+function isScanStep(stepId) {
+    return stepId === 'ScanChar' || stepId === 'ScanChat';
 }
 
 function notify(kind, message) {
@@ -319,9 +324,9 @@ export function extractSwitch(text) {
     return { target: m[1] || '' };
 }
 
-/** 主链上的下一步（跳过工具步骤 StepX 与 Overview） */
+/** 主链上的下一步（跳过工具/特殊步骤：StepX、Overview、ScanChar、ScanChat） */
 function nextStepOf(stepId) {
-    const main = CARDWRITER_DATA.steps.filter((s) => s.id !== 'Overview' && s.id !== 'StepX');
+    const main = CARDWRITER_DATA.steps.filter((s) => !s.tool);
     const i = main.findIndex((s) => s.id === stepId);
     if (i < 0 || i === main.length - 1) return null;
     return main[i + 1].id;
@@ -443,6 +448,10 @@ async function writeRecord(record, stepId) {
     target.preventRecursion = true;
 
     await refreshRegistryEntry(book, entries, stepId);
+    // 清点步骤中落库：聊天书清单同步刷新，Ruby 看到的 uid 始终最新
+    if (isScanStep(stepId)) {
+        await refreshInventoryEntry(book, entries, stepId === 'ScanChar' ? 'char' : 'chat');
+    }
     await saveBook(book, data);
     state.draftCount += 1;
     log(`[cardwriter] record ${action === 'new' ? 'created' : 'updated'}: ${primary} (${label}) -> ${book}`);
@@ -546,6 +555,11 @@ async function setStepEntries(book, stepId) {
     await refreshRoadmapEntry(book, entries, stepId);
     await refreshRegistryEntry(book, entries, stepId);
 
+    // 特殊步骤（ScanChar/ScanChat）：代码清点对应世界书 → 【世界书现状】常驻知识
+    if (isScanStep(stepId)) {
+        await refreshInventoryEntry(book, entries, stepId === 'ScanChar' ? 'char' : 'chat');
+    }
+
     // ★ 第二段原子提交：开启目标步骤的最终状态
     await saveBook(book, data);
     reloadEditorIfShowing(book);
@@ -557,7 +571,7 @@ async function setStepEntries(book, stepId) {
     // 验证日志
     const verify = [];
     for (const e of Object.values(data.entries)) {
-        if (Array.isArray(e?.key) && e.key.some((k) => String(k).startsWith(STEP_PREFIX) || k === RULES_KEY || k === PERSONA_KEY || k === REGISTRY_KEY || k === ROADMAP_KEY)) {
+        if (Array.isArray(e?.key) && e.key.some((k) => String(k).startsWith(STEP_PREFIX) || k === RULES_KEY || k === PERSONA_KEY || k === REGISTRY_KEY || k === ROADMAP_KEY || k === INVENTORY_KEY)) {
             if (!e.disable) verify.push(`${e.key[0]}(${String(e.content || '').length}ch)`);
         }
     }
@@ -567,7 +581,7 @@ async function setStepEntries(book, stepId) {
 // ---------- 路线图 ----------
 
 function buildRoadmapContent(stepId) {
-    const mainSteps = CARDWRITER_DATA.steps.filter((s) => s.id !== 'Overview' && s.id !== 'StepX');
+    const mainSteps = CARDWRITER_DATA.steps.filter((s) => !s.tool);
     const overview = CARDWRITER_DATA.steps.find((s) => s.id === 'Overview');
     const lines = ['【RUBY写卡·流程路线图】（本条目由RUBY自动维护，禁止在回复中复述整个路线图）', '完整写卡流程：'];
     mainSteps.forEach((s, i) => {
@@ -586,7 +600,7 @@ function buildRoadmapContent(stepId) {
             lines.push(`当前：第${idx + 1}/${total}步——${cur.id} ${cur.name}，${cur.brief}。`);
             lines.push('每个步骤都可以反复工作：产出按记录入库，RUBY不自动切换，创作者自己决定何时走下一步。');
         } else {
-            lines.push(`当前：${cur.id} ${cur.name}——${cur.brief}（工具步骤，不在主流程序列中）。`);
+            lines.push(`当前：${cur.id} ${cur.name}——${cur.brief}（${cur.special ? '特殊步骤，仅手动进入；重新点击步骤卡可刷新清点' : '工具步骤，不在主流程序列中'}）。`);
         }
     }
     return lines.join('\n');
@@ -600,6 +614,93 @@ async function refreshRoadmapEntry(book, entries, stepId) {
         position: POS_AT_DEPTH, depth: 1, order: 450,
         role: ROLE_SYSTEM, constant: true, disable: false,
     });
+}
+
+// ---------- 世界书现状清点（特殊步骤 ScanChar / ScanChat） ----------
+
+const POS_LABELS = { 0: '角色前', 1: '角色后', 4: 'D0' };
+const ROLE_NAMES = ['system', 'user', 'assistant'];
+
+function posLabelOf(entry) {
+    const pos = entry?.position;
+    const name = POS_LABELS[pos] ?? `位置${pos ?? '?'}`;
+    if (pos === 4 && typeof entry?.role === 'number' && entry.role > 0) {
+        return `${name}·${ROLE_NAMES[entry.role] || entry.role}`;
+    }
+    return name;
+}
+
+function isRubyProcessEntry(primary) {
+    return primary === RULES_KEY || primary === PERSONA_KEY || primary === APPENDIX_KEY || primary === HOLD_KEY ||
+        primary === ROADMAP_KEY || primary === REGISTRY_KEY || primary === INVENTORY_KEY ||
+        primary.startsWith(STEP_PREFIX);
+}
+
+/** 把一本书的 entries 清点成人话清单（uid/条目名/关键词/位置/灯位/概率/预览） */
+function buildInventoryContent(scope, bookName, entries) {
+    const scopeName = scope === 'char' ? '主世界书' : '聊天世界书';
+    const lines = [
+        '【RUBY写卡·世界书现状】（本条目由RUBY代码自动维护，禁止在回复中整段复述）',
+        `清点范围：《${bookName}》（${scopeName}）· 共 ${Object.keys(entries).length} 条`,
+        '',
+    ];
+    const sorted = Object.entries(entries)
+        .map(([uid, e]) => ({ uid: parseInt(uid, 10), e }))
+        .sort((a, b) => a.uid - b.uid);
+    for (const { uid, e } of sorted) {
+        const keys = (Array.isArray(e?.key) ? e.key : []).map(String).filter(Boolean);
+        const sec = (Array.isArray(e?.keysecondary) ? e.keysecondary : []).map(String).filter(Boolean);
+        const comment = String(e?.comment || '').trim();
+        const primary = keys[0] || '';
+        const content = String(e?.content || '');
+        const preview = content.replace(/\s+/g, ' ').trim().slice(0, 60);
+        const light = e?.disable ? '关闭' : (e?.constant ? '蓝灯' : '绿灯');
+        const prob = e?.useProbability && typeof e?.probability === 'number' && e.probability < 100 ? ` · 概率${e.probability}%` : '';
+        const sel = sec.length ? ` · 副词${e?.selective ? 'AND生效' : '未生效'}` : '';
+        lines.push(`uid=${uid} · ${comment || primary || '（未命名）'}${isRubyProcessEntry(primary) ? ' ·（RUBY流程条目，合成清单禁止引用）' : ''}`);
+        lines.push(`  关键词[${keys.join('、')}]${sec.length ? ` · 副关键词[${sec.join('、')}]` : ''} · ${posLabelOf(e)} · 顺序${e?.order ?? '?'} · ${light}${sel}${prob}${content.length ? ` · 内容${content.length}字` : ' · 无内容'}`);
+        if (preview) lines.push(`  预览：${preview}…`);
+    }
+    lines.push('');
+    lines.push('合成清单引用既有条目：对象 {"书": "...", "uid": N} 或字符串 "主世界书:N"/"聊天世界书:N"；条目字段省略=沿用现状，填写=覆盖。');
+    return lines.join('\n');
+}
+
+/**
+ * 清点并写入【世界书现状】常驻知识条目。
+ * scope='char' 扫当前卡主世界书；scope='chat' 扫当前聊天世界书（写卡会话即草稿书）。
+ * 条目创建后常驻注入（不随离开步骤关闭），重新进入扫描步骤即刷新。
+ */
+async function refreshInventoryEntry(book, entries, scope) {
+    let scanName = '';
+    let scanEntries = null;
+    let error = '';
+    if (scope === 'char') {
+        try { scanName = String(await st('/getcharbook')).trim(); } catch { /* 无主世界书 */ }
+        if (!scanName) {
+            error = '当前角色卡未绑定主世界书（或不可读）——没有可清点的既有条目；如创作者有设定文件，请走常规步骤存记录。';
+        } else {
+            try {
+                const d = await loadBookData(scanName);
+                scanEntries = d.entries;
+            } catch (e) {
+                error = `主世界书读取失败：${e.message}`;
+            }
+        }
+    } else {
+        scanName = book;
+        scanEntries = entries;
+    }
+    const content = error || buildInventoryContent(scope, scanName || '（无）', scanEntries || {});
+    const entry = await ensureEntryIn(book, entries, INVENTORY_KEY);
+    Object.assign(entry, {
+        content,
+        comment: `RUBY写卡·世界书现状（${scope === 'char' ? '主世界书' : '聊天世界书'}清点，自动维护）`,
+        position: POS_AT_DEPTH, depth: 1, order: 470,
+        role: ROLE_SYSTEM, constant: true, disable: false,
+    });
+    log(`[cardwriter] inventory refreshed: ${scope === 'char' ? 'char' : 'chat'} book "${scanName}" (${error ? 'error' : Object.keys(scanEntries || {}).length + ' entries'})`);
+    return entry;
 }
 
 // ---------- 步骤切换与会话 ----------
@@ -661,11 +762,14 @@ export async function startSession(stepId = 'StepW') {
         const book = await ensureDraftBook();
         await setupBaseEntries(book);
         await setStepEntries(book, stepId);
+        const c = ctx();
         Object.assign(state, {
             active: true,
             stepId,
             lastStepId: stepId,
-            lastHandledMessage: -1,
+            // 楼层游标从当前聊天末尾起算：只捕捉会话开始后的新楼层，历史楼层不重放
+            // （历史里的合成清单由 scanAndPromptManifest 按 manifestPrompted 水位补扫）
+            lastHandledMessage: Array.isArray(c?.chat) ? c.chat.length - 1 : -1,
             lastError: null,
             lastAction: `会话开始 → ${stepId}`,
             draftCount: 0,
@@ -695,13 +799,13 @@ export async function endSession({ keepDrafts = true } = {}) {
         if (!keepDrafts) {
             for (const [uid, e] of Object.entries(data.entries)) {
                 const k = Array.isArray(e?.key) ? e.key[0] : '';
-                if (k === RULES_KEY || k === PERSONA_KEY || k === APPENDIX_KEY || k === HOLD_KEY || k === ROADMAP_KEY || k === REGISTRY_KEY ||
+                if (k === RULES_KEY || k === PERSONA_KEY || k === APPENDIX_KEY || k === HOLD_KEY || k === ROADMAP_KEY || k === REGISTRY_KEY || k === INVENTORY_KEY ||
                     k.startsWith(STEP_PREFIX) || k.startsWith(RECORD_PREFIX) || k.startsWith(LEGACY_DRAFT_PREFIX)) {
                     delete data.entries[uid];
                 }
             }
         } else {
-            const offKeys = new Set([RULES_KEY, PERSONA_KEY, ROADMAP_KEY, REGISTRY_KEY]);
+            const offKeys = new Set([RULES_KEY, PERSONA_KEY, ROADMAP_KEY, REGISTRY_KEY, INVENTORY_KEY]);
             for (const s of CARDWRITER_DATA.steps) {
                 offKeys.add(stepKey(s));
                 offKeys.add(`${stepKey(s)}_说明`);
@@ -744,9 +848,10 @@ function sanitizeDownloadName(name) {
 function manifestSummary(manifest) {
     const entries = manifest.条目 || [];
     const tasks = manifest.分析任务 || [];
+    const nameOf = (e) => e.条目名 || (e.uid != null ? `${e.书 || '书'}:${e.uid}` : (e.记录 || '未命名'));
     return [
         `卡名：${manifest.卡名 || '（未命名）'}`,
-        `条目 ${entries.length} 条：${entries.map((e) => `${e.条目名}[${(e.关键词 || []).join('/')}]·${e.位置 || '角色前'}${e.顺序 != null ? '#' + e.顺序 : ''}·${e.灯位 || '蓝灯'}`).join('；') || '（无）'}`,
+        `条目 ${entries.length} 条：${entries.map((e) => `${nameOf(e)}[${(e.关键词 || []).join('/')}]·${e.位置 || '角色前'}${e.顺序 != null ? '#' + e.顺序 : ''}·${e.灯位 || '蓝灯'}`).join('；') || '（无）'}`,
         `分析任务 ${tasks.length} 个：${tasks.map((t) => `${t.任务名}（捕捉:${(t.捕捉关键词 || []).join('/')}）`).join('；') || '（无）'}`,
     ].join('\n');
 }
@@ -784,13 +889,18 @@ function showBuildConfirm(manifest) {
     });
 }
 
-/** 由记录条目构建 v3 卡条目（与 build-card.js 的 v3 形状一致） */
+/** 由记录条目构建 v3 卡条目（与 build-card.js 的 v3 形状一致）；引用既有条目时未覆盖字段沿用来源现状 */
 function buildCardEntry(index, mEntry) {
     const positionStr = mEntry.位置 === 'D0' ? 'at_depth' : (mEntry.位置 === '角色后' ? 'after_char' : 'before_char');
     const light = mEntry.灯位 === '蓝灯';
     const disabled = mEntry.灯位 === '关闭' || mEntry.启用 === false;
     const keys = [...new Set([mEntry.条目名, ...(mEntry.关键词 || [])])].filter(Boolean);
     const depth = typeof mEntry.深度 === 'number' ? mEntry.深度 : (mEntry.位置 === 'D0' ? 0 : 4);
+    const src = mEntry._source || null;
+    const ROLE_MAP = { system: 0, user: 1, assistant: 2 };
+    const role = typeof mEntry.角色 === 'number' ? mEntry.角色
+        : (ROLE_MAP[mEntry.角色] ?? (src && typeof src.role === 'number' ? src.role : 0));
+    const selective = src ? (mEntry._hasExplicitSec || !!src.selective) : true;
     return {
         id: index,
         keys,
@@ -798,23 +908,23 @@ function buildCardEntry(index, mEntry) {
         comment: mEntry.条目名,
         content: mEntry._content,
         constant: light,
-        selective: true,
+        selective,
         use_regex: true,
         enabled: !disabled,
         position: positionStr,
         insertion_order: typeof mEntry.顺序 === 'number' ? mEntry.顺序 : 100,
         extensions: {
             position: POS_MAP[mEntry.位置 || '角色前'] ?? 0,
-            exclude_recursion: true,
+            exclude_recursion: src ? !!src.excludeRecursion : true,
             display_index: index,
-            probability: 100,
-            useProbability: true,
+            probability: src && typeof src.probability === 'number' ? src.probability : 100,
+            useProbability: src ? !!src.useProbability : true,
             depth,
-            selectiveLogic: 0,
-            prevent_recursion: true,
-            delay_until_recursion: false,
-            role: 0,
-            vectorized: false,
+            selectiveLogic: src && typeof src.selectiveLogic === 'number' ? src.selectiveLogic : 0,
+            prevent_recursion: src ? !!src.preventRecursion : true,
+            delay_until_recursion: src ? !!src.delayUntilRecursion : false,
+            role,
+            vectorized: src ? !!src.vectorized : false,
         },
     };
 }
@@ -946,24 +1056,85 @@ async function buildCharacterCardFromManifest(manifest) {
     };
     const contentOf = (entry) => String(entry?.content || '').replace(/```yaml[ \t]*\r?\n?/g, '').replace(/```[ \t]*\r?\n?/g, '').trim();
 
-    // 记录引用解析 + 缺失检查
-    const missing = [];
-    for (const mEntry of (manifest.条目 || [])) {
-        const rec = recordOf(mEntry.记录);
-        if (!rec) missing.push(mEntry.记录);
-        else mEntry._content = contentOf(rec);
+    // ---- 既有条目引用：主世界书 / 聊天世界书 的 "书:uid"（对象或字符串形式） ----
+    let charBookName = '';
+    try { charBookName = String(await st('/getcharbook')).trim(); } catch { /* 无主世界书 */ }
+    const extBooks = { 主世界书: null, 聊天世界书: data };
+    if (charBookName) {
+        try { extBooks.主世界书 = await loadBookData(charBookName); } catch { /* 主世界书不可读 */ }
     }
-    for (const t of (manifest.分析任务 || [])) {
-        const rec = recordOf(t.记录);
-        if (!rec) missing.push(t.记录);
-        else t._content = contentOf(rec);
-    }
-    if (missing.length) throw new Error(`清单引用了不存在的记录：${[...new Set(missing)].join('、')}（请对照编号知识修正后再合成）`);
+    const parseBookRef = (ref) => {
+        if (ref && typeof ref === 'object' && ref.uid != null) {
+            const scope = String(ref.书 || ref.book || ref.source || '');
+            if (/主|char/i.test(scope)) return { scope: '主世界书', uid: parseInt(ref.uid, 10) };
+            if (/聊天|chat/i.test(scope)) return { scope: '聊天世界书', uid: parseInt(ref.uid, 10) };
+            return null;
+        }
+        const m = String(ref || '').match(/^(主世界书|聊天世界书)\s*[:：]\s*#?(\d+)\s*$/);
+        return m ? { scope: m[1], uid: parseInt(m[2], 10) } : null;
+    };
+    const bookEntryOf = (pr) => {
+        const d = extBooks[pr.scope];
+        const e = d?.entries?.[pr.uid];
+        return e ? e : null;
+    };
+    /** 统一解析：记录引用 → 草稿记录内容；书:uid 引用 → 既有条目内容 + 来源数据（供默认值沿用） */
+    const resolveRef = (ref) => {
+        const pr = parseBookRef(ref);
+        if (pr) {
+            const hit = bookEntryOf(pr);
+            if (!hit) return null;
+            return { content: String(hit.content ?? ''), source: hit, bookRef: pr };
+        }
+        const rec = recordOf(ref);
+        if (!rec) return null;
+        return { content: contentOf(rec), source: null, bookRef: null };
+    };
+    const refDisplay = (ref) => {
+        if (ref && typeof ref === 'object') return `${ref.书 || '书'}:${ref.uid}`;
+        return String(ref ?? '');
+    };
+    const resolveInto = (holder, refField, required = false) => {
+        const ref = refField ? holder[refField] : (holder.uid != null ? { 书: holder.书, uid: holder.uid } : holder.记录);
+        if (ref == null || ref === '') {
+            if (required) missing.push(`${refField || '条目'}未指定来源`);
+            return !required;
+        }
+        const r = resolveRef(ref);
+        if (!r) { missing.push(refDisplay(ref)); return false; }
+        holder._content = r.content;
+        holder._source = r.source;
+        holder._bookRef = r.bookRef;
+        return true;
+    };
 
-    const descRec = manifest.角色描述来源 ? recordOf(manifest.角色描述来源) : null;
-    const firstMesRec = manifest.开场白来源 ? recordOf(manifest.开场白来源) : null;
-    const description = descRec ? contentOf(descRec) : '';
-    const first_mes = firstMesRec ? contentOf(firstMesRec) : '';
+    // 引用解析 + 缺失检查（条目 / 分析任务 / 角色描述来源 / 开场白来源）
+    const missing = [];
+    for (const mEntry of (manifest.条目 || [])) resolveInto(mEntry, null, true);
+    for (const t of (manifest.分析任务 || [])) resolveInto(t, '记录', true);
+    resolveInto(manifest, '角色描述来源');
+    const description = manifest._content || '';
+    manifest._content = undefined;
+    resolveInto(manifest, '开场白来源');
+    const first_mes = manifest._content || '';
+    manifest._content = undefined;
+    if (missing.length) throw new Error(`清单引用了不存在的条目：${[...new Set(missing)].join('、')}（记录编号请对照编号知识，uid 引用请对照世界书现状）`);
+
+    // 既有条目默认值：清单省略的字段沿用来源条目现状（位置/顺序/深度/灯位/关键词等）
+    const keysOf = (src) => (Array.isArray(src?.key) ? src.key.map(String).filter(Boolean) : []);
+    for (const mEntry of (manifest.条目 || [])) {
+        const src = mEntry._source;
+        if (!src) continue;
+        mEntry._hasExplicitSec = Array.isArray(mEntry.副关键词) && mEntry.副关键词.length > 0;
+        if (mEntry.条目名 == null) mEntry.条目名 = String(src.comment || '').trim() || keysOf(src)[0] || '未命名条目';
+        if (!Array.isArray(mEntry.关键词) || mEntry.关键词.length === 0) mEntry.关键词 = keysOf(src);
+        if (!Array.isArray(mEntry.副关键词)) mEntry.副关键词 = (Array.isArray(src.keysecondary) ? src.keysecondary.map(String).filter(Boolean) : []);
+        if (mEntry.位置 == null) mEntry.位置 = POS_LABELS[src.position] ?? '角色前';
+        if (mEntry.顺序 == null) mEntry.顺序 = typeof src.order === 'number' ? src.order : 100;
+        if (mEntry.深度 == null) mEntry.深度 = typeof src.depth === 'number' ? src.depth : (mEntry.位置 === 'D0' ? 0 : 4);
+        if (mEntry.灯位 == null) mEntry.灯位 = src.disable ? '关闭' : (src.constant ? '蓝灯' : '绿灯');
+        if (mEntry.启用 == null) mEntry.启用 = !src.disable;
+    }
 
     // 分析任务缺提示词条目时自动补挂（关闭条目，角色前 999）
     const entryNames = new Set((manifest.条目 || []).flatMap((e) => [e.条目名, ...(e.关键词 || [])]));
@@ -1033,21 +1204,34 @@ async function buildCharacterCardFromManifest(manifest) {
         create_date: new Date().toISOString(),
     };
 
-    // ---- 重写聊天世界书：引用的记录转干净条目，其余清除 ----
-    const referencedKeys = new Set((manifest.条目 || []).map((e) => `${RECORD_PREFIX}${e.记录}`));
+    // ---- 重写聊天世界书：引用的记录/聊天书条目转干净条目，其余 RUBY 条目清除 ----
+    const referencedKeys = new Set();
+    const chatRefByUid = new Map();
+    for (const mEntry of (manifest.条目 || [])) {
+        if (mEntry._bookRef) {
+            if (mEntry._bookRef.scope === '聊天世界书') chatRefByUid.set(mEntry._bookRef.uid, mEntry);
+        } else if (mEntry.记录) {
+            referencedKeys.add(`${RECORD_PREFIX}${mEntry.记录}`);
+        }
+    }
     for (const [uid, e] of Object.entries(data.entries)) {
         const primary = String(Array.isArray(e?.key) ? e.key[0] : '');
         const isRuby = primary === RULES_KEY || primary === PERSONA_KEY || primary === APPENDIX_KEY || primary === HOLD_KEY ||
-            primary === ROADMAP_KEY || primary === REGISTRY_KEY ||
+            primary === ROADMAP_KEY || primary === REGISTRY_KEY || primary === INVENTORY_KEY ||
             primary.startsWith(STEP_PREFIX) || primary.startsWith(RECORD_PREFIX) || primary.startsWith(LEGACY_DRAFT_PREFIX);
         if (!isRuby) continue;
-        if (!referencedKeys.has(primary)) {
+        if (!referencedKeys.has(primary) && !chatRefByUid.has(parseInt(uid, 10))) {
             delete data.entries[uid];
         }
     }
     (manifest.条目 || []).forEach((mEntry) => {
-        const key = `${RECORD_PREFIX}${mEntry.记录}`;
-        const e = findEntryIn(data.entries, key);
+        let e = null;
+        if (mEntry._bookRef) {
+            if (mEntry._bookRef.scope !== '聊天世界书') return; // 主世界书条目不动原书，只进卡JSON
+            e = data.entries[mEntry._bookRef.uid];
+        } else if (mEntry.记录) {
+            e = findEntryIn(data.entries, `${RECORD_PREFIX}${mEntry.记录}`);
+        }
         if (!e) return;
         const disabled = mEntry.灯位 === '关闭' || mEntry.启用 === false;
         Object.assign(e, {
@@ -1059,9 +1243,10 @@ async function buildCharacterCardFromManifest(manifest) {
             order: typeof mEntry.顺序 === 'number' ? mEntry.顺序 : 100,
             constant: mEntry.灯位 === '蓝灯',
             disable: disabled,
-            excludeRecursion: true,
-            preventRecursion: true,
+            excludeRecursion: mEntry._source ? !!mEntry._source.excludeRecursion : true,
+            preventRecursion: mEntry._source ? !!mEntry._source.preventRecursion : true,
         });
+        if (mEntry.位置 === 'D0' && typeof mEntry.角色 === 'number') e.role = mEntry.角色;
     });
     await saveBook(book, data);
     reloadEditorIfShowing(book);
@@ -1109,6 +1294,8 @@ async function promptManifestChoice(manifest, stepId, messageIndex) {
             lastAction: `合成完成 → ${result.cardName}（条目 ${result.entryCount} · 任务 ${result.taskCount}）`,
         });
         clearProgress();
+        // 保留清单水位：同聊天再次开始会话/重载时，这条已合成的清单不会被补扫重弹
+        try { await writeProgress({ manifestPrompted: messageIndex }); } catch { /* ignore */ }
         notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
         return result;
     } catch (e) {
@@ -1220,7 +1407,10 @@ async function handleGenerationEnded() {
         // 切换标记：创作者表示可以进入下一步（记录已先行落库）
         if (switchMark) {
             const target = switchMark.target || nextStepOf(stepId);
-            if (target && getStep(target) && target !== 'Overview') {
+            if (getStep(target)?.manualOnly) {
+                state.lastAction = `${stepId} 切换目标无效：${target}（特殊步骤只能手动进入）`;
+                notify('warning', 'RUBY写卡：该步骤是特殊步骤，只能在面板手动进入，已忽略切换标记');
+            } else if (target && getStep(target) && target !== 'Overview') {
                 await applyStepSwitch(target);
             } else if (switchMark.target === 'Overview' || (!target && stepId === 'Step7')) {
                 // 主链终点：引导进入合成阶段
@@ -1268,6 +1458,9 @@ export function initCardWriter() {
                 state.active = true;
                 state.stepId = progress.stepId;
                 state.lastStepId = progress.stepId;
+                // 游标跳到当前聊天末尾：重载/切聊天不重放历史楼层（合成清单仍按水位补扫）
+                const cur = ctx();
+                state.lastHandledMessage = Array.isArray(cur?.chat) ? cur.chat.length - 1 : -1;
                 state.lastAction = `从聊天进度恢复（${progress.stepId}）`;
                 notify('info', `RUBY写卡：检测到本聊天的写卡进度（${progress.stepId}），已恢复`);
             }
