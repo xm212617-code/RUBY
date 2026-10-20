@@ -784,7 +784,7 @@ function buildShellHtml() {
                                 <div class="tip" style="margin-top:8px;">
                                     📦 记录制：AI 输出 &lt;ruby新条目&gt; 新入库 / &lt;ruby更新条目 编号="X"&gt; 覆盖更新已有记录（编号知识常驻注入，AI 知道该更新哪条）。<br>
                                     🔁 步骤不自动切换：每步可反复产出，做完做透再手动走下一步；Step7（动态任务设计）一次只允许定稿一个任务。<br>
-                                    🏁 全部完成后手动点「合成角色卡」：Ruby 汇总清单跟你确认，输出 &lt;ruby合成&gt; 后 RUBY 整理聊天世界书为干净条目、自动生成 RubyAnalyzer 分析方案，并下载 v3 角色卡 JSON。
+                                    🏁 全部完成后手动点「合成角色卡」：Ruby 汇总清单跟你确认，输出 &lt;ruby合成&gt; 后 RUBY 立刻弹窗问是否现在下载——确认后整理聊天世界书为干净条目、自动生成 RubyAnalyzer 分析方案并下载 v3 角色卡 JSON；该标记在任意步骤检测到都会立刻触发弹窗。
                                 </div>
                             </div>
                         </div>
@@ -802,7 +802,7 @@ function buildShellHtml() {
                                     ② 监听：每条 AI 回复后检测记录标记——&lt;ruby新条目&gt; 新记录 / &lt;ruby更新条目 编号="X"&gt; 更新记录 X（编号没命中时按人物名相似度兜底合并）。<br>
                                     ③ 记录：检测到标记 → yaml 提取 → 写入《ruby写卡初稿》：按步骤各有默认位置与顺序，分析提示词放关闭条目；编号知识同步刷新。<br>
                                     ④ 停留：不自动切换步骤，每步可反复产出；进度存于聊天元数据（换聊天不串进度）。<br>
-                                    ⑤ 合成：合成角色卡阶段输出 &lt;ruby合成&gt; JSON 清单 → 确认 → 聊天世界书整理为干净条目 + RubyAnalyzer 方案自动生成 + 下载 v3 角色 JSON。
+                                    ⑤ 合成：检测到 &lt;ruby合成&gt; JSON 清单（任意步骤，同楼记录先落库）→ 立刻弹窗确认 → 聊天世界书整理为干净条目 + RubyAnalyzer 方案自动生成 + 下载 v3 角色 JSON。
                                 </div>
                             </div>
                         </div>

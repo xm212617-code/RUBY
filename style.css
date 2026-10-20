@@ -261,7 +261,7 @@
 }
 #ruby_cw_bubble code { font-size: 13px; }
 
-/* 写卡对话模式：步骤切换确认弹窗 */
+/* 写卡合成确认弹窗（合成并下载 / 再改改） */
 #ruby_cw_confirm {
     position: fixed;
     inset: 0;

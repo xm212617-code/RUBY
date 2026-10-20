@@ -750,18 +750,18 @@ function manifestSummary(manifest) {
     ].join('\n');
 }
 
-/** 合成确认弹窗：合成并下载 / 再改改。返回 Promise<'build'|'chat'> */
+/** 合成确认弹窗：检测到合成清单 → 现在下载 / 再改改。返回 Promise<'build'|'chat'> */
 function showBuildConfirm(manifest) {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
-        overlay.id = 'ruby_cw_build_confirm';
+        overlay.id = 'ruby_cw_confirm';
         overlay.innerHTML = `
             <div class="cw-confirm-card">
-                <div class="cw-confirm-title">📦 合成角色卡：${sanitizeDownloadName(manifest.卡名)}</div>
+                <div class="cw-confirm-title">📦 卡已写好：${sanitizeDownloadName(manifest.卡名)}</div>
                 <div class="cw-confirm-body"><pre style="white-space:pre-wrap;font-size:12px;margin:0;">${String(manifestSummary(manifest)).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))}</pre></div>
-                <div class="cw-confirm-body">确认后：聊天世界书整理为干净条目 · RubyAnalyzer 方案写入 · 下载 v3 角色卡 JSON。</div>
+                <div class="cw-confirm-body">检测到合成清单——是否现在合成并下载？<br>确认后：聊天世界书整理为干净条目 · RubyAnalyzer 方案写入 · 下载 v3 角色卡 JSON。</div>
                 <div class="cw-confirm-actions">
-                    <button class="cw-btn cw-btn-green" data-choice="build">📦 合成并下载</button>
+                    <button class="cw-btn cw-btn-green" data-choice="build">📦 现在下载</button>
                     <button class="cw-btn cw-btn-outline" data-choice="chat">💬 再改改</button>
                 </div>
             </div>`;
@@ -1097,48 +1097,16 @@ async function handleGenerationEnded() {
     const texts = pending.map((p) => String(p.message.mes || ''));
     const text = texts.join('\n\n');
 
-    // 合成阶段：<ruby合成> JSON → 确认 → 构建
-    if (stepId === 'Overview') {
-        const manifest = extractManifest(text);
-        if (!manifest) {
-            state.lastAction = `收到回复（合成阶段未检测到 <ruby合成> 标记）`;
-            emitState();
-            return;
-        }
-        state.busy = true;
-        try {
-            const choice = await showBuildConfirm(manifest);
-            if (choice !== 'build') {
-                state.lastAction = '合成清单检测到 → 创作者选择再改改';
-                emitState();
-                return;
-            }
-            const result = await buildCharacterCardFromManifest(manifest);
-            Object.assign(state, {
-                active: false,
-                stepId: null,
-                lastStepId: null,
-                lastHandledMessage: -1,
-                lastAction: `合成完成 → ${result.cardName}（条目 ${result.entryCount} · 任务 ${result.taskCount}）`,
-            });
-            clearProgress();
-            notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
-        } catch (e) {
-            state.lastError = e.message;
-            warn(`[cardwriter] build failed: ${e.message}`);
-            notify('error', `RUBY写卡：合成失败（${e.message}）`, { timeOut: 8000 });
-        } finally {
-            state.busy = false;
-            emitState();
-        }
-        return;
-    }
+    // 合成标记：任意步骤检测到 <ruby合成> JSON → 同楼记录先落库 → 立刻弹窗询问是否现在下载 → 确认后构建下载
+    const manifest = extractManifest(text);
 
-    // 记录阶段：捕捉 <ruby新条目>/<ruby更新条目 编号>；随后处理 <ruby切换/>（记录与切换可同楼共存）
+    // 记录阶段：捕捉 <ruby新条目>/<ruby更新条目 编号>；随后处理 <ruby切换/>（记录与切换可同楼共存；有合成标记时切换忽略）
     let records = extractRecords(text);
-    const switchMark = extractSwitch(text);
-    if (records.length === 0 && !switchMark) {
-        state.lastAction = `收到回复（${stepId} 无记录标记，视为讨论）`;
+    const switchMark = manifest ? null : extractSwitch(text);
+    if (records.length === 0 && !switchMark && !manifest) {
+        state.lastAction = stepId === 'Overview'
+            ? `收到回复（合成阶段未检测到 <ruby合成> 标记）`
+            : `收到回复（${stepId} 无记录标记，视为讨论）`;
         emitState();
         return;
     }
@@ -1164,6 +1132,32 @@ async function handleGenerationEnded() {
             for (const r of results) {
                 window.dispatchEvent(new CustomEvent('ruby:cardwriter-draft', { detail: { stepId, key: r.key, action: r.action } }));
             }
+        }
+
+        // 合成标记：同楼记录已落库 → 立刻弹窗询问是否现在下载，确认后构建并下载
+        if (manifest) {
+            try {
+                const choice = await showBuildConfirm(manifest);
+                if (choice !== 'build') {
+                    state.lastAction = `${stepId} 检测到合成清单 → 创作者选择再改改`;
+                    return;
+                }
+                const result = await buildCharacterCardFromManifest(manifest);
+                Object.assign(state, {
+                    active: false,
+                    stepId: null,
+                    lastStepId: null,
+                    lastHandledMessage: -1,
+                    lastAction: `合成完成 → ${result.cardName}（条目 ${result.entryCount} · 任务 ${result.taskCount}）`,
+                });
+                clearProgress();
+                notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
+            } catch (e) {
+                state.lastError = e.message;
+                warn(`[cardwriter] build failed: ${e.message}`);
+                notify('error', `RUBY写卡：合成失败（${e.message}）`, { timeOut: 8000 });
+            }
+            return;
         }
 
         // 切换标记：创作者表示可以进入下一步（记录已先行落库）
