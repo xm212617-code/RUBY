@@ -1038,6 +1038,36 @@ function downloadJson(fileName, text) {
 }
 
 /**
+ * 合成结果框：自动下载可能被环境吞掉（移动端浏览器/沙箱iframe/无手势上下文），
+ * 弹出带真实下载链接的结果框兜底——用户点链接即手动保存。
+ * 同时说明世界书整理是合成的一部分（设计行为），避免"书变了没拿到卡"的困惑。
+ */
+function showComposeResult(fileName, text, stats) {
+    try {
+        const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        const overlay = document.createElement('div');
+        overlay.id = 'ruby_cw_confirm';
+        const safe = sanitizeDownloadName(fileName).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        overlay.innerHTML = `
+            <div class="cw-confirm-card">
+                <div class="cw-confirm-title">✅ 角色卡已合成：${safe}</div>
+                <div class="cw-confirm-body">合成完成：条目 ${stats.entryCount} 条 · 分析任务 ${stats.taskCount} 个。<br>聊天世界书已同步整理为干净条目（合成设计行为）。<br>JSON 应已自动开始下载——若浏览器没有反应（移动端常见），点下面按钮手动保存。</div>
+                <div class="cw-confirm-actions">
+                    <a class="cw-btn cw-btn-green" href="${url}" download="${safe}.json" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center;">💾 保存 ${safe}.json</a>
+                    <button class="cw-btn cw-btn-outline" data-choice="close">关闭</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => {
+            overlay.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+        };
+        overlay.querySelector('[data-choice="close"]')?.addEventListener('click', close);
+        setTimeout(close, 10 * 60 * 1000);
+    } catch { /* 结果框失败不影响主流程 */ }
+}
+
+/**
  * 合成角色卡：按 manifest 把记录整理为成品。
  * ① 聊天世界书 → 干净条目（正规名称/关键词/位置/灯位），未引用的记录与过程条目清除
  * ② RubyAnalyzer preset 按分析任务生成
@@ -1102,6 +1132,14 @@ async function buildCharacterCardFromManifest(manifest) {
         }
         const r = resolveRef(ref);
         if (!r) { missing.push(refDisplay(ref)); return false; }
+        // 聊天书引用命中 RUBY 流程条目（规则/人设/路线图等）→ 拒绝，防止绑错书时静默合成垃圾卡
+        if (r.bookRef?.scope === '聊天世界书') {
+            const primary = String(Array.isArray(r.source?.key) ? r.source.key[0] : '');
+            if (isRubyProcessEntry(primary)) {
+                missing.push(`聊天世界书:${r.bookRef.uid}（RUBY流程条目，禁止引用）`);
+                return false;
+            }
+        }
         holder._content = r.content;
         holder._source = r.source;
         holder._bookRef = r.bookRef;
@@ -1118,7 +1156,11 @@ async function buildCharacterCardFromManifest(manifest) {
     resolveInto(manifest, '开场白来源');
     const first_mes = manifest._content || '';
     manifest._content = undefined;
-    if (missing.length) throw new Error(`清单引用了不存在的条目：${[...new Set(missing)].join('、')}（记录编号请对照编号知识，uid 引用请对照世界书现状）`);
+    if (missing.length) {
+        const chatCount = Object.keys(data.entries).length;
+        const charCount = extBooks.主世界书 ? Object.keys(extBooks.主世界书.entries || {}).length : 0;
+        throw new Error(`清单引用了无效或不存在的条目：${[...new Set(missing)].join('、')}。当前聊天世界书《${book}》共 ${chatCount} 条${charBookName ? `，主世界书《${charBookName}》共 ${charCount} 条` : '，主世界书未绑定'}——uid 请以【世界书现状】清点为准（若清单指向的书与实际绑定不符，请先绑定正确的书或改用对应 "书:uid" 引用）`);
+    }
 
     // 既有条目默认值：清单省略的字段沿用来源条目现状（位置/顺序/深度/灯位/关键词等）
     const keysOf = (src) => (Array.isArray(src?.key) ? src.key.map(String).filter(Boolean) : []);
@@ -1252,10 +1294,11 @@ async function buildCharacterCardFromManifest(manifest) {
     reloadEditorIfShowing(book);
 
     // ---- 下载 JSON ----
-    downloadJson(`${sanitizeDownloadName(cardName)}.json`, JSON.stringify(card, null, 4));
-
     const entryCount = (manifest.条目 || []).length;
     const taskCount = (manifest.分析任务 || []).length;
+    const jsonText = JSON.stringify(card, null, 4);
+    downloadJson(`${sanitizeDownloadName(cardName)}.json`, jsonText);
+    showComposeResult(cardName, jsonText, { entryCount, taskCount });
     log(`[cardwriter] card composed: ${cardName} | entries=${entryCount} | tasks=${taskCount}`);
     return { cardName, entryCount, taskCount };
 }

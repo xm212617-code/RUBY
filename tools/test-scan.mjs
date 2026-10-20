@@ -183,5 +183,20 @@ if (downloaded) {
     ok(rubyLeft.length === 0, 'D: 未引用的 RUBY 条目已清理（记录引用除外）: ' + rubyLeft.map((e) => e.key[0]).join(','));
 }
 
+// ---------- 场景E：引用 RUBY 流程条目 → 明确拒绝（绑错书防呆） ----------
+console.log('=== 场景E：RUBY 流程条目引用被拒 ===');
+downloaded = null;
+await cw.startSession('StepW');
+const rulesEntry = findChatEntry((e) => Array.isArray(e.key) && e.key.includes('RUBY写卡规则'));
+ok(!!rulesEntry, 'E: RUBY 流程条目存在');
+const manifestE = {
+    卡名: '坏卡',
+    条目: [{ 书: '聊天世界书', uid: (BOOKS[CHAT_BOOK] && Object.entries(BOOKS[CHAT_BOOK].entries).find(([, e]) => Array.isArray(e.key) && e.key.includes('RUBY写卡规则')) || [])[0] }],
+};
+await pushAi(`确认。\n<ruby合成>\n\`\`\`json\n${JSON.stringify(manifestE, null, 2)}\n\`\`\`\n</ruby合成>`);
+ok(!downloaded, 'E: 未触发下载');
+ok(String(cw.getState().lastError || '').includes('RUBY流程条目，禁止引用'), 'E: 错误指明 RUBY 流程条目: ' + cw.getState().lastError);
+ok(String(cw.getState().lastError || '').includes(`《${CHAT_BOOK}》`), 'E: 错误带聊天书名与条目数');
+
 console.log(fails === 0 ? '\n=== 特殊步骤回归全部通过 ===' : `\n=== ${fails} 项失败 ===`);
 process.exit(fails ? 1 : 0);
