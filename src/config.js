@@ -82,9 +82,15 @@ const makeDefaultUi = () => ({
     orbSize: 60,
     orbX: null,
     orbY: null,
+    // 贴边吸附：拖动悬浮球靠近屏幕边缘时自动贴边收起（点击弹回）；null/[] = 自由摆放
+    orbSnap: true,
+    // 当前贴边状态：['left'] / ['right','top'] 等边组合，null = 未贴边
+    orbDock: null,
     notify: true,
     // 黑夜模式：true/false = 用户显式选择；null = 未设置（跟随系统外观）
     darkMode: null,
+    // 纯手动分析：开启后玩家面板"手动执行分析"的执行走独立手动流（独立书签、不计导演统计），不影响周期/导演
+    pureManualRun: false,
 });
 
 /** 悬浮球尺寸取值范围：当前悬浮窗 60px 为上限，可逐步缩小 */

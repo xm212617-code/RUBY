@@ -504,10 +504,16 @@ export function resolveTask(spec, preset) {
         || null;
 }
 
-export async function forceRun(kind, taskId) {
+/**
+ * 手动执行分析。
+ * options.pureManual=true 时走"纯手动流"（source: 'manual'）：独立书签、不计入导演迭代统计，
+ * 与周期/导演两条自动逻辑完全互不干扰；默认（false）保持原有补充模式（source: 'force'，与自动流共享书签）。
+ */
+export async function forceRun(kind, taskId, options = {}) {
     const c = ctx();
     if (!c) throw new Error('SillyTavern context unavailable');
     if (state.running) throw new Error('已有分析任务正在执行中，请稍候');
+    const source = options?.pureManual ? 'manual' : 'force';
 
     state.identity = config.getCharacterIdentity();
     if (!state.identity) throw new Error('请先打开一个角色对话');
@@ -527,7 +533,7 @@ export async function forceRun(kind, taskId) {
             displayName: preset.startupTask.displayName || '开局分析',
             triggeredAt: scheduler.positionFor(aiCount, len),
             sourceFloor: aiCount,
-            source: 'force',
+            source,
         }];
     } else if (kind === 'task' || kind === 'tasks') {
         // spec 支持逗号分隔多任务与名字解析：1,3 / 沛霖内心,沛霖生理 / promptKey / 捕捉关键词
@@ -552,11 +558,11 @@ export async function forceRun(kind, taskId) {
             displayName: task.displayName || `任务#${task.id}`,
             triggeredAt: scheduler.positionFor(aiCount, len),
             sourceFloor: aiCount,
-            source: 'force',
+            source,
         }));
     } else if (kind === 'all') {
         batch = scheduler.allEnabledTasks(preset.startupTask, preset.tasks, state.identity)
-            .map((t) => ({ ...t, triggeredAt: scheduler.positionFor(aiCount, len), sourceFloor: aiCount, source: 'force' }));
+            .map((t) => ({ ...t, triggeredAt: scheduler.positionFor(aiCount, len), sourceFloor: aiCount, source }));
         if (batch.length === 0) throw new Error('没有已启用的任务');
     } else if (kind === 'director') {
         const dirCfg = preset.director;
@@ -568,7 +574,8 @@ export async function forceRun(kind, taskId) {
     }
 
     // 手动执行计入导演迭代统计（本周期玩家手动分析次数）
-    if (kind !== 'director') {
+    // 纯手动流不计——它在导演的调度世界观之外，不应影响导演的排期学习
+    if (kind !== 'director' && source !== 'manual') {
         const dm = readDirectorMeta();
         if (dm) {
             dm.manualRuns = (dm.manualRuns || 0) + batch.length;
@@ -913,6 +920,8 @@ export async function runPipeline(taskBatch) {
             const taskConfig = current.config;
             const taskKey = current.type;
             const taskDisplayName = current.displayName;
+            // 纯手动流（source: 'manual'）使用独立书签：读哪些楼、推进到哪，都与周期/导演流的 taskKey 互不影响
+            const bmKey = current.source === 'manual' ? `manual:${taskKey}` : taskKey;
 
             try {
                 if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
@@ -922,14 +931,14 @@ export async function runPipeline(taskBatch) {
 
                 log(`task ${taskIndex + 1}/${taskBatch.length}: ${taskDisplayName} (${current.source})`);
 
-                let inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!providerSummary });
+                let inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary });
                 log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)`);
 
                 if (inc.count === 0 || !inc.text) {
-                    // force 或导演计划重触发（重新生成的楼层内容变化）：重置书签重读该楼层
-                    if (current.source === 'force' || current.source === 'director') {
-                        reader.resetBookmark(taskKey);
-                        inc = reader.incrementalRead(taskKey, customTags, { noWindowLimit: !!providerSummary });
+                    // force/manual 或导演计划重触发（重新生成的楼层内容变化）：重置书签重读该楼层
+                    if (current.source === 'force' || current.source === 'director' || current.source === 'manual') {
+                        reader.resetBookmark(bmKey);
+                        inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary });
                         log(`bookmark reset, re-reading ${inc.count} floors (${current.source})`);
                         if (inc.count === 0 || !inc.text) {
                             warn(`skip ${taskDisplayName}: no readable text in chat`);
@@ -945,7 +954,7 @@ export async function runPipeline(taskBatch) {
                 // （扫原始楼层而非总结浓缩文本，避免已总结楼层里的关键词被永久漏扫），
                 // 同时防止截断机制吞掉最新楼层里的触发关键词。
                 // 导演模式排中的任务不扫描——导演排了就跑，调度权完全在导演
-                const keywordScan = (current.source === 'force' || current.source === 'director')
+                const keywordScan = (current.source === 'force' || current.source === 'director' || current.source === 'manual')
                     ? { run: true, keywords: [], matched: [] }
                     : scheduler.shouldRunByKeywordScan(taskConfig, inc.text);
                 if (!keywordScan.run) {
@@ -1077,7 +1086,7 @@ export async function runPipeline(taskBatch) {
                 if (!outputKey) {
                     log(`${taskDisplayName}: no output entry configured, result kept in memory only`);
                     outputValues[outputVarName] = result.trim();
-                    reader.saveBookmark(taskKey, inc.endFloor);
+                    reader.saveBookmark(bmKey, inc.endFloor);
                     completedCount++;
                     runResults.push({ name: taskDisplayName, ok: true, outputKey: '' });
                     continue;
@@ -1108,7 +1117,7 @@ export async function runPipeline(taskBatch) {
 
                 await worldbook.disableCharEntry(charBook, outputKey);
                 outputValues[outputVarName] = result.trim();
-                reader.saveBookmark(taskKey, inc.endFloor);
+                reader.saveBookmark(bmKey, inc.endFloor);
                 completedCount++;
                 runResults.push({ name: taskDisplayName, ok: true, outputKey });
                 log(`✅ ${taskDisplayName} done (bookmark at floor ${inc.endFloor})`);

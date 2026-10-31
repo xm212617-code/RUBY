@@ -23,6 +23,17 @@
     display: none;
 }
 
+/* 贴边吸附：收起/弹出的滑动动画（拖动时不挂此类，保证跟手） */
+#ruby_analyzer_orb.docking {
+    transition: left .28s ease-out, top .28s ease-out, transform .15s ease, box-shadow .15s ease;
+}
+
+/* 拖动进入吸附范围：绿色光环提示"松手即贴边" */
+#ruby_analyzer_orb.snap-hint {
+    outline: 3px solid rgba(46, 204, 113, .95);
+    outline-offset: 3px;
+}
+
 #ruby_analyzer_orb .ruby-orb-avatar {
     position: absolute;
     inset: 0;

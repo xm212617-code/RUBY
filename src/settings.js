@@ -71,6 +71,11 @@ export function initSettingsDrawer() {
                 </div>
                 <div class="ra-ext-tip">拉条向左缩小悬浮球（当前 60px 为最大）；关闭悬浮球后仍可用 <code>/ruby</code> 命令打开面板</div>
                 <label class="checkbox_label">
+                    <input id="ruby_ext_snap_toggle" type="checkbox">
+                    <span>贴边吸附</span>
+                </label>
+                <div class="ra-ext-tip">拖动悬浮球靠近屏幕边缘时自动贴边收起一半（点击露出的部分弹回）；手机上游玩可快速让球让开正文，电脑上同样可用</div>
+                <label class="checkbox_label">
                     <input id="ruby_ext_dark_toggle" type="checkbox">
                     <span>黑夜模式</span>
                 </label>
@@ -111,6 +116,16 @@ export function initSettingsDrawer() {
     sizeVal.textContent = sizeInput.value;
     sizeInput.addEventListener('input', applySizeFromInput);
 
+    // 贴边吸附开关：关闭后悬浮球恢复自由摆放（已贴边的球下次拖动即可挪走）
+    const snapToggle = drawer.querySelector('#ruby_ext_snap_toggle');
+    if (snapToggle) {
+        snapToggle.checked = config.getUi().orbSnap !== false;
+        snapToggle.addEventListener('change', () => {
+            config.saveUi({ orbSnap: !!snapToggle.checked });
+            window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+        });
+    }
+
     // 黑夜模式开关：勾选=强制黑夜，取消=强制白天（写入 ui.darkMode，不再跟随系统）
     const darkToggle = drawer.querySelector('#ruby_ext_dark_toggle');
     if (darkToggle) {
@@ -125,6 +140,8 @@ export function initSettingsDrawer() {
     window.addEventListener('ruby:ui-changed', () => {
         const el = document.getElementById('ruby_ext_orb_toggle');
         if (el) el.checked = !config.getUi().orbHidden;
+        const snap = document.getElementById('ruby_ext_snap_toggle');
+        if (snap) snap.checked = config.getUi().orbSnap !== false;
         const sz = document.getElementById('ruby_ext_orb_size');
         const szVal = document.getElementById('ruby_ext_orb_size_val');
         const size = config.clampOrbSize(config.getUi().orbSize);
