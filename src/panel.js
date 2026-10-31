@@ -294,6 +294,12 @@ function buildShellHtml() {
                     <div class="form-section">
                         <div class="form-header red">■ 手动执行分析</div>
                         <div class="form-body">
+                            <div style="margin-bottom:6px;">
+                                <label class="inline" style="cursor:pointer;" title="纯手动分析：执行走独立手动流——独立书签、不计入导演迭代统计，与周期/导演两条自动逻辑互不干扰；关闭时保持原有补充模式（与自动流共享阅读进度）">
+                                    <input type="checkbox" id="ra_pure_manual"> <span style="font-size:12px;color:#888;">纯手动分析</span>
+                                </label>
+                            </div>
+                            <div id="ra_pure_manual_tip" class="tip" style="margin:0 0 8px;"></div>
                             <div id="ra_manual_buttons" style="display:flex;flex-wrap:wrap;gap:10px;"><span>加载中...</span></div>
                             <div class="tip">点击按钮可强制执行对应的分析任务，不受楼层限制；手动执行不会打断后台自动周期。</div>
                         </div>
@@ -1038,9 +1044,22 @@ function renderPresetDisplay(data, layer) {
     });
 }
 
+/** 纯手动分析开关：勾选态与模式说明小字跟随本机 UI 偏好 */
+function syncPureManualUi() {
+    const box = $('ra_pure_manual');
+    if (box) box.checked = !!config.getUi().pureManualRun;
+    const tip = $('ra_pure_manual_tip');
+    if (tip) {
+        tip.textContent = box?.checked
+            ? '已开启：点击下方按钮执行纯手动分析——独立书签、不计导演统计，不影响周期与导演的自动进度'
+            : '已关闭：补充模式——手动执行与周期/导演共享阅读进度（原有行为）';
+    }
+}
+
 function renderManualButtons(data, layer) {
     const el = $('ra_manual_buttons');
     if (!el) return;
+    syncPureManualUi();
     const preset = config.getActivePreset(data);
     const identity = config.getCharacterIdentity();
 
@@ -1073,7 +1092,7 @@ function renderManualButtons(data, layer) {
             const id = parseInt(btn.dataset.id, 10);
             closePanel();
             try {
-                await engine.forceRun(kind, id);
+                await engine.forceRun(kind, id, { pureManual: !!config.getUi().pureManualRun });
             } catch (e) {
                 window.toastr?.error?.(e.message || '执行失败', '', { timeOut: 6000 });
             }
@@ -1333,6 +1352,13 @@ function updateDirectorApiHighlight() {
 }
 
 function wirePlayerSections() {
+    on($('ra_pure_manual'), 'change', (e) => {
+        config.saveUi({ pureManualRun: e.target.checked });
+        syncPureManualUi();
+        window.toastr?.success?.(e.target.checked
+            ? '已开启纯手动分析：手动执行走独立流，不影响周期/导演'
+            : '已关闭纯手动分析：恢复补充模式（与自动流共享阅读进度）');
+    });
     on($('ra_dir_api_enabled'), 'change', (e) => {
         const enabled = e.target.checked;
         if (enabled) {

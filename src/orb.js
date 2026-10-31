@@ -7,9 +7,24 @@ import { ORB_AVATAR_DATA_URI } from './orb-avatar.js';
 const ORB_ID = 'ruby_analyzer_orb';
 const DRAG_THRESHOLD = 6;
 const ORB_DEFAULT_SIZE = 60;
+// 贴边吸附：距屏幕边小于该值松手即吸附；吸附后按比例只露出一小条，点击弹回
+const SNAP_THRESHOLD = 32;
+const SNAP_PEEK_RATIO = 0.42;
+const SNAP_PEEK_MIN = 18;
 
 function getOrbSize() {
     return config.clampOrbSize(config.getUi()?.orbSize ?? ORB_DEFAULT_SIZE);
+}
+
+/** 贴边吸附是否开启（默认开启） */
+function isSnapEnabled() {
+    return config.getUi()?.orbSnap !== false;
+}
+
+/** 读取持久化的贴边状态（兼容旧数据：非数组一律视为未贴边） */
+function getDockedEdges() {
+    const dock = config.getUi()?.orbDock;
+    return Array.isArray(dock) && dock.length > 0 ? dock : null;
 }
 
 /** 按设置应用悬浮球尺寸（徽章与描边按比例缩放） */
@@ -54,6 +69,78 @@ function applyPosition(orb, pos) {
     const pad = getOrbSize() + 8;
     orb.style.left = `${Math.max(4, Math.min(window.innerWidth - pad, pos.x))}px`;
     orb.style.top = `${Math.max(4, Math.min(window.innerHeight - pad, pos.y))}px`;
+}
+
+// ---------- 贴边吸附 ----------
+
+function setPos(orb, pos) {
+    orb.style.left = `${pos.x}px`;
+    orb.style.top = `${pos.y}px`;
+}
+
+/** 贴边后露出屏幕的像素（小尺寸球保底，保证露出的部分仍可点按/拖动） */
+function peekSize() {
+    return Math.max(SNAP_PEEK_MIN, Math.round(getOrbSize() * SNAP_PEEK_RATIO));
+}
+
+/** 拖动位置 → 待吸附的边（'left'/'right'/'top'/'bottom'，可组合成角落） */
+function snapEdgesOf(pos) {
+    const size = getOrbSize();
+    const edges = [];
+    if (pos.x <= SNAP_THRESHOLD) edges.push('left');
+    else if (pos.x + size >= window.innerWidth - SNAP_THRESHOLD) edges.push('right');
+    if (pos.y <= SNAP_THRESHOLD) edges.push('top');
+    else if (pos.y + size >= window.innerHeight - SNAP_THRESHOLD) edges.push('bottom');
+    return edges;
+}
+
+/** 贴边位置：被钉住的轴滑出屏幕只露 peek，自由轴沿用拖放位置并钳制在屏内 */
+function dockedPos(dock, freeX, freeY) {
+    const size = getOrbSize();
+    const peek = peekSize();
+    let x = freeX;
+    let y = freeY;
+    if (dock.includes('left')) x = peek - size;
+    if (dock.includes('right')) x = window.innerWidth - peek;
+    if (dock.includes('top')) y = peek - size;
+    if (dock.includes('bottom')) y = window.innerHeight - peek;
+    if (!dock.includes('left') && !dock.includes('right')) x = Math.max(8, Math.min(window.innerWidth - size - 8, x));
+    if (!dock.includes('top') && !dock.includes('bottom')) y = Math.max(8, Math.min(window.innerHeight - size - 8, y));
+    return { x, y };
+}
+
+/** 弹出位置：贴边球回到完全可见（沿钉住的轴回到屏内边缘） */
+function popoutPos(dock, curX, curY) {
+    const size = getOrbSize();
+    let x = curX;
+    let y = curY;
+    if (dock.includes('left')) x = 8;
+    if (dock.includes('right')) x = window.innerWidth - size - 8;
+    if (dock.includes('top')) y = 8;
+    if (dock.includes('bottom')) y = window.innerHeight - size - 8;
+    return {
+        x: Math.max(8, Math.min(window.innerWidth - size - 8, x)),
+        y: Math.max(8, Math.min(window.innerHeight - size - 8, y)),
+    };
+}
+
+let glideTimer = null;
+
+/** 带动画滑到目标位置（贴边收起 / 弹出），结束后摘除过渡类避免影响拖动跟手 */
+function glideTo(orb, pos) {
+    orb.classList.add('docking');
+    setPos(orb, pos);
+    clearTimeout(glideTimer);
+    glideTimer = setTimeout(() => orb.classList.remove('docking'), 340);
+}
+
+/** 按持久化的贴边状态无动画重摆位置（初始化 / resize / 尺寸变化） */
+function reapplyDock(orb) {
+    const dock = getDockedEdges();
+    if (!dock) return false;
+    orb.classList.remove('docking');
+    setPos(orb, dockedPos(dock, parseFloat(orb.style.left), parseFloat(orb.style.top)));
+    return true;
 }
 
 function badgeState(engineState) {
@@ -213,17 +300,31 @@ export function ensureOrb() {
     applySize(orb);
 
     const ui = config.getUi();
-    applyPosition(orb, (Number.isFinite(ui.orbX) && Number.isFinite(ui.orbY)) ? { x: ui.orbX, y: ui.orbY } : defaultPosition());
+    if (!reapplyDock(orb)) {
+        applyPosition(orb, (Number.isFinite(ui.orbX) && Number.isFinite(ui.orbY)) ? { x: ui.orbX, y: ui.orbY } : defaultPosition());
+    }
     refreshVisibility();
 
     orb.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
+        let originX = parseFloat(orb.style.left);
+        let originY = parseFloat(orb.style.top);
+        const dock = getDockedEdges();
+        // 贴边态：先无动画弹回完全可见位置，再从这里开始拖动/响应点击
+        if (dock) {
+            const p = popoutPos(dock, originX, originY);
+            orb.classList.remove('docking');
+            setPos(orb, p);
+            originX = p.x;
+            originY = p.y;
+        }
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
-            originX: parseFloat(orb.style.left),
-            originY: parseFloat(orb.style.top),
+            originX,
+            originY,
             moved: false,
+            wasDocked: !!dock,
         };
         try { orb.setPointerCapture(e.pointerId); } catch { /* capture optional */ }
     });
@@ -238,16 +339,31 @@ export function ensureOrb() {
             hideStepBubble(); // 拖动时收起说明气泡，避免残影与遮挡
         }
         applyPosition(orb, { x: dragState.originX + dx, y: dragState.originY + dy });
+        // 拖动中进入吸附范围：给一圈绿色光环提示"松手即贴边"
+        const inRange = isSnapEnabled() && snapEdgesOf({ x: parseFloat(orb.style.left), y: parseFloat(orb.style.top) }).length > 0;
+        orb.classList.toggle('snap-hint', inRange);
     });
 
     orb.addEventListener('pointerup', (e) => {
         if (!dragState) return;
         const moved = dragState.moved;
+        const wasDocked = dragState.wasDocked;
         const pos = { x: parseFloat(orb.style.left), y: parseFloat(orb.style.top) };
         dragState = null;
+        orb.classList.remove('snap-hint');
         try { orb.releasePointerCapture(e.pointerId); } catch { /* already released */ }
         if (moved) {
-            config.saveUi({ orbX: pos.x, orbY: pos.y });
+            const edges = isSnapEnabled() ? snapEdgesOf(pos) : [];
+            if (edges.length > 0) {
+                const target = dockedPos(edges, pos.x, pos.y);
+                glideTo(orb, target);
+                config.saveUi({ orbX: target.x, orbY: target.y, orbDock: edges });
+            } else {
+                config.saveUi({ orbX: pos.x, orbY: pos.y, orbDock: null });
+            }
+        } else if (wasDocked) {
+            // 贴边态点击 = 弹回完全可见（pointerdown 已就位，这里落盘；不开面板防误触）
+            config.saveUi({ orbX: pos.x, orbY: pos.y, orbDock: null });
         } else {
             // 写卡会话激活时点击直达写卡页签，否则开主面板
             if (cardwriter.getState().active) {
@@ -259,19 +375,29 @@ export function ensureOrb() {
     });
 
     orb.addEventListener('pointercancel', () => {
+        // pointercancel 时系统接管指针：贴边弹出途中被打断也要落盘，避免重启回到旧贴边位
+        if (dragState?.wasDocked && !dragState.moved) {
+            config.saveUi({ orbX: parseFloat(orb.style.left), orbY: parseFloat(orb.style.top), orbDock: null });
+        }
         dragState = null;
+        orb.classList.remove('snap-hint');
     });
 
     window.addEventListener('resize', () => {
         const el = document.getElementById(ORB_ID);
-        if (el) applyPosition(el, { x: parseFloat(el.style.left), y: parseFloat(el.style.top) });
+        if (el && !reapplyDock(el)) {
+            applyPosition(el, { x: parseFloat(el.style.left), y: parseFloat(el.style.top) });
+        }
         hideStepBubble();
     });
 
-    // 面板保存 UI 配置时事件驱动刷新（替代轮询）：显隐 + 尺寸
+    // 面板保存 UI 配置时事件驱动刷新（替代轮询）：显隐 + 尺寸（贴边态下尺寸变化需按新尺寸重摆）
     window.addEventListener('ruby:ui-changed', () => {
         const el = document.getElementById(ORB_ID);
-        if (el) applySize(el);
+        if (el) {
+            applySize(el);
+            reapplyDock(el);
+        }
         refreshVisibility();
     });
 
