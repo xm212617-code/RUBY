@@ -1783,8 +1783,8 @@ const SUMMARY_PROVIDERS = [
     },
     {
         id: 'shujuku',
-        name: 'SP·数据库 表格总结',
-        description: '读取SP·数据库写入世界书的可读条目（总结表/重要人物/剧情大纲），表格已处理的楼层用数据库内容替代原文。',
+        name: '龙血玄黄·数据库 表格总结',
+        description: '读取龙血玄黄·数据库写入世界书的可读条目（总结表/纪要/重要人物/剧情大纲/自定义表格导出），表格已处理的楼层用数据库内容替代原文。',
     },
     {
         id: 'yuzuki',
@@ -1827,11 +1827,11 @@ function renderSummaryProviders(data) {
                 const boundaryOrdinal = ordinalForIndex(c?.chat || [], boundaryIdx);
                 const totalFloors = countAiReplies(c?.chat || []);
                 statusHtml = `<div style="font-size:12px;color:#666;margin-top:8px;">
-                    ✅ 检测到数据库活动：表格已更新至第 <strong>${boundaryOrdinal}</strong> 楼（共${totalFloors}楼）。总结表/人物/大纲条目将在分析时从角色与聊天世界书读取。
+                    ✅ 检测到龙血玄黄·数据库活动：表格已更新至第 <strong>${boundaryOrdinal}</strong> 楼（共${totalFloors}楼）。总结/纪要/人物/大纲/表格导出条目将在分析时从角色与聊天世界书读取。
                 </div>`;
             } else {
                 statusHtml = `<div style="font-size:12px;color:#8B4513;margin-top:8px;">
-                    ⚠️ 当前聊天未检测到 SP·数据库 的表格更新记录（未安装、或本聊天还没运行过填表）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
+                    ⚠️ 当前聊天未检测到 龙血玄黄·数据库 的表格更新记录（未安装、或本聊天还没运行过填表）。启用后分析会先回退纯原文模式，检测到数据后自动生效。
                 </div>`;
             }
         } else if (p.id === 'yuzuki') {

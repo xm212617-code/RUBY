@@ -282,15 +282,37 @@ export function renderLittleWhiteBoxSummary(s) {
     return lines.join('\n');
 }
 
-// ---------- SP·数据库（shujuku）总结接口 ----------
-// 数据库插件把表格快照挂在聊天消息上（TavernDB_ACU_* 字段），并把可读总结
-// 写入世界书条目（总结条目N / 重要人物条目N / TavernDB-ACU-OutlineTable）。
-// 只匹配默认（无 ACU-[code]- 隔离前缀）的条目：隔离组属于插件高级功能，
+// ---------- 龙血玄黄·数据库（shujuku）总结接口 ----------
+// 数据库插件（龙血玄黄·数据库）把表格快照挂在聊天消息上（TavernDB_ACU_* 字段），并把可读
+// 数据写入世界书条目。条目命名随模板/版本演进（对齐 shujuku 1.3.x）：
+//  - 旧模板固定表：总结条目N / 小总结条目N（旧版兼容）/ 重要人物条目N / TavernDB-ACU-OutlineTable；
+//    列头分别写在 TavernDB-ACU-MemoryStart（总结表）与 TavernDB-ACU-PersonsHeader（人物表）里，
+//    标准表快照整体写入 TavernDB-ACU-ReadableDataTable。
+//  - 1.3.x 默认模板：表格经"自定义导出"拆分为 TavernDB-ACU-CustomExport-{条目名}-表头 /
+//    -包裹-上 / -包裹-下 / -{行号}，整表导出与附加索引为 TavernDB-ACU-CustomExport-{条目名}[-索引]；
+//    默认模板导出"纪要"（逐轮记录）与"重要人物表"，不再生成 总结条目/剧情大纲 条目。
+// 只匹配默认（无 ACU-[code]- 隔离前缀、无 外部导入- 前缀）的条目：隔离组属于插件高级功能，
 // RUBY 无法得知当前激活的隔离码，混入会造成数据串组。RUBY 只读，零耦合。
 
 const SHUJUKU_SUMMARY_RE = /^总结条目(\d+)$/;
+const SHUJUKU_SMALL_SUMMARY_RE = /^小总结条目(\d+)$/;
 const SHUJUKU_PERSON_RE = /^重要人物条目(\d+)$/;
 const SHUJUKU_OUTLINE_RE = /^TavernDB-ACU-OutlineTable$/;
+const SHUJUKU_READABLE_RE = /^TavernDB-ACU-ReadableDataTable$/;
+const SHUJUKU_PERSONS_HEADER_RE = /^TavernDB-ACU-PersonsHeader$/;
+const SHUJUKU_MEMORY_START_RE = /^TavernDB-ACU-MemoryStart$/;
+const SHUJUKU_CUSTOM_EXPORT_RE = /^TavernDB-ACU-CustomExport-(.+)$/;
+const SHUJUKU_ROW_TAIL_RE = /-(\d+)$/;
+const SHUJUKU_ISOLATION_RE = /^ACU-\[[^\]]+\]-/;
+const SHUJUKU_IMPORT_PREFIX = '外部导入-';
+// 纯包裹/提示性条目：对分析无信息量，不纳入（MemoryStart/PersonsHeader 仅用于提取列头）
+const SHUJUKU_SKIP_COMMENTS = new Set([
+    'TavernDB-ACU-WrapperStart',
+    'TavernDB-ACU-WrapperEnd',
+    'TavernDB-ACU-MemoryEnd',
+    'TavernDB-ACU-ImportantPersonsIndex',
+]);
+const SHUJUKU_MAX_TOTAL_CHARS = 60000;
 
 /** 数据库已处理到的最后消息索引（消息上出现 TavernDB_ACU_* 字段即被处理过） */
 export function getShujukuBoundary() {
@@ -305,8 +327,18 @@ export function getShujukuBoundary() {
     return -1;
 }
 
+/** 从条目内容中提取 markdown 表头行（首个紧跟分隔行的 | 单元格 | 行） */
+function shujukuExtractHeaderLine(content) {
+    const lines = String(content || '').split('\n');
+    for (let i = 0; i < lines.length - 1; i++) {
+        const line = lines[i].trim();
+        if (/^\|.+\|$/.test(line) && /^\|[\s:|-]+$/.test(lines[i + 1].trim())) return line;
+    }
+    return '';
+}
+
 /**
- * 读取 SP·数据库的世界书可读条目并组装总结文本。
+ * 读取 龙血玄黄·数据库的世界书可读条目并组装总结文本。
  * @param {string[]} books 世界书名列表（角色世界书 + 聊天世界书）
  * @returns {Promise<{boundary: number, text: string}|null>} 无已处理消息或无条目时返回 null
  */
@@ -316,9 +348,14 @@ export async function getShujukuSummary(books) {
 
     const c = ctx();
     const booksToScan = (Array.isArray(books) ? books : []).filter(Boolean);
-    const summaryRows = [];
-    const personRows = [];
+    const summaryRows = []; // 总结条目N：{ idx, content }
+    const smallSummaryRows = []; // 小总结条目N（旧版兼容）：{ idx, content }
+    const personRows = []; // 重要人物条目N：{ idx, content }
+    const exportGroups = new Map(); // 自定义导出：条目名 -> { header, wrapperHeader, rows: [{idx, content}], wholes: [content] }
     let outline = '';
+    let readableData = '';
+    let personsHeader = '';
+    let memoryStart = '';
 
     for (const bookName of booksToScan) {
         let data = null;
@@ -327,37 +364,142 @@ export async function getShujukuSummary(books) {
         } catch { /* book unreadable */ }
         if (!data?.entries) continue;
         for (const e of Object.values(data.entries)) {
-            const comment = String(e?.comment || '');
+            const comment = String(e?.comment || '').trim();
+            if (!comment) continue;
+            // 隔离组（ACU-[code]- 前缀）与外部导入批次不属于默认数据视图，跳过防串组
+            if (SHUJUKU_ISOLATION_RE.test(comment) || comment.startsWith(SHUJUKU_IMPORT_PREFIX)) continue;
             let m = comment.match(SHUJUKU_SUMMARY_RE);
             if (m) {
-                summaryRows.push({ idx: parseInt(m[1], 10), content: String(e.content || '').trim() });
+                const content = String(e.content || '').trim();
+                if (content) summaryRows.push({ idx: parseInt(m[1], 10), content });
+                continue;
+            }
+            m = comment.match(SHUJUKU_SMALL_SUMMARY_RE);
+            if (m) {
+                const content = String(e.content || '').trim();
+                if (content) smallSummaryRows.push({ idx: parseInt(m[1], 10), content });
                 continue;
             }
             m = comment.match(SHUJUKU_PERSON_RE);
             if (m) {
-                personRows.push({ idx: parseInt(m[1], 10), content: String(e.content || '').trim() });
+                const content = String(e.content || '').trim();
+                if (content) personRows.push({ idx: parseInt(m[1], 10), content });
                 continue;
             }
             if (SHUJUKU_OUTLINE_RE.test(comment)) {
                 outline = String(e.content || '').trim();
+                continue;
             }
+            if (SHUJUKU_READABLE_RE.test(comment)) {
+                readableData = String(e.content || '').trim();
+                continue;
+            }
+            if (SHUJUKU_PERSONS_HEADER_RE.test(comment)) {
+                personsHeader = String(e.content || '').trim();
+                continue;
+            }
+            if (SHUJUKU_MEMORY_START_RE.test(comment)) {
+                memoryStart = String(e.content || '').trim();
+                continue;
+            }
+            if (SHUJUKU_SKIP_COMMENTS.has(comment)) continue;
+            m = comment.match(SHUJUKU_CUSTOM_EXPORT_RE);
+            if (m) {
+                const rest = m[1];
+                let base = rest;
+                let kind = 'whole';
+                let idx = 0;
+                if (rest.endsWith('-表头')) {
+                    base = rest.slice(0, -3);
+                    kind = 'header';
+                } else if (rest.endsWith('-包裹-上')) {
+                    base = rest.slice(0, -5);
+                    kind = 'wrapperBefore';
+                } else if (rest.endsWith('-包裹-下')) {
+                    continue; // 纯收尾包裹文本，无信息量
+                } else {
+                    const rm = rest.match(SHUJUKU_ROW_TAIL_RE);
+                    if (rm) {
+                        base = rest.slice(0, -rm[0].length);
+                        kind = 'row';
+                        idx = parseInt(rm[1], 10);
+                    }
+                }
+                let group = exportGroups.get(base);
+                if (!group) {
+                    group = { header: '', wrapperHeader: '', rows: [], wholes: [] };
+                    exportGroups.set(base, group);
+                }
+                const content = String(e.content || '').trim();
+                if (kind === 'header') group.header ||= content;
+                else if (kind === 'wrapperBefore') group.wrapperHeader ||= content;
+                else if (kind === 'row') {
+                    if (content) group.rows.push({ idx, content });
+                } else if (content) group.wholes.push(content);
+            }
+            // 其余未知 TavernDB-ACU-* 条目不纳入：插件会写入包裹/提示类条目，避免把提示词噪声混进分析素材
         }
     }
 
-    if (summaryRows.length === 0 && personRows.length === 0 && !outline) return null;
+    // 总结行：新旧条目编号空间可能重叠，优先用现行"总结条目"，无才回退旧版"小总结条目"
+    const activeSummaryRows = summaryRows.length > 0 ? summaryRows : smallSummaryRows;
+    if (activeSummaryRows.length === 0 && personRows.length === 0 && exportGroups.size === 0 && !outline && !readableData) {
+        return null;
+    }
 
-    const sections = [];
-    if (summaryRows.length > 0) {
-        summaryRows.sort((a, b) => a.idx - b.idx);
-        sections.push(`【SP·数据库·总结表】\n${summaryRows.map((r) => r.content).join('\n')}`);
+    const byIdx = (a, b) => a.idx - b.idx;
+    activeSummaryRows.sort(byIdx);
+    personRows.sort(byIdx);
+    for (const group of exportGroups.values()) group.rows.sort(byIdx);
+
+    const assemble = () => {
+        const sections = [];
+        const push = (title, lines) => {
+            const body = lines.filter(Boolean).join('\n').trim();
+            if (body) sections.push(`【${title}】\n${body}`);
+        };
+        if (outline) push('龙血玄黄·数据库·剧情大纲', [outline]);
+        if (activeSummaryRows.length > 0) {
+            push('龙血玄黄·数据库·总结表', [shujukuExtractHeaderLine(memoryStart), ...activeSummaryRows.map((r) => r.content)]);
+        }
+        if (personRows.length > 0) {
+            push('龙血玄黄·数据库·重要人物', [shujukuExtractHeaderLine(personsHeader), ...personRows.map((r) => r.content)]);
+        }
+        for (const [name, group] of exportGroups) {
+            if (group.rows.length > 0) {
+                const header = shujukuExtractHeaderLine(group.header) || shujukuExtractHeaderLine(group.wrapperHeader);
+                push(`龙血玄黄·数据库·${name}`, [header, ...group.rows.map((r) => r.content)]);
+            }
+            for (const w of group.wholes) push(`龙血玄黄·数据库·${name}`, [w]);
+        }
+        if (readableData) push('龙血玄黄·数据库·当前数据表', [readableData]);
+        return sections;
+    };
+
+    // 防膨胀：总结/纪要行随聊天楼层数线性增长，超上限时从贡献最大的行池自最旧行开始丢弃，
+    // 保留最新内容（与柚月接口同策略：牺牲最旧记录，保住当前剧情与状态）
+    const pools = [activeSummaryRows, ...[...exportGroups.values()].map((g) => g.rows), personRows]
+        .filter((p) => p.length > 0);
+    const poolChars = (pool) => pool.reduce((s, r) => s + r.content.length + 1, 0);
+    let sections = assemble();
+    let total = sections.reduce((s, sec) => s + sec.length + 2, 0);
+    while (total > SHUJUKU_MAX_TOTAL_CHARS) {
+        let best = null;
+        let bestLen = 0;
+        for (const pool of pools) {
+            if (pool.length === 0) continue;
+            const len = poolChars(pool);
+            if (len > bestLen) { bestLen = len; best = pool; }
+        }
+        if (!best) break;
+        const excess = total - SHUJUKU_MAX_TOTAL_CHARS;
+        const avg = Math.max(1, Math.ceil(bestLen / best.length));
+        best.splice(0, Math.min(best.length, Math.max(1, Math.ceil(excess / avg))));
+        sections = assemble();
+        total = sections.reduce((s, sec) => s + sec.length + 2, 0);
     }
-    if (personRows.length > 0) {
-        personRows.sort((a, b) => a.idx - b.idx);
-        sections.push(`【SP·数据库·重要人物】\n${personRows.map((r) => r.content).join('\n')}`);
-    }
-    if (outline) {
-        sections.push(`【SP·数据库·剧情大纲】\n${outline}`);
-    }
+
+    if (sections.length === 0) return null;
     return { boundary, text: sections.join('\n\n') };
 }
 

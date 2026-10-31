@@ -856,7 +856,7 @@ export async function runPipeline(taskBatch) {
             }
         }
 
-        // 总结接口（小白x / SP·数据库）：已总结楼层用总结替代正文。
+        // 总结接口（小白x / 龙血玄黄·数据库 / 柚月记忆表 / 柏宝书）：已总结楼层用总结替代正文。
         // 只改变"分析素材内容"，楼层/周期/书签计算全部维持原样（countAiReplies 与书签推进不受影响）。
         const provider = cfgData.summaryProvider || '';
         let providerSummary = null; // { boundary(消息索引), text, label }
@@ -875,7 +875,7 @@ export async function runPipeline(taskBatch) {
             try {
                 const shu = await reader.getShujukuSummary([charBook, chatBook]);
                 if (shu) {
-                    providerSummary = { boundary: shu.boundary, text: shu.text, label: 'SP·数据库剧情总结' };
+                    providerSummary = { boundary: shu.boundary, text: shu.text, label: '龙血玄黄·数据库剧情总结' };
                 } else {
                     warn('shujuku summary unavailable (no processed floors or readable entries), falling back to raw text');
                 }
