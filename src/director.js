@@ -176,10 +176,10 @@ function yamlFences(text) {
  *   retryable=true 表示格式错乱/内容不完整（可自动重试）；assignments 可能为空数组但解析成功。
  */
 export function parseDirectorSchedule(text, taskList) {
-    const blocks = yamlFences(text);
-    if (blocks.length === 0) {
-        return { assignments: [], directorGap: null, retryable: true, reason: '输出中未找到yaml代码块' };
-    }
+    const raw = String(text || '');
+    const fenced = yamlFences(raw);
+    // 无代码块回退：模型常忘记包 yaml 围栏，直接按行扫描原文
+    const blocks = fenced.length > 0 ? fenced : [raw];
     let directorGap = null;
     for (const block of blocks) {
         const gm = block.match(/下次导演间隔\s*[:：]\s*(\d+)/);
@@ -198,16 +198,17 @@ export function parseDirectorSchedule(text, taskList) {
         return NaN;
     };
 
-    // 严格层：成对的 "位置: N" / "任务: taskM"（或任务名）
+    // 严格层：成对的 "位置: N" / "任务: taskM"（或任务名；"- 位置: 3  任务: task1" 同行合并也支持）
     const assignments = [];
     let curPos = NaN;
+    const POSITION_RE = /(?:位置|楼层)\s*[:：]?\s*(\d+)/;
     for (const block of blocks) {
         for (const line of block.split('\n')) {
-            const pm = line.match(/位置\s*[:：]?\s*(\d+)/);
+            const pm = line.match(POSITION_RE);
             if (pm) {
                 if (Number.isFinite(curPos)) continue; // 上一个位置没有配到任务，等待任务行
                 curPos = parseInt(pm[1], 10);
-                continue;
+                // 不 continue：位置与任务同行时仍要在本行匹配任务
             }
             const tm = line.match(/任务\s*[:：]\s*(.+)/);
             if (tm && Number.isFinite(curPos)) {
@@ -243,7 +244,12 @@ export function parseDirectorSchedule(text, taskList) {
     if (explicitEmpty) {
         return { assignments: [], directorGap, retryable: false, reason: '' };
     }
-    return { assignments: [], directorGap, retryable: true, reason: 'yaml中未解析出任何 位置/任务 对' };
+    return {
+        assignments: [],
+        directorGap,
+        retryable: true,
+        reason: fenced.length > 0 ? 'yaml中未解析出任何 位置/任务 对' : '输出未包yaml代码块，且原文中未解析出任何 位置/任务 对',
+    };
 }
 
 /**

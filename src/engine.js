@@ -401,30 +401,39 @@ async function tick() {
     if (dirActive) {
         const dmeta = ensureDirectorMeta(aiCount);
         if (!dmeta) return;
+        // 逐楼补跑：从上次处理楼层+1 到当前逐楼检查——连发回复/分析执行期间到达的楼层不再漏检
+        const from = state.baseline + 1;
         state.baseline = aiCount;
         state.cycleLength = dirCfg.cycleLength;
 
         const batch = [];
-        if (aiCount === dmeta.nextDirectorFloor) {
-            const idemKey = `dir_${aiCount}_director`;
-            if (!state.triggered.has(idemKey)) {
-                state.triggered.add(idemKey);
-                batch.push({ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: aiCount, source: 'auto' });
-            }
-        } else if (dmeta.plan) {
-            for (const a of dmeta.plan.assignments.filter((x) => x.floor === aiCount)) {
-                const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
-                if (!task) continue;
-                const type = `task_${task.id}`;
-                const idemKey = `dir_${aiCount}_${type}`;
-                if (state.triggered.has(idemKey)) {
-                    log(`idempotent skip: ${task.displayName} (floor ${aiCount})`);
-                    continue;
+        let directorQueued = false;
+        for (let cnt = from; cnt <= aiCount; cnt++) {
+            if (cnt >= dmeta.nextDirectorFloor) {
+                // 导演位：≥ 判定（原 === 无补跑，被跳过的楼层会让导演永久停摆）——
+                // 被漏过的导演位/失败后的重试楼层都能在下一楼自愈，一次 tick 只排一次导演
+                if (directorQueued) continue;
+                const idemKey = `dir_${cnt}_director`;
+                if (!state.triggered.has(idemKey)) {
+                    state.triggered.add(idemKey);
+                    batch.push({ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: cnt, source: 'auto' });
+                    directorQueued = true;
                 }
-                state.triggered.add(idemKey);
-                batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: aiCount - dmeta.plan.runFloor + 1, sourceFloor: aiCount, source: 'director' });
-                dmeta.woken.push({ floor: aiCount, taskId: task.id });
-                saveDirectorMeta();
+            } else if (dmeta.plan) {
+                for (const a of dmeta.plan.assignments.filter((x) => x.floor === cnt)) {
+                    const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
+                    if (!task) continue;
+                    const type = `task_${task.id}`;
+                    const idemKey = `dir_${cnt}_${type}`;
+                    if (state.triggered.has(idemKey)) {
+                        log(`idempotent skip: ${task.displayName} (floor ${cnt})`);
+                        continue;
+                    }
+                    state.triggered.add(idemKey);
+                    batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: cnt - dmeta.plan.runFloor + 1, sourceFloor: cnt, source: 'director' });
+                    dmeta.woken.push({ floor: cnt, taskId: task.id });
+                    saveDirectorMeta();
+                }
             }
         }
         emitState();
@@ -725,9 +734,17 @@ async function runDirectorTask(d, ctxObj) {
     if (!parsed || parsed.retryable) {
         state.lastError = `导演模式失败：${lastReason}`;
         dmeta.lastDirectorRun = { round, at: Date.now(), ok: false, reason: lastReason };
+        // 导演失败不退回静态位置调度（排期权始终在导演）：自动流下顺延两层楼再试，
+        // 带着更新的正文重排，避免整周期静默空转；手动流不动 nextDirectorFloor
+        if (d.source === 'auto' && Number.isFinite(d.sourceFloor)) {
+            dmeta.nextDirectorFloor = d.sourceFloor + 2;
+        }
         saveDirectorMeta();
         emitState();
-        notify('error', `🔴 导演模式失败：${lastReason}（已重试 ${attempts - 1} 次）。本周期无调度计划，可在导演面板手动重新执行`, { timeOut: 10000 });
+        const failTip = d.source === 'auto'
+            ? `将在第${dmeta.nextDirectorFloor}楼自动重试，也可在导演面板手动重新执行`
+            : '可在导演面板手动重新执行';
+        notify('error', `🔴 导演模式失败：${lastReason}（已重试 ${attempts - 1} 次）。${failTip}`, { timeOut: 10000 });
         return;
     }
 
@@ -756,9 +773,12 @@ async function runDirectorTask(d, ctxObj) {
         });
         dmeta.history = dmeta.history.slice(0, 5);
     }
+    // 位置换算为绝对楼层只做一次：后续计划条目/通知都用这份带 floor 的清单，
+    // （此前直接在 validated.assignments（仅 position/taskId）上取 a.floor → 通知与计划条目显示“第undefined楼”）
+    const plannedAssignments = validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, taskId: a.taskId }));
     dmeta.plan = {
         runFloor,
-        assignments: validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, taskId: a.taskId })),
+        assignments: plannedAssignments,
         createdAt: Date.now(),
     };
     dmeta.nextDirectorFloor = runFloor + gap;
@@ -775,7 +795,7 @@ async function runDirectorTask(d, ctxObj) {
             const content = [
                 `【RUBY导演计划·第${round}次执导】（自动生成，请保持条目关闭，仅供导演引擎读取）`,
                 `导演运行楼层: ${runFloor}｜下次导演: 第${dmeta.nextDirectorFloor}楼${dirCfg.aggressive ? '（激进模式，间隔由导演自决）' : `（周期${L}）`}`,
-                ...validated.assignments.map((a) => `第${a.floor}楼: task${a.taskId} ${nameOf(a.taskId)}`),
+                ...plannedAssignments.map((a) => `第${a.floor}楼: task${a.taskId} ${nameOf(a.taskId)}`),
             ].join('\n');
             await worldbook.writeOutputEntry(chatBook, { key: dirCfg.planKey, content, disable: true });
             await worldbook.persistBook(chatBook);
@@ -788,7 +808,7 @@ async function runDirectorTask(d, ctxObj) {
     state.lastRunSummary = validated.assignments.length > 0
         ? `导演计划：${validated.assignments.length}个任务（第${round}次执导，下次导演第${dmeta.nextDirectorFloor}楼）`
         : `导演计划：本周期不排任务（第${round}次执导）`;
-    notify('success', `🎬 导演计划已生成（第${round}次执导）：${validated.assignments.map((a) => `第${a.floor}楼→task${a.taskId}`).join('，') || '本周期无任务'}｜下次导演第${dmeta.nextDirectorFloor}楼`, { timeOut: 8000 });
+    notify('success', `🎬 导演计划已生成（第${round}次执导）：${plannedAssignments.map((a) => `第${a.floor}楼→task${a.taskId}`).join('，') || '本周期无任务'}｜下次导演第${dmeta.nextDirectorFloor}楼`, { timeOut: 8000 });
     log(`director plan ready: ${JSON.stringify(dmeta.plan.assignments)} | nextDirectorFloor=${dmeta.nextDirectorFloor}`);
     emitState();
 }
@@ -1171,5 +1191,11 @@ export async function runPipeline(taskBatch) {
     } finally {
         state.running = false;
         emitState();
+        // 手动流/外部触发占用 running 期间到达的 tick 只置了 needTick 却无人消化——
+        // pipeline 一结束就补一次调度检查（tick 自身路径 needTick 不会被这里置位，不会重复跑）
+        if (state.needTick) {
+            state.needTick = false;
+            scheduleTick();
+        }
     }
 }
