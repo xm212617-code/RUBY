@@ -134,13 +134,26 @@ function glideTo(orb, pos) {
     glideTimer = setTimeout(() => orb.classList.remove('docking'), 340);
 }
 
-/** 按持久化的贴边状态无动画重摆位置（初始化 / resize / 尺寸变化） */
+/** 按持久化的贴边状态无动画重摆位置（初始化 / resize / 尺寸变化）。
+ * 初始化时 style 尚未赋值，parseFloat 得 NaN——必须回退到持久化坐标或默认位置，
+ * 否则 "NaNpx" 赋值被浏览器忽略，自由轴落到 static 位置（视口外），悬浮球会消失。 */
 function reapplyDock(orb) {
     const dock = getDockedEdges();
     if (!dock) return false;
     orb.classList.remove('docking');
-    setPos(orb, dockedPos(dock, parseFloat(orb.style.left), parseFloat(orb.style.top)));
+    const o = dragOrigin(orb);
+    setPos(orb, dockedPos(dock, o.x, o.y));
     return true;
+}
+
+function dragOrigin(orb, ui) {
+    const x = parseFloat(orb.style.left);
+    const y = parseFloat(orb.style.top);
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+    // NaN 兜底：持久化坐标 → 默认位置（同 reapplyDock，防止 "NaNpx" 被浏览器忽略导致球消失）
+    return (Number.isFinite(ui.orbX) && Number.isFinite(ui.orbY))
+        ? { x: ui.orbX, y: ui.orbY }
+        : defaultPosition();
 }
 
 function badgeState(engineState) {
@@ -287,9 +300,73 @@ export function refreshVisibility() {
     if (el) el.classList.toggle('hidden', !!config.getUi().orbHidden);
 }
 
-export function ensureOrb() {
-    if (document.getElementById(ORB_ID)) return;
+/** 按当前视口变化重摆位置（resize / visualViewport / orientationchange 通用的单次处理） */
+function repositionOnViewportChange() {
+    const el = document.getElementById(ORB_ID);
+    if (!el) return;
+    if (!reapplyDock(el)) {
+        applyPosition(el, dragOrigin(el));
+    }
+    hideStepBubble();
+}
 
+let moduleListenersBound = false;
+
+/** 窗口/模块级监听一次绑定（球重建后无需重复注册，均按 getElementById 取当前球） */
+function bindModuleListeners() {
+    if (moduleListenersBound) return;
+    moduleListenersBound = true;
+
+    // 视口变化：resize 之外还要补 mobile 场景（软键盘/地址栏走 visualViewport，多数浏览器不触发窗口 resize，
+    // 贴边球此时按旧视口计算会整球滑出屏幕 -> "悬浮球消失"）
+    window.addEventListener('resize', repositionOnViewportChange);
+    window.addEventListener('orientationchange', repositionOnViewportChange);
+    if (window.visualViewport?.addEventListener) {
+        window.visualViewport.addEventListener('resize', repositionOnViewportChange);
+    }
+
+    // 面板保存 UI 配置时事件驱动刷新（替代轮询）：显隐 + 尺寸（贴边态下尺寸变化需按新尺寸重摆）
+    window.addEventListener('ruby:ui-changed', () => {
+        const el = document.getElementById(ORB_ID);
+        if (el) {
+            applySize(el);
+            reapplyDock(el);
+        }
+        refreshVisibility();
+    });
+
+    // 自愈看门狗：外部脚本/界面改动 document.body 移除球元素后自动重建；
+    // 球仍在但坐标异常（NaN 停在视口外）时归位。去抖 400ms 防止批量 DOM 变更反复触发。
+    let watchdogTimer = null;
+    const scheduleSelfHeal = () => {
+        if (watchdogTimer) return;
+        watchdogTimer = setTimeout(() => {
+            watchdogTimer = null;
+            ensureOrbSelfHeal();
+        }, 400);
+    };
+    if (window.MutationObserver) {
+        new MutationObserver(scheduleSelfHeal).observe(document.body, { childList: true });
+    }
+}
+
+function ensureOrbSelfHeal() {
+    const el = document.getElementById(ORB_ID);
+    if (!el) {
+        createOrb();
+        return;
+    }
+    // 显隐状态兜底：hidden 类与配置不符时纠正（外部脚本误改类名/误判隐藏）
+    refreshVisibility();
+    // 坐标 NaN 兜底：浏览器会忽略 "NaNpx" 赋值，球可能静默停在视口外
+    const x = parseFloat(el.style.left);
+    const y = parseFloat(el.style.top);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        if (!reapplyDock(el)) applyPosition(el, defaultPosition());
+    }
+}
+
+function createOrb() {
     const orb = document.createElement('div');
     orb.id = ORB_ID;
     orb.innerHTML = `
@@ -307,22 +384,20 @@ export function ensureOrb() {
 
     orb.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
-        let originX = parseFloat(orb.style.left);
-        let originY = parseFloat(orb.style.top);
+        let origin = dragOrigin(orb);
         const dock = getDockedEdges();
         // 贴边态：先无动画弹回完全可见位置，再从这里开始拖动/响应点击
         if (dock) {
-            const p = popoutPos(dock, originX, originY);
+            const p = popoutPos(dock, origin.x, origin.y);
             orb.classList.remove('docking');
             setPos(orb, p);
-            originX = p.x;
-            originY = p.y;
+            origin = p;
         }
         dragState = {
             startX: e.clientX,
             startY: e.clientY,
-            originX,
-            originY,
+            originX: origin.x,
+            originY: origin.y,
             moved: false,
             wasDocked: !!dock,
         };
@@ -348,7 +423,7 @@ export function ensureOrb() {
         if (!dragState) return;
         const moved = dragState.moved;
         const wasDocked = dragState.wasDocked;
-        const pos = { x: parseFloat(orb.style.left), y: parseFloat(orb.style.top) };
+        const pos = dragOrigin(orb);
         dragState = null;
         orb.classList.remove('snap-hint');
         try { orb.releasePointerCapture(e.pointerId); } catch { /* already released */ }
@@ -383,25 +458,16 @@ export function ensureOrb() {
         orb.classList.remove('snap-hint');
     });
 
-    window.addEventListener('resize', () => {
-        const el = document.getElementById(ORB_ID);
-        if (el && !reapplyDock(el)) {
-            applyPosition(el, { x: parseFloat(el.style.left), y: parseFloat(el.style.top) });
-        }
-        hideStepBubble();
-    });
-
-    // 面板保存 UI 配置时事件驱动刷新（替代轮询）：显隐 + 尺寸（贴边态下尺寸变化需按新尺寸重摆）
-    window.addEventListener('ruby:ui-changed', () => {
-        const el = document.getElementById(ORB_ID);
-        if (el) {
-            applySize(el);
-            reapplyDock(el);
-        }
-        refreshVisibility();
-    });
-
     setStatus(orb, engine.getEngineState());
+}
+
+let stateListenersBound = false;
+
+function bindStateListeners() {
+    if (stateListenersBound) return;
+    stateListenersBound = true;
+
+    // 状态联动只注册一次（按 getElementById 取当前球，球重建后依然生效）
     engine.onStateChange((engineState) => {
         const el = document.getElementById(ORB_ID);
         if (el) setStatus(el, engineState);
@@ -420,4 +486,14 @@ export function ensureOrb() {
             showStepBubble(s.stepId);
         }
     });
+}
+
+export function ensureOrb() {
+    bindModuleListeners();
+    bindStateListeners();
+    if (document.getElementById(ORB_ID)) {
+        ensureOrbSelfHeal();
+        return;
+    }
+    createOrb();
 }
