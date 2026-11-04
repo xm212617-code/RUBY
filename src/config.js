@@ -82,10 +82,6 @@ const makeDefaultUi = () => ({
     orbSize: 60,
     orbX: null,
     orbY: null,
-    // 贴边吸附：拖动悬浮球靠近屏幕边缘时自动贴边收起（点击弹回）；null/[] = 自由摆放
-    orbSnap: true,
-    // 当前贴边状态：['left'] / ['right','top'] 等边组合，null = 未贴边
-    orbDock: null,
     notify: true,
     // 黑夜模式：true/false = 用户显式选择；null = 未设置（跟随系统外观）
     darkMode: null,
