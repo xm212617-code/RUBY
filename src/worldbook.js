@@ -369,6 +369,23 @@ export async function writeOutputEntry(chatBook, options) {
     log(`output written: ${key}${extraKeysList.length ? ` (keys: ${allKeys})` : ''}`);
 }
 
+/** 读单个条目当前内容（快照用）；条目不存在返回空串 */
+export async function readEntryContent(book, key) {
+    const found = await findEntry(book, key);
+    return String(found?.entry?.content || '');
+}
+
+/** 只恢复条目内容（快照回滚用）：不动 key/位置/状态等其余字段 */
+export async function writeEntryContent(book, key, content) {
+    if (!book || !key) throw new Error('chat book or entry key missing');
+    const found = await findEntry(book, key);
+    if (!found) throw new Error(`未找到输出条目：${key}`);
+    const contentVar = `_ruby_restore_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
+    await st(`/getvar ${contentVar} | /setentryfield file=${q(book)} uid=${found.uid} field=content`);
+    log(`entry content restored: ${key} (uid ${found.uid})`);
+}
+
 export async function persistBook(bookName) {
     const c = ctx();
     if (!bookName || typeof c?.loadWorldInfo !== 'function' || typeof c?.saveWorldInfo !== 'function') {

@@ -6,7 +6,7 @@ import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
-import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, getBaibaibookStatus, ordinalForIndex } from './reader.js';
+import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, getBaibaibookStatus, ordinalForIndex, getLastOutputSnapshot } from './reader.js';
 import { isDarkMode } from './settings.js';
 import { BUILTIN_REFERENCES, findShadowingKey } from './builtin-refs.js';
 import * as director from './director.js';
@@ -300,13 +300,20 @@ function buildShellHtml() {
                     <div class="form-section">
                         <div class="form-header red">■ 手动执行分析</div>
                         <div class="form-body">
-                            <div style="margin-bottom:6px;">
+                            <div style="margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap;">
                                 <label class="inline" style="cursor:pointer;" title="纯手动分析：执行走独立手动流——独立书签、不计入导演迭代统计，与周期/导演两条自动逻辑互不干扰；关闭时保持原有补充模式（与自动流共享阅读进度）">
                                     <input type="checkbox" id="ra_pure_manual"> <span style="font-size:12px;color:#888;">纯手动分析</span>
+                                </label>
+                                <label class="inline" style="cursor:pointer;" title="忽略最新一层：RUBY读取时最新一条AI回复（及其后你新输入的消息）不读也不计数——最新楼被截断/失败时不会被算作已分析，留到下一次分析再读，避免坏楼层污染结果">
+                                    <input type="checkbox" id="ra_ignore_latest"> <span style="font-size:12px;color:#888;">忽略最新一层</span>
                                 </label>
                             </div>
                             <div id="ra_pure_manual_tip" class="tip" style="margin:0 0 8px;"></div>
                             <div id="ra_manual_buttons" style="display:flex;flex-wrap:wrap;gap:10px;"><span>加载中...</span></div>
+                            <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                                <button id="ra_restore_snapshot" class="btn outline small" title="把最近一次分析任务写入输出条目之前的内容恢复回去——分析出错覆盖了好结果时用">⏪ 恢复上一层快照</button>
+                                <span id="ra_restore_snapshot_info" style="font-size:12px;color:#888;"></span>
+                            </div>
                             <div class="tip">点击按钮可强制执行对应的分析任务，不受楼层限制；手动执行不会打断后台自动周期。</div>
                         </div>
                     </div>
@@ -1062,10 +1069,34 @@ function syncPureManualUi() {
     }
 }
 
+/** 忽略最新一层开关：勾选态跟随本机 UI 偏好 */
+function syncIgnoreLatestUi() {
+    const box = $('ra_ignore_latest');
+    if (box) box.checked = !!config.getUi().ignoreLatestFloor;
+}
+
+/** 快照恢复区：显示最近一次分析写入前的输出快照状态 */
+function syncSnapshotUi() {
+    const btn = $('ra_restore_snapshot');
+    const info = $('ra_restore_snapshot_info');
+    if (!btn || !info) return;
+    const snap = getLastOutputSnapshot();
+    if (!snap) {
+        btn.disabled = true;
+        info.textContent = '暂无快照——每次分析写入输出前会自动保存上一份结果';
+        return;
+    }
+    btn.disabled = false;
+    const time = snap.at ? new Date(snap.at).toLocaleString() : '未知时间';
+    info.textContent = `可恢复：「${snap.taskName}」写入于 ${time} 的前一次结果（${snap.content.length} 字）`;
+}
+
 function renderManualButtons(data, layer) {
     const el = $('ra_manual_buttons');
     if (!el) return;
     syncPureManualUi();
+    syncIgnoreLatestUi();
+    syncSnapshotUi();
     const preset = config.getActivePreset(data);
     const identity = config.getCharacterIdentity();
 
@@ -1090,6 +1121,9 @@ function renderManualButtons(data, layer) {
     if (buttons.length > 1) {
         buttons.push(`<button class="btn blue" data-run="all">▶ 全部执行</button>`);
     }
+    // 导演排期手动执行：与创作者导演页同一入口（engine.forceRun('director')），立即重新规划本周期
+    const dirEnabled = !!preset.director?.enabled;
+    buttons.push(`<button class="btn red" data-run="director"${dirEnabled ? '' : ' disabled title="导演模式未启用——到创作者版面的导演面板开启后可用"'}>🎬 导演排期</button>`);
 
     el.innerHTML = buttons.join('') || '<span style="color:#1a1a1a;font-size:14px;">暂无启用的任务</span>';
     el.querySelectorAll('[data-run]').forEach((btn) => {
@@ -1364,6 +1398,25 @@ function wirePlayerSections() {
         window.toastr?.success?.(e.target.checked
             ? '已开启纯手动分析：手动执行走独立流，不影响周期/导演'
             : '已关闭纯手动分析：恢复补充模式（与自动流共享阅读进度）');
+    });
+    on($('ra_ignore_latest'), 'change', (e) => {
+        config.saveUi({ ignoreLatestFloor: e.target.checked });
+        window.toastr?.success?.(e.target.checked
+            ? '已开启忽略最新一层：RUBY读取不含最新AI回复（防截断/失败楼层被计入书签）'
+            : '已关闭忽略最新一层：恢复正常读取');
+    });
+    on($('ra_restore_snapshot'), 'click', async () => {
+        const snap = getLastOutputSnapshot();
+        if (!snap) return;
+        if (!window.confirm(`把「${snap.taskName}」的输出条目（${snap.outputKey}）恢复到本次分析写入前的内容？\n（覆盖条目当前内容，其余字段不动）`)) return;
+        try {
+            const chatBook = await worldbook.getChatBookName();
+            await worldbook.writeEntryContent(chatBook, snap.outputKey, snap.content);
+            window.toastr?.success?.(`已恢复「${snap.taskName}」的上一次分析结果`);
+            syncSnapshotUi();
+        } catch (e) {
+            window.toastr?.error?.(e.message || '恢复失败', '', { timeOut: 6000 });
+        }
     });
     on($('ra_dir_api_enabled'), 'change', (e) => {
         const enabled = e.target.checked;

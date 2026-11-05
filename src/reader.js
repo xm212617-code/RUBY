@@ -107,6 +107,47 @@ export function resetBookmark(taskKey) {
     if (store) delete store[taskKey];
 }
 
+// ---------- 分析输出快照 ----------
+// 每次分析任务向输出条目写入前，把条目当前内容（= 上一次分析结果）存进聊天元数据；
+// 分析出错覆盖了好结果时，玩家可从玩家面板一键恢复到写入前内容。
+
+function snapshotStore() {
+    const c = ctx();
+    const meta = c?.chatMetadata;
+    if (!meta) return null;
+    meta.extensions ||= {};
+    meta.extensions[BOOKMARK_NS] ||= {};
+    return meta.extensions[BOOKMARK_NS];
+}
+
+/** 最近一次分析写入前的输出快照：{ outputKey, taskName, content, at } 或 null */
+export function getLastOutputSnapshot() {
+    const store = snapshotStore();
+    const rec = store?.lastOutputSnapshot;
+    if (!rec || !String(rec.outputKey || '') || typeof rec.content !== 'string') return null;
+    return {
+        outputKey: String(rec.outputKey),
+        taskName: String(rec.taskName || rec.outputKey),
+        content: String(rec.content),
+        at: Number(rec.at) || 0,
+    };
+}
+
+export function saveLastOutputSnapshot(record) {
+    const store = snapshotStore();
+    if (!store || !record?.outputKey || typeof record.content !== 'string') return;
+    store.lastOutputSnapshot = {
+        outputKey: String(record.outputKey),
+        taskName: String(record.taskName || record.outputKey),
+        content: record.content,
+        at: Date.now(),
+    };
+    const c = ctx();
+    if (typeof c?.saveMetadataDebounced === 'function') {
+        c.saveMetadataDebounced();
+    }
+}
+
 /**
  * 消息删除后的书签重同步：deletedOldOrdinals 为被删消息在删除前的 AI 楼层序数。
  * 删除使后续楼层序数整体前移，书签须减去位于书签位之前（含）的被删楼层数，
@@ -142,8 +183,13 @@ export function incrementalRead(taskKey, customTags = [], options = {}) {
     const c = ctx();
     const liveChat = c?.chat || [];
     const charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '角色';
-    const currentOrd = countAiReplies(liveChat);
-    if (currentOrd <= 0) return { text: '', startFloor: 0, endFloor: 0, count: 0 };
+    const totalOrd = countAiReplies(liveChat);
+    if (totalOrd <= 0) return { text: '', startFloor: 0, endFloor: 0, count: 0 };
+
+    // 忽略最新一层：最新AI回复（及其后的用户消息）不读不计数——
+    // 防止当层输出截断/失败仍被计入书签，等下一层分析时再一并读取
+    const endOrd = options.ignoreLatest ? totalOrd - 1 : totalOrd;
+    if (endOrd <= 0) return { text: '', startFloor: 0, endFloor: 0, count: 0 };
 
     const bookmark = getBookmark(taskKey);
     // 总结接口启用时取消20楼窗口限制：窗口内靠前楼层将被总结替代，实际token成本很小
@@ -151,18 +197,22 @@ export function incrementalRead(taskKey, customTags = [], options = {}) {
         ? bookmark + 1
         : Math.max(
             bookmark > 0 ? bookmark + 1 : 1,
-            currentOrd - MAX_READ_FLOORS + 1,
+            endOrd - MAX_READ_FLOORS + 1,
         );
-    if (startFloor > currentOrd) {
-        return { text: '', startFloor, endFloor: currentOrd, count: 0 };
+    if (startFloor > endOrd) {
+        return { text: '', startFloor, endFloor: endOrd, count: 0 };
     }
 
     const startIdx = startFloor > 1
         ? findAiReplyIndexByOrdinal(liveChat, startFloor - 1) + 1
         : 0;
+    // 忽略最新一层时读到 endOrd 那条AI回复为止（其后属于下一层的用户消息一并排除）
+    const endIdx = options.ignoreLatest
+        ? findAiReplyIndexByOrdinal(liveChat, endOrd)
+        : liveChat.length - 1;
 
     const lines = [];
-    for (let i = startIdx; i < liveChat.length; i++) {
+    for (let i = startIdx; i <= endIdx; i++) {
         const m = liveChat[i];
         if (!isReadableMsg(m)) continue;
         const role = isUserMsg(m) ? '{{user}}' : (m.name || charName);
@@ -173,8 +223,8 @@ export function incrementalRead(taskKey, customTags = [], options = {}) {
     return {
         text: lines.join('\n\n'),
         startFloor,
-        endFloor: currentOrd,
-        count: currentOrd - startFloor + 1,
+        endFloor: endOrd,
+        count: endOrd - startFloor + 1,
     };
 }
 

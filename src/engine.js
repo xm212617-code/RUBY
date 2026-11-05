@@ -611,7 +611,7 @@ export async function forceRun(kind, taskId, options = {}) {
  * 成功后计划写入聊天元数据（tick 查表唤醒）+ 聊天世界书计划条目（保持关闭），并轮转近5周期历史。
  */
 async function runDirectorTask(d, ctxObj) {
-    const { cfgData, preset, charBook, chatBook, referencePool, referenceValues, providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart } = ctxObj;
+    const { cfgData, preset, charBook, chatBook, referencePool, referenceValues, providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart, ignoreLatest } = ctxObj;
     const c = ctx();
     const dirCfg = d.config;
     const L = dirCfg.cycleLength;
@@ -630,7 +630,7 @@ async function runDirectorTask(d, ctxObj) {
         : '未启用 — 跟随RUBY基础API'}`);
 
     // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读
-    let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
+    let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary, ignoreLatest });
     if (inc.count === 0 || !inc.text) {
         if (d.source === 'force') {
             reader.resetBookmark('director');
@@ -927,13 +927,18 @@ export async function runPipeline(taskBatch) {
         }
 
         // —— 导演任务：单独执行器，不进普通任务循环 ——
-        if (taskBatch.length === 1 && taskBatch[0].type === 'director') {
-            await runDirectorTask(taskBatch[0], {
-                cfgData, preset, charBook, chatBook, referencePool, referenceValues,
-                providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart,
-            });
-            return; // finally 复位 running
-        }
+    // 忽略最新一层（玩家面板勾选）：所有读取（任务/导演）最新AI回复不读不计数——
+    // 防当层输出截断/失败仍被计入书签，留待下一层分析一并读取
+    const ignoreLatest = !!config.getUi().ignoreLatestFloor;
+
+    if (taskBatch.length === 1 && taskBatch[0].type === 'director') {
+        await runDirectorTask(taskBatch[0], {
+            cfgData, preset, charBook, chatBook, referencePool, referenceValues,
+            providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart,
+            ignoreLatest,
+        });
+        return; // finally 复位 running
+    }
 
         for (let taskIndex = 0; taskIndex < taskBatch.length; taskIndex++) {
             const current = taskBatch[taskIndex];
@@ -951,14 +956,14 @@ export async function runPipeline(taskBatch) {
 
                 log(`task ${taskIndex + 1}/${taskBatch.length}: ${taskDisplayName} (${current.source})`);
 
-                let inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary });
-                log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)`);
+                let inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary, ignoreLatest });
+                log(`incremental read: floors ${inc.startFloor}-${inc.endFloor} (${inc.count} floors, ${(inc.text || '').length} chars)${ignoreLatest ? ' [忽略最新一层]' : ''}`);
 
                 if (inc.count === 0 || !inc.text) {
                     // force/manual 或导演计划重触发（重新生成的楼层内容变化）：重置书签重读该楼层
                     if (current.source === 'force' || current.source === 'director' || current.source === 'manual') {
                         reader.resetBookmark(bmKey);
-                        inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary });
+                        inc = reader.incrementalRead(bmKey, customTags, { noWindowLimit: !!providerSummary, ignoreLatest });
                         log(`bookmark reset, re-reading ${inc.count} floors (${current.source})`);
                         if (inc.count === 0 || !inc.text) {
                             warn(`skip ${taskDisplayName}: no readable text in chat`);
@@ -1117,6 +1122,17 @@ export async function runPipeline(taskBatch) {
                     failedCount++;
                     runResults.push({ name: taskDisplayName, ok: false, reason: '无聊天世界书' });
                     continue;
+                }
+
+                // 写入前快照：把输出条目当前内容（= 上一次分析结果）存入聊天元数据，
+                // 本次分析出错覆盖了好结果时，玩家可从面板「恢复上一层快照」一键回滚
+                try {
+                    const prevContent = await worldbook.readEntryContent(chatBook, outputKey);
+                    if (prevContent.trim()) {
+                        reader.saveLastOutputSnapshot({ outputKey, taskName: taskDisplayName, content: prevContent });
+                    }
+                } catch (snapErr) {
+                    warn(`snapshot before write failed (non-fatal): ${snapErr.message}`);
                 }
 
                 await worldbook.writeOutputEntry(chatBook, {

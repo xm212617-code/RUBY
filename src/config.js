@@ -87,6 +87,8 @@ const makeDefaultUi = () => ({
     darkMode: null,
     // 纯手动分析：开启后玩家面板"手动执行分析"的执行走独立手动流（独立书签、不计导演统计），不影响周期/导演
     pureManualRun: false,
+    // 忽略最新一层：读取时最新AI回复（及其后用户消息）不读不计数——防当层输出截断/失败仍被计入书签
+    ignoreLatestFloor: false,
 });
 
 /** 悬浮球尺寸取值范围：当前悬浮窗 60px 为上限，可逐步缩小 */
