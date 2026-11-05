@@ -104,15 +104,21 @@ function withConfigData(mutator) {
 }
 
 /** 全局破限加载：优先从全局 UI 设置读取（源真相），回退到配置层数据。
- *  破限保存为全局设置后，切换预设/角色卡不会丢失；同步到配置层数据确保引擎读到正确值。 */
+ *  破限保存为全局设置后，切换预设/角色卡不会丢失；同步到配置层数据确保引擎读到正确值。
+ *  旧版默认无感迁移：全局破限与旧默认完全一致（从未自定义过）→ 升级为新默认并回写全局存储。 */
 function loadJailbreakItemsGlobal(data) {
     const uiCfg = config.getUi();
     const globalJb = uiCfg.jailbreak;
     if (globalJb && Array.isArray(globalJb.items) && globalJb.items.length > 0) {
-        const items = jailbreak.normalizeJailbreakConfig(globalJb).items;
+        const { items: migratedItems, migrated } = jailbreak.migrateLegacyItems(globalJb.items);
+        if (migrated) {
+            config.saveUi({ jailbreak: { items: migratedItems } });
+            window.toastr?.info?.('已将旧版默认破限无感升级为 ACU 通用架构（检测到破限从未自定义过）');
+        }
+        const items = migrated ? migratedItems : jailbreak.normalizeJailbreakConfig(globalJb).items;
         // 同步到配置层数据，确保引擎在任何角色卡上都能读到正确的破限
         const dataJbStr = JSON.stringify(data.jailbreak?.items || []);
-        const globalJbStr = JSON.stringify(globalJb.items);
+        const globalJbStr = JSON.stringify(items);
         if (dataJbStr !== globalJbStr) {
             data.jailbreak = { items };
             config.saveConfigData(data);
@@ -120,7 +126,7 @@ function loadJailbreakItemsGlobal(data) {
         }
         return items;
     }
-    // 无全局破限时回退到配置层数据（可能为角色卡旧版存储或默认值）
+    // 无全局破限时回退到配置层数据（可能为角色卡旧版存储或默认值；旧默认在此路径同样无感迁移）
     return jailbreak.getJailbreakItems(data);
 }
 
