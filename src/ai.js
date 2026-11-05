@@ -1,5 +1,5 @@
 import { ctx, log, warn } from './env.js';
-import { sanitizeGenParams, getApiConfig } from './config.js';
+import { sanitizeGenParams } from './config.js';
 
 const REQUEST_TIMEOUT_MS = 600000;
 
@@ -41,77 +41,6 @@ function buildGenerationPayload({ apiCfg, genParams, messages }) {
         payload.reasoning_effort = gen.reasoning_effort;
     }
     return payload;
-}
-
-/**
- * 非酒馆直连通道请求体：与酒馆服务端对「OPENAI source + reverse_proxy」的出站请求完全同形
- * （messages/model/采样参数/stream），仅不含服务端自消费的三个路由字段
- * （chat_completion_source/reverse_proxy/proxy_password）——供应商看到的 body 与酒馆转发时一致。
- */
-function buildDirectPayload({ apiCfg, genParams, messages }) {
-    const payload = {
-        messages,
-        model: apiCfg.model,
-        stream: apiCfg.stream !== false,
-    };
-    const gen = sanitizeGenParams(genParams);
-    for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty', 'max_tokens']) {
-        if (gen[key] !== undefined) payload[key] = gen[key];
-    }
-    if (gen.reasoning_effort) payload.reasoning_effort = gen.reasoning_effort;
-    return payload;
-}
-
-/**
- * 非酒馆直连通道：浏览器直接请求 OpenAI 兼容端点，不经酒馆服务端转发。
- * 请求形态与酒馆服务端出站请求完全同形——同一 URL 拼接（normalizeBaseUrl + /chat/completions）、
- * 同一鉴权头（Authorization: Bearer）、同一 body 字段、同一 SSE 解析器（readSseStream）——
- * 出站方由酒馆服务器换成浏览器本身：供应商视角是无酒馆特征的普通浏览器请求。
- * 直连还能直接拿到上游原始错误体（JSON），无需酒馆服务路径的强制非流式重试。
- * 唯一硬约束是端点的 CORS 策略（酒馆页面未设 CSP，拦截只可能来自对端）。
- */
-async function callViaDirect({ apiCfg, genParams, messages, signal }) {
-    if (!apiCfg.url) throw new Error('未配置API地址');
-    if (!apiCfg.model) throw new Error('未配置模型名称');
-    const url = `${normalizeBaseUrl(apiCfg.url)}/chat/completions`;
-    const payload = buildDirectPayload({ apiCfg, genParams, messages });
-
-    let response;
-    try {
-        response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiCfg.key || ''}`,
-            },
-            body: JSON.stringify(payload),
-            signal,
-        });
-    } catch (e) {
-        if (e?.name === 'AbortError' || String(e?.message || e) === 'timeout') throw e;
-        // fetch 的 TypeError('Failed to fetch') 几乎总是 CORS 拦截或网络不可达
-        throw new Error('直连失败：请求被浏览器拦截（该端点可能不允许跨域直连 CORS）或网络不可达，请检查地址/网络，或改用酒馆后端通道');
-    }
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        let detail = errText.slice(0, 300);
-        try {
-            const data = JSON.parse(errText);
-            detail = String(data?.error?.message || data?.message || detail);
-        } catch { /* 非 JSON 错误体，保留原文 */ }
-        throw new Error(`上游返回 HTTP ${response.status}: ${detail || response.statusText}`);
-    }
-
-    if (payload.stream && response.body) {
-        return await readSseStream(response);
-    }
-
-    const data = await response.json();
-    if (data?.error) throw new Error(String(data.message || data.error?.message || 'API returned error'));
-    const text = extractContentFromResponse(data);
-    if (!text) throw new Error('API返回内容为空');
-    return text;
 }
 
 /**
@@ -313,16 +242,12 @@ let providerNonStreamOnly = false;
 
 export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     const viaMain = apiCfg.provider !== 'custom';
-    const direct = !viaMain && apiCfg.transport === 'direct';
-    const channelDesc = viaMain
-        ? 'tavern generateRaw quiet (主通道，绕过预设注入)'
-        : (direct ? '浏览器直连（非酒馆出站，无ST特征）' : 'tavern ChatCompletionService (酒馆后端转发)');
     // 载荷摘要：每次调用都打印消息数/角色序列/总字符数——任务与导演同通道并排对照，
     // 空返回时直接比对两边载荷差异，不再靠猜
     const payloadSummary = Array.isArray(messages)
         ? `${messages.length}条 [${messages.map((m) => m?.role || '?').join(',')}] ${messages.reduce((sum, m) => sum + String(m?.content ?? '').length, 0)}字符`
         : `非数组载荷: ${typeof messages}`;
-    log(`AI call: ${taskLabel || 'task'} | channel=${channelDesc} | url=${viaMain ? '-' : (apiCfg.url || '未配置')} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')} | stream=${viaMain ? '(主通道自身)' : (apiCfg.stream !== false)} | payload=${payloadSummary}`);
+    log(`AI call: ${taskLabel || 'task'} | channel=${viaMain ? 'tavern generateRaw quiet (主通道，绕过预设注入)' : 'tavern ChatCompletionService (自定义端点)'} | url=${viaMain ? '-' : (apiCfg.url || '未配置')} | model=${viaMain ? '当前酒馆连接' : (apiCfg.model || '未设置')} | stream=${viaMain ? '(主通道自身)' : (apiCfg.stream !== false)} | payload=${payloadSummary}`);
 
     if (viaMain) {
         return callMainApi({ genParams, messages });
@@ -332,13 +257,6 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     const timer = setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
     try {
         const effectiveStream = !providerNonStreamOnly && apiCfg.stream !== false;
-
-        if (direct) {
-            // 直连通道：无自动降级/重试设计，传输方式完全跟随RUBY基础API设置；
-            // 上游错误以原始错误体直达（直连通道本身的优点），不做强制非流式换皮
-            return await callViaDirect({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages, signal: controller.signal });
-        }
-
         try {
             const text = await callViaTavernService({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages, signal: controller.signal });
             if (text !== null) return text;
@@ -373,8 +291,35 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
     }
 }
 
-/** 浏览器直取 /models：按候选URL逐个尝试，全部失败抛出最后一个错误 */
-async function fetchModelsDirect(cleanBase, apiKey) {
+export async function fetchModelList(baseUrl, apiKey) {
+    const c = ctx();
+    const cleanBase = String(baseUrl || '').trim()
+        .replace(/\/+$/, '')
+        .replace(/\/(?:v\d+|beta)\/chat\/completions$/i, '')
+        .replace(/\/chat\/completions$/i, '')
+        .replace(/\/models$/i, '');
+
+    if (!cleanBase) throw new Error('请填写API地址');
+
+    if (typeof c?.getRequestHeaders === 'function') {
+        try {
+            const res = await fetch('/api/backends/chat-completions/status', {
+                method: 'POST',
+                headers: c.getRequestHeaders(),
+                body: JSON.stringify({
+                    chat_completion_source: 'openai',
+                    reverse_proxy: cleanBase,
+                    proxy_password: apiKey || '',
+                }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const items = Array.isArray(data?.data) ? data.data.map((m) => m?.id).filter(Boolean) : [];
+                if (items.length > 0) return [...new Set(items)];
+            }
+        } catch { /* fall through to direct fetch */ }
+    }
+
     const candidates = [...new Set([
         `${cleanBase}/models`,
         `${cleanBase}/v1/models`,
@@ -398,44 +343,4 @@ async function fetchModelsDirect(cleanBase, apiKey) {
         }
     }
     throw new Error(`连接失败，请检查 URL 和 KEY${lastError ? `（${lastError}）` : ''}`);
-}
-
-export async function fetchModelList(baseUrl, apiKey) {
-    const c = ctx();
-    const cleanBase = String(baseUrl || '').trim()
-        .replace(/\/+$/, '')
-        .replace(/\/(?:v\d+|beta)\/chat\/completions$/i, '')
-        .replace(/\/chat\/completions$/i, '')
-        .replace(/\/models$/i, '');
-
-    if (!cleanBase) throw new Error('请填写API地址');
-
-    // 非酒馆直连通道：模型列表同样浏览器直取优先，地址/密钥不经酒馆服务端；
-    // 直连失败（如CORS拦截）时回退酒馆 status 查询
-    if (getApiConfig().transport === 'direct') {
-        try {
-            return await fetchModelsDirect(cleanBase, apiKey);
-        } catch { /* fall through to backend status */ }
-    }
-
-    if (typeof c?.getRequestHeaders === 'function') {
-        try {
-            const res = await fetch('/api/backends/chat-completions/status', {
-                method: 'POST',
-                headers: c.getRequestHeaders(),
-                body: JSON.stringify({
-                    chat_completion_source: 'openai',
-                    reverse_proxy: cleanBase,
-                    proxy_password: apiKey || '',
-                }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                const items = Array.isArray(data?.data) ? data.data.map((m) => m?.id).filter(Boolean) : [];
-                if (items.length > 0) return [...new Set(items)];
-            }
-        } catch { /* fall through to direct fetch */ }
-    }
-
-    return fetchModelsDirect(cleanBase, apiKey);
 }

@@ -345,24 +345,6 @@ function buildShellHtml() {
                                     <option value="custom">自定义 OpenAI 兼容端点</option>
                                 </select>
                             </div>
-                            <div class="form-row" id="ra_api_transport_wrap">
-                                <span class="form-label">发送通道</span>
-                                <span class="form-value">
-                                    <div class="transport-seg" id="ra_api_transport_seg">
-                                        <button type="button" class="transport-opt" id="ra_transport_tavern">
-                                            <strong>酒馆后端</strong>
-                                            <small>经酒馆服务端转发出站（默认）</small>
-                                        </button>
-                                        <button type="button" class="transport-opt" id="ra_transport_direct">
-                                            <strong>非酒馆直连</strong>
-                                            <small>浏览器直发API · 不带酒馆特征</small>
-                                        </button>
-                                    </div>
-                                    <div id="ra_transport_direct_notice" class="transport-notice hidden">
-                                        🔴 已切换到<strong>非酒馆直连</strong>：使用这个渠道的API调用<strong>不会有酒馆特征</strong>——请求由你的浏览器直接发往上面的API端点，不经酒馆服务端转发，供应商看到的是普通浏览器请求（无酒馆UA、无酒馆服务端IP、无ST请求指纹）。密钥仍只保存在本机，分析提示词组装完全不变。注意：若该端点不允许浏览器跨域访问（CORS），调用会失败——届时切回「酒馆后端」即可。
-                                    </div>
-                                </span>
-                            </div>
                             <div class="form-row" id="ra_api_url_wrap">
                                 <span class="form-label">API地址</span>
                                 <input id="ra_api_url" class="w320" placeholder="https://api.openai.com/v1 或 https://api.deepseek.com/beta">
@@ -416,8 +398,8 @@ function buildShellHtml() {
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>主API</strong>：通过酒馆原生 <code>generateRaw</code> 走当前连接的模型，仅借用通道——<u>不注入预设的提示词</u>（主提示词/越狱/角色卡/聊天记录一概不进上下文），发送的只有 RUBY 自己组装的破限消息与任务提示词，与酒馆自身静默提示词同一机制；RUBY 生成参数会按官方事件钩子覆写到本次请求。<br>
-                                💡 <strong>自定义端点</strong>：OpenAI 兼容接口（DeepSeek、OpenRouter、GLM 等）。地址填到版本段即可（如 <code>/v1</code>、<code>/beta</code>），自动拼接 <code>/chat/completions</code>。发送通道二选一：<strong>酒馆后端</strong>（默认，经酒馆官方 <code>ChatCompletionService</code> 由服务端转发出站，无 CORS 限制）/ <strong>非酒馆直连</strong>（浏览器直接请求API端点，不带酒馆特征；受端点 CORS 策略约束，失败时切回酒馆后端即可）。<br>
-                                🔒 两条发送通道均为异步后台执行；密钥只保存在本机扩展设置中，不进入角色卡、世界书或配置模板。
+                                💡 <strong>自定义端点</strong>：OpenAI 兼容接口（DeepSeek、OpenRouter、GLM 等），通过酒馆官方 <code>ChatCompletionService</code> 请求服务发出。地址填到版本段即可（如 <code>/v1</code>、<code>/beta</code>），由酒馆服务端拼接 <code>/chat/completions</code> 并转发。<br>
+                                🔒 两条通道均为酒馆原生请求形态、异步后台执行；密钥只保存在本机扩展设置中，不进入角色卡、世界书或配置模板。
                             </div>
                         </div>
                     </div>
@@ -1320,7 +1302,6 @@ function loadApiTab(data) {
 
     const syncProviderUi = () => {
         const isCustom = providerSel.value === 'custom';
-        $('ra_api_transport_wrap').classList.toggle('hidden', !isCustom);
         $('ra_api_url_wrap').classList.toggle('hidden', !isCustom);
         $('ra_api_key_wrap').classList.toggle('hidden', !isCustom);
         $('ra_api_connect').classList.toggle('hidden', !isCustom);
@@ -1329,25 +1310,6 @@ function loadApiTab(data) {
         modelText.classList.toggle('hidden', !isCustom);
         modelSelect.classList.toggle('hidden', !isCustom || !modelSelect.options.length);
     };
-    // 发送通道切换：tavern=酒馆服务端转发（默认）；direct=浏览器直连（非酒馆出站，带红字声明）
-    const syncTransportUi = () => {
-        const direct = config.getApiConfig().transport === 'direct';
-        $('ra_transport_tavern')?.classList.toggle('active', !direct);
-        $('ra_transport_direct')?.classList.toggle('active', direct);
-        $('ra_transport_direct_notice')?.classList.toggle('hidden', !direct);
-    };
-    const setTransport = (value) => {
-        config.saveApiConfig({ transport: value });
-        syncTransportUi();
-        if (value === 'direct') {
-            window.toastr?.warning?.('已切换为非酒馆直连：API调用不带酒馆特征；若端点不允许跨域（CORS）请切回酒馆后端', '', { timeOut: 6000 });
-        } else {
-            window.toastr?.success?.('已切换为酒馆后端转发');
-        }
-    };
-    $('ra_transport_tavern').onclick = () => setTransport('tavern');
-    $('ra_transport_direct').onclick = () => setTransport('direct');
-    syncTransportUi();
     syncProviderUi();
     providerSel.onchange = () => {
         syncProviderUi();

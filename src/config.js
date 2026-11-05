@@ -69,8 +69,6 @@ export const makeDefaultConfigData = () => ({
 
 const makeDefaultApi = () => ({
     provider: 'main',
-    // 自定义端点的发送通道：'tavern'=经酒馆服务端转发（默认）；'direct'=浏览器直连（非酒馆出站）
-    transport: 'tavern',
     url: '',
     key: '',
     model: '',
@@ -140,7 +138,6 @@ export function getSettings() {
     if (rawProvider !== 'main' && rawProvider !== 'custom') {
         store.api.provider = (rawProvider === 'st' || rawProvider === '') && !store.api.url ? 'main' : 'custom';
     }
-    if (store.api.transport !== 'direct') store.api.transport = 'tavern';
     store.global = normalizeConfigData(store.global || makeDefaultConfigData());
     store.characterConfigs = (store.characterConfigs && typeof store.characterConfigs === 'object') ? store.characterConfigs : {};
     store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
