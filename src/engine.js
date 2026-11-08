@@ -838,6 +838,8 @@ export async function runPipeline(taskBatch) {
     let failedCount = 0;
     let wroteToChatBook = false;
     const runResults = [];
+    // 本批次成功写入的输出条目 key（批次收尾推送事件时随 detail 带给前端）
+    const pushedKeys = [];
 
     try {
         const charBook = await worldbook.getCharBookName();
@@ -1156,6 +1158,14 @@ export async function runPipeline(taskBatch) {
                 reader.saveBookmark(bmKey, inc.endFloor);
                 completedCount++;
                 runResults.push({ name: taskDisplayName, ok: true, outputKey });
+                pushedKeys.push(outputKey);
+                // 每份分析结果落笔即推送前端（手动/自动/前端触发一律走此管线）：
+                // 状态栏（iframe）监听宿主 window 的本事件即时重读，无需等消息重渲染；轮询做兜底
+                try {
+                    window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed', {
+                        detail: { key: outputKey, keys: [outputKey], taskName: taskDisplayName },
+                    }));
+                } catch { /* 事件派发失败不影响分析管线 */ }
                 log(`✅ ${taskDisplayName} done (bookmark at floor ${inc.endFloor})`);
 
             } catch (taskErr) {
@@ -1181,7 +1191,7 @@ export async function runPipeline(taskBatch) {
                     characterAvatar: identity?.avatar || '',
                     characterName: identity?.name || charName || '',
                 });
-                window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed'));
+                window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed', { detail: { keys: pushedKeys.slice() } }));
                 log(`generated chat book registered: ${chatBook} (${identity?.name || charName})`);
             } catch (e) {
                 warn(`register generated chat book failed: ${e?.message || e}`);

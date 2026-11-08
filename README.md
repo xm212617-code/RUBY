@@ -165,6 +165,33 @@ renderMyOwn(rec, fields);              // 怎么渲染、识别什么特征，�
 
 触发方式照项目惯例：卡内正则字面捕捉标记（如 `【状态面板】`，placement `[1,2]` = 用户输入+AI 输出，markdownOnly）替换为你的 HTML 文件（文件首尾 ``` 围栏，内部脚本经 iframe 通道执行）。
 
+### 写入完成推送（RUBY → 前端）
+
+RUBY 不只被动等待前端拉取——**每份分析结果写入输出条目后，会向宿主 window 派发 `ruby:chatbooks-changed` 事件**（手动执行、自动周期、`/ruby run` 前端触发一律覆盖，因为所有分析都走同一条管线）：
+
+| 时机 | detail |
+|---|---|
+| 每份结果落笔后即时 | `{ key: '沛霖内心', keys: ['沛霖内心'], taskName: '沛霖内心' }` |
+| 批次收尾（整批任务跑完） | `{ keys: ['沛霖内心', '沛霖生理'] }` |
+
+状态栏接收范式（与本项目状态栏实现一致）：
+
+```js
+function onRubyUpdate(ev) {
+    // 可选：detail.keys 过滤——只关心自己读取的 key，无关写入直接跳过
+    if (ev?.detail?.keys && !ev.detail.keys.some(k => MY_KEYS.includes(k))) return;
+    refreshMyPanel();   // 重新 /ruby read + 渲染（内容签名比对，没变就不重绘防闪烁）
+}
+try {
+    if (window.parent && window.parent !== window) {
+        window.parent.addEventListener('ruby:chatbooks-changed', onRubyUpdate);  // 同源 iframe 直达
+    }
+} catch (e) { /* 跨域隔离环境收不到事件 */ }
+setInterval(refreshMyPanel, 30000);  // 轮询兜底：消息渲染晚于写入时错过的事件，靠轮询追上
+```
+
+三件套缺一不可：事件订阅管"落笔即时刷新"，轮询管"渲染晚于写入的补漏"，签名比对管"防闪烁"。旧版状态栏（只轮询、无监听）无需改动即兼容——事件对不认识它的前端无副作用。
+
 ## 写卡模式（第三页签 ✍️）
 
 把「通用分析器/RUBY条目」的写卡流程内置进插件，**走酒馆原生通道**：创作者用自己的预设和 API 与 Ruby 对话，RUBY 只监听、不代发消息。
