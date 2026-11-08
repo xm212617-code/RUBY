@@ -1,8 +1,26 @@
 import { ctx, log } from './env.js';
+import { resolveConfig } from './config.js';
 
 const BOOKMARK_NS = 'RubyAnalyzer';
 export const MAX_READ_FLOORS = 20;
 export const MAX_INPUT_CHARS = 200000;
+
+/**
+ * 剥离格式保护锚点（正文前后 <标签>）：锚点写在正文里（见 engine.syncFormatMark），
+ * 阅读路径在此统一剥离——分析提示词、导演正文等不受锚点污染（对 AI 的剥离由卡片的 promptOnly 正则负责）。
+ */
+function stripFormatMarks(text) {
+    let out = String(text || '');
+    try {
+        const marks = resolveConfig().data?.formatMarks;
+        if (Array.isArray(marks)) {
+            for (const m of marks) {
+                if (m?.tag) out = out.split(`<${m.tag}>`).join('');
+            }
+        }
+    } catch { /* 配置不可用时原样返回 */ }
+    return out;
+}
 
 // 全局字符上限：默认 20 万；玩家面板勾选"无字符上限"后引擎传 Infinity（永不截断）
 export function capText(text, limit = MAX_INPUT_CHARS) {
@@ -59,9 +77,9 @@ export function extractContent(mes, customTags = []) {
     for (const tag of contentTags) {
         const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
         const match = String(mes).match(regex);
-        if (match) return match[1].trim();
+        if (match) return stripFormatMarks(match[1].trim());
     }
-    return mes;
+    return stripFormatMarks(mes);
 }
 
 export function cleanText(text) {

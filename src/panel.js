@@ -652,8 +652,8 @@ function buildShellHtml() {
                         <div class="form-body">
                             <div id="ra_marks_preview" class="status-box" style="font-family:Consolas,monospace;font-size:14px;word-break:break-all;line-height:1.8;"></div>
                             <div class="tip" style="margin-top:8px;">
-                                💡 标签由 RUBY 注入到消息的<strong>显示层</strong>（ST 的 <code>display_text</code> 副本）——主 API 收到的提示词和 RUBY 分析读取的都是<strong>原正文，永远看不到这些标签</strong>，无需配置提示词剥离正则。<br>
-                                💡 状态栏接入：给卡配一条 <code>markdownOnly</code> 显示正则，把 <code>&lt;标签&gt;</code> 替换为对应 HTML 即可——锚点由 RUBY 保证存在，不依赖主 LLM 按格式输出（格式保护）。
+                                💡 标签由 RUBY 写入<strong>正文</strong>（头部/尾部按序包裹），正则机制按惯例在正文上生效；<strong>对 AI 隐藏</strong>靠卡里一条 <code>promptOnly</code> 剥离正则——"标签在正文中，但不发送给 AI"（nova 构建 <code>regex_scripts</code>: <code>promptOnly: true</code>、替换为空）。RUBY 自身分析阅读时会自动剥离这些标签。<br>
+                                💡 状态栏接入共两条正则：显示用 <code>markdownOnly</code> 把 <code>&lt;标签&gt;</code> 替换为对应 HTML；AI 隐藏用 <code>promptOnly</code> 把 <code>&lt;标签&gt;</code> 替换为空。锚点由 RUBY 保证存在，不依赖主 LLM 按格式输出（格式保护）。
                             </div>
                         </div>
                     </div>

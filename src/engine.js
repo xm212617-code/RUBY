@@ -147,14 +147,16 @@ export function initEngine() {
 }
 
 // ---------- 格式保护锚点注入 ----------
-// 注入目标：消息的 extra.display_text——ST 的纯显示层副本：消息渲染（updateMessageBlock → messageFormatting）
-// 读它，提示词构建与 RUBY 阅读读 mes，因此标签对主 API 和分析管线天然不可见（无需提示词剥离正则）。
-// 创作者在面板「格式保护」页配置标签列表（正文前/正文后），状态栏用 markdownOnly 显示正则把 <标签> 换成 HTML。
+// 注入目标：消息正文（mes）本身——正文头部/尾部按序包裹 <标签>。三个消费方各取所需：
+// - 显示：卡片的 markdownOnly 显示正则把 <标签> 替换为状态栏 HTML（正则机制按惯例在正文上生效）；
+// - 提示词：卡片的 promptOnly 剥离正则（nova regex_scripts: promptOnly=true、replace 为空）把标签
+//   从发送给 AI 的提示词中剥掉——即"标签在正文中，但不发送给 AI"的正则机制；
+// - RUBY 阅读：reader.extractContent 自动剥离本插件注入的标签，分析管线不受污染。
 function buildFormatMarkWrap(marks) {
     const list = Array.isArray(marks) ? marks : [];
     const head = list.filter((m) => m.position === 'head').map((m) => `<${m.tag}>`).join('');
     const tail = list.filter((m) => m.position === 'tail').map((m) => `<${m.tag}>`).join('');
-    return { head, tail, count: list.length };
+    return { head, tail, tags: list.map((m) => m.tag), count: list.length };
 }
 
 function rerenderMarked(c, idx, m) {
@@ -165,9 +167,17 @@ function rerenderMarked(c, idx, m) {
     }
 }
 
+function saveChatSafe(c) {
+    if (typeof c.saveChat === 'function') {
+        try { c.saveChat(); } catch { /* 保存失败不影响本次会话显示；下一次事件重新同步 */ }
+    }
+}
+
 /**
- * 同步格式锚点到指定消息（无 id 时取最后一层）的显示层。幂等：内容一致时跳过；
- * 格式清空时只撤回本插件此前注入的 display_text（回落到原正文），不动其他来源的同名字段。
+ * 同步格式锚点到指定消息（无 id 时取最后一层）的正文。幂等：
+ * 先剥掉本插件此前注入的旧标签（配置可能已变更）与正文中已存在的当前标签（旧卡 LLM 自行输出的场景），
+ * 再按当前配置统一包裹——任何时刻正文里每个锚点恰好出现一次、位置符合配置。
+ * 格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
 export function syncFormatMark(messageId) {
     const c = ctx();
@@ -176,31 +186,47 @@ export function syncFormatMark(messageId) {
     const idx = (Number.isFinite(messageId) && messageId >= 0 && messageId < chat.length) ? messageId : chat.length - 1;
     const m = chat[idx];
     if (!m || m.is_user || m.is_system) return;
-
-    const mes = String(m.mes || '');
-    if (!mes.trim()) return;
+    if (!String(m.mes || '').trim()) return;
 
     const { data } = config.resolveConfig();
-    const { head, tail, count } = buildFormatMarkWrap(data.formatMarks);
+    const { head, tail, tags, count } = buildFormatMarkWrap(data.formatMarks);
 
     m.extra ||= {};
+    // 清理 v2.7.0 旧版（display_text 方案）残留：标记为 true 且 display_text 存在 = 本插件注入过
+    if (m.extra.rubyFormatMarked === true && m.extra.display_text !== undefined) {
+        delete m.extra.display_text;
+    }
+
+    // 此前注入的标签（配置可能已变更/清空）先撤干净
+    const applied = Array.isArray(m.extra.rubyFormatMarked) ? m.extra.rubyFormatMarked : [];
+    let mes = String(m.mes || '');
+    for (const t of applied) {
+        if (t) mes = mes.split(`<${t}>`).join('');
+    }
+    // 当前配置的标签若已在正文中（旧卡由 LLM 自行输出的场景），同样先剥掉避免重复，再由 RUBY 统一包裹
+    for (const t of tags) {
+        if (t) mes = mes.split(`<${t}>`).join('');
+    }
+
     if (count === 0) {
-        if (m.extra.rubyFormatMarked) {
-            delete m.extra.display_text;
+        if (mes !== m.mes || applied.length > 0) {
+            m.mes = mes;
             delete m.extra.rubyFormatMarked;
             rerenderMarked(c, idx, m);
+            saveChatSafe(c);
         }
         return;
     }
 
-    const next = `${head}${mes}${tail}`;
-    if (m.extra.display_text === next && m.extra.rubyFormatMarked) return;
-    m.extra.display_text = next;
-    m.extra.rubyFormatMarked = true;
-    rerenderMarked(c, idx, m);
-    if (typeof c.saveChat === 'function') {
-        try { c.saveChat(); } catch { /* 保存失败不影响本次会话显示；下一次事件会重新同步 */ }
+    mes = `${head}${mes}${tail}`;
+    if (mes === m.mes) {
+        if (JSON.stringify(m.extra.rubyFormatMarked) !== JSON.stringify(tags)) m.extra.rubyFormatMarked = tags;
+        return;
     }
+    m.mes = mes;
+    m.extra.rubyFormatMarked = tags;
+    rerenderMarked(c, idx, m);
+    saveChatSafe(c);
 }
 
 export function reinit() {
