@@ -8,6 +8,7 @@ export const MAX_INPUT_CHARS = 200000;
 /**
  * 剥离格式保护锚点（正文前后 <标签>）：锚点写在正文里（见 engine.syncFormatMark），
  * 阅读路径在此统一剥离——分析提示词、导演正文等不受锚点污染（对 AI 的剥离由卡片的 promptOnly 正则负责）。
+ * 剥离后做边界收敛（与 engine 同规则）：锚点撤除残留的行首/行尾空行移除，中部多余连续空行收敛为段落空行。
  */
 function stripFormatMarks(text) {
     let out = String(text || '');
@@ -17,6 +18,10 @@ function stripFormatMarks(text) {
             for (const m of marks) {
                 if (m?.tag) out = out.split(`<${m.tag}>`).join('');
             }
+            out = out
+                .replace(/^[ \t]*(?:\r?\n)+/, '')
+                .replace(/(?:\r?\n)+[ \t]*$/, '')
+                .replace(/\n{3,}/g, '\n\n');
         }
     } catch { /* 配置不可用时原样返回 */ }
     return out;

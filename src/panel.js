@@ -650,9 +650,9 @@ function buildShellHtml() {
                     <div class="form-section">
                         <div class="form-header red">■ 注入示意图（当前格式）</div>
                         <div class="form-body">
-                            <div id="ra_marks_preview" class="status-box" style="font-family:Consolas,monospace;font-size:14px;word-break:break-all;line-height:1.8;"></div>
+                            <div id="ra_marks_preview" class="status-box" style="font-family:Consolas,monospace;font-size:14px;word-break:break-all;line-height:1.8;white-space:pre-line;"></div>
                             <div class="tip" style="margin-top:8px;">
-                                💡 标签由 RUBY 写入<strong>正文</strong>（头部/尾部按序包裹），正则机制按惯例在正文上生效；<strong>对 AI 隐藏</strong>靠卡里一条 <code>promptOnly</code> 剥离正则——"标签在正文中，但不发送给 AI"（nova 构建 <code>regex_scripts</code>: <code>promptOnly: true</code>、替换为空）。RUBY 自身分析阅读时会自动剥离这些标签。<br>
+                                💡 标签由 RUBY 写入<strong>正文</strong>——<u>每个标签独占一行</u>（正文前组按序排在正文上方、正文后组按序排在正文下方），任何情况下不与正文文字同行粘连；正则机制按惯例在正文上生效。<strong>对 AI 隐藏</strong>靠卡里一条 <code>promptOnly</code> 剥离正则——"标签在正文中，但不发送给 AI"（卡内正则脚本 <code>regex_scripts</code>: <code>promptOnly: true</code>、替换为空）。RUBY 自身分析阅读时会自动剥离这些标签。<br>
                                 💡 状态栏接入共两条正则：显示用 <code>markdownOnly</code> 把 <code>&lt;标签&gt;</code> 替换为对应 HTML；AI 隐藏用 <code>promptOnly</code> 把 <code>&lt;标签&gt;</code> 替换为空。锚点由 RUBY 保证存在，不依赖主 LLM 按格式输出（格式保护）。
                             </div>
                         </div>
@@ -1741,11 +1741,11 @@ function renderFormatMarks(data) {
     if (!listEl || !previewEl) return;
     const marks = Array.isArray(data?.formatMarks) ? data.formatMarks : [];
 
-    const head = marks.filter((m) => m.position === 'head').map((m) => `&lt;${h(m.tag)}&gt;`).join('');
-    const tail = marks.filter((m) => m.position === 'tail').map((m) => `&lt;${h(m.tag)}&gt;`).join('');
+    const head = marks.filter((m) => m.position === 'head').map((m) => `&lt;${h(m.tag)}&gt;`).join('\n');
+    const tail = marks.filter((m) => m.position === 'tail').map((m) => `&lt;${h(m.tag)}&gt;`).join('\n');
     previewEl.innerHTML = marks.length === 0
         ? '<span style="color:#888;">（未配置格式标签——正文原样展示，API 与 RUBY 阅读均不受影响）</span>'
-        : `${head}<span style="color:#C41E3A;font-weight:700;">【正文内容】</span>${tail}`;
+        : `${head}\n<span style="color:#C41E3A;font-weight:700;">【正文内容】</span>\n${tail}`;
 
     if (marks.length === 0) {
         listEl.innerHTML = '<div style="font-size:13px;color:#888;padding:6px 0;">尚未添加格式标签：选择位置、填写文字后点「添加格式」。每次保存自动按 正文前→正文后 归组排序。</div>';

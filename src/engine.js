@@ -147,15 +147,16 @@ export function initEngine() {
 }
 
 // ---------- 格式保护锚点注入 ----------
-// 注入目标：消息正文（mes）本身——正文头部/尾部按序包裹 <标签>。三个消费方各取所需：
+// 注入目标：消息正文（mes）本身——锚点标签每个独占一行，正文前组按序排在正文上方、正文后组按序排在
+// 正文下方，任何情况下不与正文文字同行粘连（包括正文最后一个字）。三个消费方各取所需：
 // - 显示：卡片的 markdownOnly 显示正则把 <标签> 替换为状态栏 HTML（正则机制按惯例在正文上生效）；
-// - 提示词：卡片的 promptOnly 剥离正则（nova regex_scripts: promptOnly=true、replace 为空）把标签
+// - 提示词：卡片的 promptOnly 剥离正则（卡内 regex_scripts: promptOnly=true、replace 为空）把标签
 //   从发送给 AI 的提示词中剥掉——即"标签在正文中，但不发送给 AI"的正则机制；
 // - RUBY 阅读：reader.extractContent 自动剥离本插件注入的标签，分析管线不受污染。
 function buildFormatMarkWrap(marks) {
     const list = Array.isArray(marks) ? marks : [];
-    const head = list.filter((m) => m.position === 'head').map((m) => `<${m.tag}>`).join('');
-    const tail = list.filter((m) => m.position === 'tail').map((m) => `<${m.tag}>`).join('');
+    const head = list.filter((m) => m.position === 'head').map((m) => `<${m.tag}>`).join('\n');
+    const tail = list.filter((m) => m.position === 'tail').map((m) => `<${m.tag}>`).join('\n');
     return { head, tail, tags: list.map((m) => m.tag), count: list.length };
 }
 
@@ -173,11 +174,19 @@ function saveChatSafe(c) {
     }
 }
 
+/** 剥除锚点后的边界清理：锚点撤除留下的行首/行尾空行收敛，中部多余连续空行收敛为段落空行 */
+function tidyAfterStrip(mes) {
+    return mes
+        .replace(/^[ \t]*(?:\r?\n)+/, '')   // 头部锚点撤除后残留的空行
+        .replace(/(?:\r?\n)+[ \t]*$/, '')   // 尾部锚点撤除后残留的空行
+        .replace(/\n{3,}/g, '\n\n');        // 中部撤除后的多余连续空行收敛（保留段落间单个空行）
+}
+
 /**
  * 同步格式锚点到指定消息（无 id 时取最后一层）的正文。幂等：
- * 先剥掉本插件此前注入的旧标签（配置可能已变更）与正文中已存在的当前标签（旧卡 LLM 自行输出的场景），
- * 再按当前配置统一包裹——任何时刻正文里每个锚点恰好出现一次、位置符合配置。
- * 格式清空时把此前注入的标签全部撤除，正文回落原样。
+ * 先剥掉本插件此前注入的旧标签（配置可能已变更）与正文中已存在的当前标签（旧卡 LLM 自行输出的场景，
+ * 无论独立成行还是与正文粘连），边界空行收敛后按当前配置统一重包——每个锚点恰好出现一次、
+ * 各自独占一行、位置符合配置。格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
 export function syncFormatMark(messageId) {
     const c = ctx();
@@ -199,14 +208,12 @@ export function syncFormatMark(messageId) {
 
     // 此前注入的标签（配置可能已变更/清空）先撤干净
     const applied = Array.isArray(m.extra.rubyFormatMarked) ? m.extra.rubyFormatMarked : [];
+    const stripSet = [...new Set([...applied, ...tags])].filter(Boolean);
     let mes = String(m.mes || '');
-    for (const t of applied) {
-        if (t) mes = mes.split(`<${t}>`).join('');
+    for (const t of stripSet) {
+        mes = mes.split(`<${t}>`).join('');
     }
-    // 当前配置的标签若已在正文中（旧卡由 LLM 自行输出的场景），同样先剥掉避免重复，再由 RUBY 统一包裹
-    for (const t of tags) {
-        if (t) mes = mes.split(`<${t}>`).join('');
-    }
+    mes = tidyAfterStrip(mes);
 
     if (count === 0) {
         if (mes !== m.mes || applied.length > 0) {
@@ -218,7 +225,8 @@ export function syncFormatMark(messageId) {
         return;
     }
 
-    mes = `${head}${mes}${tail}`;
+    // 包裹：锚点块各自独占一行，与正文之间强制换行——绝不与正文文字同行
+    mes = [head, mes, tail].filter(Boolean).join('\n');
     if (mes === m.mes) {
         if (JSON.stringify(m.extra.rubyFormatMarked) !== JSON.stringify(tags)) m.extra.rubyFormatMarked = tags;
         return;
