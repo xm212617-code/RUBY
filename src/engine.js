@@ -992,14 +992,14 @@ export async function runPipeline(taskBatch) {
 
                 applySummaryReplacement(c, inc, providerSummary, customTags);
 
-                // 20万字符上限：只截断对话正文（保留靠前部分、抛弃后续剩余正文）。
-                // 参考条目池与历史分析输出在下方组装阶段追加，从不参与此上限，绝不因截断丢失。
+                // 全局字符上限已关闭（无上限）：capText 默认 Infinity，正文永不截断。
+                // 参考条目池与历史分析输出在下方组装阶段追加，从不参与任何截断。
                 const capped = reader.capText(inc.text);
                 if (capped.truncated > 0) {
-                    warn(`body exceeds ${reader.MAX_INPUT_CHARS} chars: ${inc.text.length} chars, discarding last ${capped.truncated} chars of chat text (references unaffected)`);
+                    warn(`body exceeds input char limit: ${inc.text.length} chars, discarding last ${capped.truncated} chars of chat text (references unaffected)`);
                     inc.text = capped.text;
                     inc.truncatedChars = capped.truncated;
-                    notify('warning', `RUBY：${taskDisplayName} 正文超过20万字符上限，末尾 ${capped.truncated} 字符已截断抛弃`);
+                    notify('warning', `RUBY：${taskDisplayName} 正文超过字符上限，末尾 ${capped.truncated} 字符已截断抛弃`);
                 }
 
                 const promptKey = taskConfig.promptKey;
@@ -1035,7 +1035,7 @@ export async function runPipeline(taskBatch) {
 
                 if (!hasRecentMessagesPlaceholder && inc.text) {
                     const truncNote = inc.truncatedChars
-                        ? `\n\n（⚠️ 本次正文超过20万字符上限，末尾约 ${inc.truncatedChars} 字符已被截断抛弃，仅上方保留部分为有效分析素材）`
+                        ? `\n\n（⚠️ 本次正文超过字符上限，末尾约 ${inc.truncatedChars} 字符已被截断抛弃，仅上方保留部分为有效分析素材）`
                         : '';
                     if (inc.summaryApplied) {
                         // 总结接口已生成带分节标题的素材（小白x总结 + 未总结新正文），直接使用

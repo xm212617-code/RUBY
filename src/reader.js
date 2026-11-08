@@ -2,9 +2,9 @@ import { ctx, log } from './env.js';
 
 const BOOKMARK_NS = 'RubyAnalyzer';
 export const MAX_READ_FLOORS = 20;
-export const MAX_INPUT_CHARS = 200000;
 
-export function capText(text, limit = MAX_INPUT_CHARS) {
+// 全局字符上限已关闭：capText 默认 Infinity，正文永不截断（保留 limit 参数作为安全网）
+export function capText(text, limit = Infinity) {
     const s = String(text || '');
     if (s.length <= limit) return { text: s, truncated: 0 };
     return { text: s.slice(0, limit), truncated: s.length - limit };

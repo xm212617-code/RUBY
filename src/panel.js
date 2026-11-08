@@ -509,7 +509,7 @@ function buildShellHtml() {
                                 ① 读取总结工具写入聊天元数据的结构化总结（只读，不修改总结数据）<br>
                                 ② 书签 → 总结边界之间的楼层 → 替换为总结文本（启用时读取窗口不再限制20楼）<br>
                                 ③ 总结边界 → 最新楼层 → 照常读取原文增量<br>
-                                ④ 20万字符上限作用于"总结+新正文"整体；参考条目与分析输出引用不受影响<br>
+                                ④ "总结+新正文"整体无字符上限（全局截断已关闭）；参考条目与分析输出引用不受影响<br>
                                 ⑤ 总结工具未安装或本聊天无总结数据 → 自动回退纯原文模式（控制台提示）
                             </div>
                         </div>
@@ -545,14 +545,14 @@ function buildShellHtml() {
                         <div class="form-header blue">■ 系统内置变量</div>
                         <div class="form-body">
                             <div class="status-box">
-                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼；单次正文上限<strong>20万字符</strong>，超出部分末尾截断抛弃</div>
+                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼；单次正文<strong>无字符上限</strong>（全局截断已关闭）</div>
                                 <div><code>{{CHAR_NAME}}</code> → 上方配置的角色名称</div>
                                 <div style="margin-top:8px;color:#333;">任务输出变量：{{task_任务ID_Output}}（如 {{task_1_Output}}）</div>
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>增量阅读机制</strong>：每个分析任务各自维护"已读书签"（存于聊天元数据）。<br>
                                 每次触发时只读上次之后<u>新楼层</u>（含被酒馆隐藏的正文），读过的不重读，每次最多阅读最近20楼。<br>
-                                ⚠️ 单次输入正文超过<strong>20万字符</strong>时停止，后续剩余正文直接抛弃（保留靠前部分）；上限只作用于对话正文——参考条目与历史分析输出完整保留，绝不因截断丢失。<br>
+                                ⚠️ 单次输入正文<strong>无字符上限</strong>（全局截断已关闭，全部正文完整注入）；参考条目与历史分析输出完整保留，绝不因截断丢失。<br>
                                 退出再进会从书签续读；新聊天时读最近20楼。各任务书签互不影响。
                             </div>
                         </div>
