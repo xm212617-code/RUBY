@@ -264,18 +264,21 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
             return await callViaBackendEndpoint({ apiCfg: { ...apiCfg, stream: effectiveStream }, genParams, messages });
         } catch (e) {
             const msg = String(e?.message || e || '');
-            // 官方服务的流式路径会丢弃上游错误体（tryParseStreamingError 的 throw 被
-            // 自身 catch 吞掉，只剩 "Got response status NNN"）。此时用非流式重试一次：
-            // 非流式的上游错误会以 JSON 原样返回，能拿到供应商真实报错；
-            // 若供应商只是不支持流式，重试会直接成功。
+            // 两类「流式建立失败」自动降级为非流式重试一次：
+            // ① 上游拒绝流式（"Got response status NNN"）——官方服务的流式路径会丢弃上游错误体
+            //   （tryParseStreamingError 的 throw 被自身 catch 吞掉），非流式的上游错误会以 JSON
+            //    原样返回，能拿到供应商真实报错；供应商只是不支持流式时重试直接成功；
+            // ② 流式管道接管失败（"Cannot pipe a locked stream"）——响应体流被第三方扩展
+            //   （总结/记忆类的流式钩子提前 getReader() 不释放）锁定，ST 的 EventSourceStream
+            //    接管不了；非流式走 response.json() 完全绕开 pipeThrough，重试即可完成。
             // 注意：流式建立成功但内容为空不在此列——传输方式必须完全跟随RUBY基础API设置，
-            // 不做任何独立的降级/切换设计。
-            if (/^Got response status/.test(msg)) {
-                warn(`upstream rejected the request (${msg}); retrying without stream to surface the provider error`);
+            // 不做任何独立的降级/切换设计（此重试属"流式根本没建立成功"的例外场景）。
+            if (/^Got response status/.test(msg) || msg.includes('Cannot pipe a locked stream')) {
+                warn(`streaming setup rejected (${msg}); retrying without stream`);
                 const text = await callViaBackendEndpoint({ apiCfg, genParams, messages, forceNonStream: true });
                 if (apiCfg.stream !== false && !providerNonStreamOnly) {
                     providerNonStreamOnly = true;
-                    warn('provider rejected streaming but succeeded without it; remaining calls in this session will skip streaming');
+                    warn('streaming unavailable this session (provider rejected or stream locked by another extension); remaining calls will skip streaming');
                 }
                 return text;
             }
