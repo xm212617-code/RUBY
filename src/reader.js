@@ -4,6 +4,7 @@ const BOOKMARK_NS = 'RubyAnalyzer';
 export const MAX_READ_FLOORS = 20;
 export const MAX_INPUT_CHARS = 200000;
 
+// 全局字符上限：默认 20 万；玩家面板勾选"无字符上限"后引擎传 Infinity（永不截断）
 export function capText(text, limit = MAX_INPUT_CHARS) {
     const s = String(text || '');
     if (s.length <= limit) return { text: s, truncated: 0 };
