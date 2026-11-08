@@ -624,6 +624,7 @@ export function parseImportTemplate(raw) {
             : [],
         summaryProvider: ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '',
         unlimitedInputChars: data.unlimitedInputChars === true,
+        formatMarks: normalizeFormatMarks(data.formatMarks),
         yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: data.jailbreak || null,
         gen: (data.gen && typeof data.gen === 'object') ? data.gen : {},

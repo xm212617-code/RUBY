@@ -3507,6 +3507,7 @@ function generateExportData() {
         customContentTags: data.customContentTags || [],
         summaryProvider: data.summaryProvider || '',
         unlimitedInputChars: data.unlimitedInputChars === true,
+        formatMarks: data.formatMarks || [],
         yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: jailbreak.normalizeJailbreakConfig(config.getUi().jailbreak || data.jailbreak),
         gen: data.gen || {},
@@ -3555,6 +3556,7 @@ function wirePresetIoControls() {
                 d.customContentTags = parsed.customContentTags;
                 d.summaryProvider = parsed.summaryProvider;
                 d.unlimitedInputChars = parsed.unlimitedInputChars === true;
+                d.formatMarks = parsed.formatMarks || [];
                 d.yuzukiIncludePlot = parsed.yuzukiIncludePlot !== false;
                 // 破限为全局设置，导入模板时不覆盖——保留用户已保存的全局破限
                 d.gen = parsed.gen;
