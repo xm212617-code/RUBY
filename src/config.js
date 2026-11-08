@@ -61,6 +61,8 @@ export const makeDefaultConfigData = () => ({
     charName: '',
     customContentTags: [],
     summaryProvider: '',
+    // 全局字符上限开关：false=默认 20 万上限；true=无上限（正文永不截断）
+    unlimitedInputChars: false,
     presets: [makeDefaultPreset()],
     activePresetId: 'default',
     jailbreak: null,
@@ -180,6 +182,8 @@ export function normalizeConfigData(raw) {
         : [];
     // 总结接口：''=关闭；'littlewhitebox'=小白x；'shujuku'=龙血玄黄·数据库；'yuzuki'=柚月记忆表；'baibaibook'=柏宝书
     result.summaryProvider = ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '';
+    // 全局字符上限开关：勾选（true）=无上限；未勾选默认 20 万
+    result.unlimitedInputChars = data.unlimitedInputChars === true;
     // 柚月记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
@@ -593,6 +597,7 @@ export function parseImportTemplate(raw) {
             ? data.customContentTags.filter((t) => typeof t === 'string' && t.trim())
             : [],
         summaryProvider: ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '',
+        unlimitedInputChars: data.unlimitedInputChars === true,
         yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: data.jailbreak || null,
         gen: (data.gen && typeof data.gen === 'object') ? data.gen : {},

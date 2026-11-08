@@ -213,6 +213,8 @@ function refreshAll() {
     ui.tags = [...(data.customContentTags || [])];
     renderTagsList();
     renderSummaryProviders(data);
+    const unlimitedEl = $('ra_unlimited_chars');
+    if (unlimitedEl) unlimitedEl.checked = data.unlimitedInputChars === true;
     renderSchemeTabs();
     loadSchemeToUI(ui.editingPresetId);
     ui.refs = getEditingPreset(data).referencePool ? [...getEditingPreset(data).referencePool] : [];
@@ -494,7 +496,13 @@ function buildShellHtml() {
 
                 <div class="sub-content" data-subcontent="summary" style="padding:16px;display:none;">
                     <div class="form-section">
-                        <div class="form-header red">■ 总结接口</div>
+                        <div class="form-header red" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                            <span>■ 总结接口</span>
+                            <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:400;letter-spacing:0;color:#fff;user-select:none;white-space:nowrap;"
+                                   title="全局字符上限开关：不勾选=默认20万字符上限（超出部分末尾截断抛弃）；勾选=无上限，全部正文完整注入。只作用于对话正文——参考条目与历史分析输出永远完整保留">
+                                <input type="checkbox" id="ra_unlimited_chars"> ♾️ 无字符上限
+                            </label>
+                        </div>
                         <div class="form-body">
                             <div class="tip" style="margin-top:0;margin-bottom:12px;">
                                 启用后，分析时<strong>已被总结工具总结过的楼层</strong>用其总结内容替代原文正文注入；总结边界之后的新楼层仍读取原文。周期位置、楼层计数、各任务的已读书签计算<strong>完全不受影响</strong>。
@@ -509,7 +517,7 @@ function buildShellHtml() {
                                 ① 读取总结工具写入聊天元数据的结构化总结（只读，不修改总结数据）<br>
                                 ② 书签 → 总结边界之间的楼层 → 替换为总结文本（启用时读取窗口不再限制20楼）<br>
                                 ③ 总结边界 → 最新楼层 → 照常读取原文增量<br>
-                                ④ "总结+新正文"整体无字符上限（全局截断已关闭）；参考条目与分析输出引用不受影响<br>
+                                ④ "总结+新正文"整体默认20万字符上限（本页"■ 总结接口"标题旁可勾选"♾️ 无字符上限"关闭）；参考条目与分析输出引用不受影响<br>
                                 ⑤ 总结工具未安装或本聊天无总结数据 → 自动回退纯原文模式（控制台提示）
                             </div>
                         </div>
@@ -545,14 +553,14 @@ function buildShellHtml() {
                         <div class="form-header blue">■ 系统内置变量</div>
                         <div class="form-body">
                             <div class="status-box">
-                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼；单次正文<strong>无字符上限</strong>（全局截断已关闭）</div>
+                                <div><code>{{recentMessages}}</code> → 每个任务独立记录已读楼层，下次只读未读的新楼层（含被隐藏的正文），每次最多20楼；单次正文默认上限<strong>20万字符</strong>（"总结接口"页标题旁可勾选"♾️ 无字符上限"关闭），超出部分末尾截断抛弃</div>
                                 <div><code>{{CHAR_NAME}}</code> → 上方配置的角色名称</div>
                                 <div style="margin-top:8px;color:#333;">任务输出变量：{{task_任务ID_Output}}（如 {{task_1_Output}}）</div>
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>增量阅读机制</strong>：每个分析任务各自维护"已读书签"（存于聊天元数据）。<br>
                                 每次触发时只读上次之后<u>新楼层</u>（含被酒馆隐藏的正文），读过的不重读，每次最多阅读最近20楼。<br>
-                                ⚠️ 单次输入正文<strong>无字符上限</strong>（全局截断已关闭，全部正文完整注入）；参考条目与历史分析输出完整保留，绝不因截断丢失。<br>
+                                ⚠️ 单次输入正文超过<strong>20万字符</strong>时停止，后续剩余正文直接抛弃（保留靠前部分）；"总结接口"页标题旁勾选"♾️ 无字符上限"可关闭此限制。上限只作用于对话正文——参考条目与历史分析输出完整保留，绝不因截断丢失。<br>
                                 退出再进会从书签续读；新聊天时读最近20楼。各任务书签互不影响。
                             </div>
                         </div>
@@ -1404,6 +1412,12 @@ function wirePlayerSections() {
         window.toastr?.success?.(e.target.checked
             ? '已开启忽略最新一层：RUBY读取不含最新AI回复（防截断/失败楼层被计入书签）'
             : '已关闭忽略最新一层：恢复正常读取');
+    });
+    on($('ra_unlimited_chars'), 'change', (e) => {
+        withConfigData((d) => { d.unlimitedInputChars = e.target.checked; });
+        window.toastr?.success?.(e.target.checked
+            ? '已开启无字符上限：正文不再截断，全部完整注入'
+            : '已关闭无字符上限：恢复默认20万字符上限（超出部分末尾截断抛弃）');
     });
     on($('ra_restore_snapshot'), 'click', async () => {
         const snap = getLastOutputSnapshot();
@@ -3379,6 +3393,7 @@ function generateExportData() {
         charName: data.charName || '',
         customContentTags: data.customContentTags || [],
         summaryProvider: data.summaryProvider || '',
+        unlimitedInputChars: data.unlimitedInputChars === true,
         yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: jailbreak.normalizeJailbreakConfig(config.getUi().jailbreak || data.jailbreak),
         gen: data.gen || {},
@@ -3426,6 +3441,7 @@ function wirePresetIoControls() {
                 d.charName = parsed.charName;
                 d.customContentTags = parsed.customContentTags;
                 d.summaryProvider = parsed.summaryProvider;
+                d.unlimitedInputChars = parsed.unlimitedInputChars === true;
                 d.yuzukiIncludePlot = parsed.yuzukiIncludePlot !== false;
                 // 破限为全局设置，导入模板时不覆盖——保留用户已保存的全局破限
                 d.gen = parsed.gen;

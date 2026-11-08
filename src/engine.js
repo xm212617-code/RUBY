@@ -641,7 +641,7 @@ async function runDirectorTask(d, ctxObj) {
         }
     }
     applySummaryReplacement(c, inc, providerSummary, customTags);
-    const contextText = reader.capText(inc.text).text;
+    const contextText = reader.capText(inc.text, cfgData.unlimitedInputChars ? Infinity : undefined).text;
 
     // 任务清单：id+名称必发；简介手写优先，否则从提示词条目自动提取约200字切面
     const enabledTasks = (preset.tasks || []).filter((t) => t.enabled);
@@ -992,11 +992,12 @@ export async function runPipeline(taskBatch) {
 
                 applySummaryReplacement(c, inc, providerSummary, customTags);
 
-                // 全局字符上限已关闭（无上限）：capText 默认 Infinity，正文永不截断。
-                // 参考条目池与历史分析输出在下方组装阶段追加，从不参与任何截断。
-                const capped = reader.capText(inc.text);
+                // 全局字符上限：默认 20 万，只截断对话正文（保留靠前部分、抛弃后续剩余正文）；
+                // 玩家面板勾选"无字符上限"后传 Infinity，正文永不截断。
+                // 参考条目池与历史分析输出在下方组装阶段追加，从不参与此上限，绝不因截断丢失。
+                const capped = reader.capText(inc.text, cfgData.unlimitedInputChars ? Infinity : undefined);
                 if (capped.truncated > 0) {
-                    warn(`body exceeds input char limit: ${inc.text.length} chars, discarding last ${capped.truncated} chars of chat text (references unaffected)`);
+                    warn(`body exceeds ${reader.MAX_INPUT_CHARS} chars: ${inc.text.length} chars, discarding last ${capped.truncated} chars of chat text (references unaffected)`);
                     inc.text = capped.text;
                     inc.truncatedChars = capped.truncated;
                     notify('warning', `RUBY：${taskDisplayName} 正文超过字符上限，末尾 ${capped.truncated} 字符已截断抛弃`);
