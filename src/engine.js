@@ -113,12 +113,26 @@ export function initEngine() {
 
     c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => {
         setTimeout(reinit, 300);
+        // 换聊天后补同步最后一层的格式锚点（幂等；含开场白首层）
+        setTimeout(() => syncFormatMark(), 400);
     });
     c.eventSource.on(c.eventTypes.GENERATION_ENDED, () => {
         scheduleTick();
+        // 新正文到达：把格式保护锚点注入该层的显示层
+        syncFormatMark();
     });
     c.eventSource.on(c.eventTypes.MESSAGE_RECEIVED, (_messageId, type) => {
-        if (type === 'first_message') scheduleTick();
+        if (type === 'first_message') {
+            scheduleTick();
+            syncFormatMark();
+        }
+    });
+    c.eventSource.on(c.eventTypes.MESSAGE_UPDATED, (messageId) => {
+        // 消息被编辑：显示层副本与正文重新对齐
+        syncFormatMark(Number(messageId));
+    });
+    c.eventSource.on(c.eventTypes.MESSAGE_SWIPED, (mesId) => {
+        syncFormatMark(Number(mesId));
     });
     c.eventSource.on(c.eventTypes.MESSAGE_DELETED, () => {
         setTimeout(() => {
@@ -130,6 +144,63 @@ export function initEngine() {
 
     setTimeout(reinit, 1500);
     log('engine initialized, listening to chat events');
+}
+
+// ---------- 格式保护锚点注入 ----------
+// 注入目标：消息的 extra.display_text——ST 的纯显示层副本：消息渲染（updateMessageBlock → messageFormatting）
+// 读它，提示词构建与 RUBY 阅读读 mes，因此标签对主 API 和分析管线天然不可见（无需提示词剥离正则）。
+// 创作者在面板「格式保护」页配置标签列表（正文前/正文后），状态栏用 markdownOnly 显示正则把 <标签> 换成 HTML。
+function buildFormatMarkWrap(marks) {
+    const list = Array.isArray(marks) ? marks : [];
+    const head = list.filter((m) => m.position === 'head').map((m) => `<${m.tag}>`).join('');
+    const tail = list.filter((m) => m.position === 'tail').map((m) => `<${m.tag}>`).join('');
+    return { head, tail, count: list.length };
+}
+
+function rerenderMarked(c, idx, m) {
+    try {
+        if (typeof c.updateMessageBlock === 'function') c.updateMessageBlock(idx, m);
+    } catch (e) {
+        warn(`format mark rerender failed: ${e?.message || e}`);
+    }
+}
+
+/**
+ * 同步格式锚点到指定消息（无 id 时取最后一层）的显示层。幂等：内容一致时跳过；
+ * 格式清空时只撤回本插件此前注入的 display_text（回落到原正文），不动其他来源的同名字段。
+ */
+export function syncFormatMark(messageId) {
+    const c = ctx();
+    if (!c || !Array.isArray(c.chat) || c.chat.length === 0) return;
+    const chat = c.chat;
+    const idx = (Number.isFinite(messageId) && messageId >= 0 && messageId < chat.length) ? messageId : chat.length - 1;
+    const m = chat[idx];
+    if (!m || m.is_user || m.is_system) return;
+
+    const mes = String(m.mes || '');
+    if (!mes.trim()) return;
+
+    const { data } = config.resolveConfig();
+    const { head, tail, count } = buildFormatMarkWrap(data.formatMarks);
+
+    m.extra ||= {};
+    if (count === 0) {
+        if (m.extra.rubyFormatMarked) {
+            delete m.extra.display_text;
+            delete m.extra.rubyFormatMarked;
+            rerenderMarked(c, idx, m);
+        }
+        return;
+    }
+
+    const next = `${head}${mes}${tail}`;
+    if (m.extra.display_text === next && m.extra.rubyFormatMarked) return;
+    m.extra.display_text = next;
+    m.extra.rubyFormatMarked = true;
+    rerenderMarked(c, idx, m);
+    if (typeof c.saveChat === 'function') {
+        try { c.saveChat(); } catch { /* 保存失败不影响本次会话显示；下一次事件会重新同步 */ }
+    }
 }
 
 export function reinit() {

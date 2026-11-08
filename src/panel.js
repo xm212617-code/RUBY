@@ -213,6 +213,7 @@ function refreshAll() {
     ui.tags = [...(data.customContentTags || [])];
     renderTagsList();
     renderSummaryProviders(data);
+    renderFormatMarks(data);
     const unlimitedEl = $('ra_unlimited_chars');
     if (unlimitedEl) unlimitedEl.checked = data.unlimitedInputChars === true;
     renderSchemeTabs();
@@ -242,6 +243,7 @@ function buildPanel() {
     wireTaskControls();
     wireDirectorControls();
     wireBindingControls();
+    wireFormatMarks();
     wirePresetIoControls();
     wireCardWriterControls(root);
 
@@ -529,6 +531,7 @@ function buildShellHtml() {
                 <div class="sub-tabs">
                     <div class="sub-tab active" data-sub="refs">📚 参考条目池</div>
                     <div class="sub-tab" data-sub="tasks">📋 任务配置</div>
+                    <div class="sub-tab" data-sub="marks">🛡️ 格式保护</div>
                     <div class="sub-tab" data-sub="binding">🔗 角色绑定</div>
                     <div class="sub-tab" data-sub="preset">📦 导入导出</div>
                     <div class="sub-tab" data-sub="help">❓ 帮助</div>
@@ -641,6 +644,33 @@ function buildShellHtml() {
                     </div>
                     </div>
                     <div id="ra_director_view" style="display:none;padding:16px;"></div>
+                </div>
+
+                <div class="sub-content" data-subcontent="marks" style="padding:16px;display:none;">
+                    <div class="form-section">
+                        <div class="form-header red">■ 注入示意图（当前格式）</div>
+                        <div class="form-body">
+                            <div id="ra_marks_preview" class="status-box" style="font-family:Consolas,monospace;font-size:14px;word-break:break-all;line-height:1.8;"></div>
+                            <div class="tip" style="margin-top:8px;">
+                                💡 标签由 RUBY 注入到消息的<strong>显示层</strong>（ST 的 <code>display_text</code> 副本）——主 API 收到的提示词和 RUBY 分析读取的都是<strong>原正文，永远看不到这些标签</strong>，无需配置提示词剥离正则。<br>
+                                💡 状态栏接入：给卡配一条 <code>markdownOnly</code> 显示正则，把 <code>&lt;标签&gt;</code> 替换为对应 HTML 即可——锚点由 RUBY 保证存在，不依赖主 LLM 按格式输出（格式保护）。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-section">
+                        <div class="form-header red">■ 格式标签（列表自动按 正文前→正文后 归组排序）</div>
+                        <div class="form-body">
+                            <div id="ra_marks_list"></div>
+                            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+                                <select id="ra_marks_new_position" class="w150" title="注入位置">
+                                    <option value="head">正文前</option>
+                                    <option value="tail">正文后</option>
+                                </select>
+                                <input id="ra_marks_new_tag" class="w250" placeholder="纯文字即可，如：状态栏（尖括号自动包裹）">
+                                <button id="ra_marks_add" class="btn green small">➕ 添加格式</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="sub-content" data-subcontent="binding" style="padding:16px;display:none;">
@@ -1701,6 +1731,89 @@ function renderJailbreakItems() {
                 renderJailbreakItems();
             }
         });
+    });
+}
+
+/** 格式保护页：列表渲染（自动归组呈现）+ 注入示意图 */
+function renderFormatMarks(data) {
+    const listEl = $('ra_marks_list');
+    const previewEl = $('ra_marks_preview');
+    if (!listEl || !previewEl) return;
+    const marks = Array.isArray(data?.formatMarks) ? data.formatMarks : [];
+
+    const head = marks.filter((m) => m.position === 'head').map((m) => `&lt;${h(m.tag)}&gt;`).join('');
+    const tail = marks.filter((m) => m.position === 'tail').map((m) => `&lt;${h(m.tag)}&gt;`).join('');
+    previewEl.innerHTML = marks.length === 0
+        ? '<span style="color:#888;">（未配置格式标签——正文原样展示，API 与 RUBY 阅读均不受影响）</span>'
+        : `${head}<span style="color:#C41E3A;font-weight:700;">【正文内容】</span>${tail}`;
+
+    if (marks.length === 0) {
+        listEl.innerHTML = '<div style="font-size:13px;color:#888;padding:6px 0;">尚未添加格式标签：选择位置、填写文字后点「添加格式」。每次保存自动按 正文前→正文后 归组排序。</div>';
+        return;
+    }
+
+    const rows = [];
+    let lastPos = '';
+    marks.forEach((m, idx) => {
+        if (m.position !== lastPos) {
+            rows.push(`<div style="font-size:12px;font-weight:700;color:#1E4B8E;margin:10px 0 2px;">${m.position === 'head' ? '▲ 正文前（按序注入正文头部）' : '▼ 正文后（按序注入正文尾部）'}</div>`);
+            lastPos = m.position;
+        }
+        const no = marks.filter((x, i) => i <= idx && x.position === m.position).length;
+        const firstInGroup = idx === 0 || marks[idx - 1].position !== m.position;
+        const lastInGroup = idx === marks.length - 1 || marks[idx + 1].position !== m.position;
+        rows.push(`<div class="form-row" style="margin:0;">
+            <span class="form-label">${m.position === 'head' ? '正文前' : '正文后'} #${no}</span>
+            <span class="form-value" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <code style="background:#f0f0e8;padding:2px 6px;border-radius:4px;">&lt;${h(m.tag)}&gt;</code>
+                <span style="flex:1;"></span>
+                <button type="button" class="btn outline small mark-up" data-idx="${idx}" ${firstInGroup ? 'disabled' : ''}>上移</button>
+                <button type="button" class="btn outline small mark-down" data-idx="${idx}" ${lastInGroup ? 'disabled' : ''}>下移</button>
+                <button type="button" class="btn red small mark-del" data-idx="${idx}">删除</button>
+            </span>
+        </div>`);
+    });
+    listEl.innerHTML = rows.join('');
+}
+
+/** 格式标签变更统一入口：改动 → 保存（saveConfigData 归一化时自动归组）→ 重渲染列表与示意图 */
+function saveFormatMarks(mutator) {
+    withConfigData((d) => {
+        const marks = JSON.parse(JSON.stringify(d.formatMarks || []));
+        mutator(marks);
+        d.formatMarks = marks;
+    });
+    renderFormatMarks(config.resolveConfig().data);
+}
+
+function wireFormatMarks() {
+    on($('ra_marks_add'), 'click', () => {
+        const input = $('ra_marks_new_tag');
+        const tag = String(input.value || '').replace(/[<>]/g, '').trim().slice(0, 60);
+        if (!tag) { window.toastr?.warning?.('请填写标签文字（纯文字即可，尖括号自动包裹）'); return; }
+        const position = $('ra_marks_new_position').value === 'head' ? 'head' : 'tail';
+        if (config.resolveConfig().data.formatMarks.some((m) => m.tag === tag)) {
+            window.toastr?.warning?.(`标签 <${tag}> 已存在（同名标签自动去重）`);
+            return;
+        }
+        saveFormatMarks((marks) => marks.push({ tag, position }));
+        input.value = '';
+        window.toastr?.success?.(`已添加${position === 'head' ? '正文前' : '正文后'}格式：&lt;${tag}&gt;`.replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+    });
+    on($('ra_marks_new_tag'), 'keydown', (e) => {
+        if (e.key === 'Enter') $('ra_marks_add')?.click();
+    });
+    on($('ra_marks_list'), 'click', (e) => {
+        const btn = e.target.closest('button[data-idx]');
+        if (!btn || btn.disabled) return;
+        const idx = parseInt(btn.dataset.idx, 10);
+        if (btn.classList.contains('mark-del')) {
+            saveFormatMarks((marks) => marks.splice(idx, 1));
+        } else if (btn.classList.contains('mark-up')) {
+            saveFormatMarks((marks) => { const [it] = marks.splice(idx, 1); marks.splice(idx - 1, 0, it); });
+        } else if (btn.classList.contains('mark-down')) {
+            saveFormatMarks((marks) => { const [it] = marks.splice(idx, 1); marks.splice(idx + 1, 0, it); });
+        }
     });
 }
 

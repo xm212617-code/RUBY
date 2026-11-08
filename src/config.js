@@ -63,6 +63,8 @@ export const makeDefaultConfigData = () => ({
     summaryProvider: '',
     // 全局字符上限开关：false=默认 20 万上限；true=无上限（正文永不截断）
     unlimitedInputChars: false,
+    // 格式保护：注入到消息显示层（extra.display_text）的锚点标签列表，API 不可见；显示正则匹配同名 <标签>
+    formatMarks: [],
     presets: [makeDefaultPreset()],
     activePresetId: 'default',
     jailbreak: null,
@@ -186,6 +188,8 @@ export function normalizeConfigData(raw) {
     result.unlimitedInputChars = data.unlimitedInputChars === true;
     // 柚月记忆表：剧情摘要时间线是否随记忆总结一并注入（默认开）
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
+    // 格式保护：创作者配置的锚点标签列表（随卡导出；显示正则需匹配同名的 <标签>）
+    result.formatMarks = normalizeFormatMarks(data.formatMarks);
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
         ? data.presets.map(normalizePreset)
         : [makeDefaultPreset()];
@@ -196,6 +200,28 @@ export function normalizeConfigData(raw) {
     result.jailbreak = data.jailbreak || null;
     result.gen = sanitizeGenParams(data.gen);
     return result;
+}
+
+/**
+ * 格式保护锚点归一化：RUBY 注入到消息显示层（extra.display_text，API 不可见）的锚点标签。
+ * - tag：创作者填纯文字即可，尖括号由 RUBY 包裹；此处剔除创作者误填的 < >
+ * - position：'head'=正文前 | 'tail'=正文后
+ * - 顺序：列表顺序即注入顺序；返回前自动归组——正文前的排前面、正文后的排后面，各组内保持原有相对顺序
+ */
+export function normalizeFormatMarks(raw) {
+    const list = Array.isArray(raw) ? raw : [];
+    const seen = new Set();
+    const cleaned = [];
+    for (const item of list) {
+        const tag = String(item?.tag || '').replace(/[<>]/g, '').trim().slice(0, 60);
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag);
+        cleaned.push({ tag, position: item?.position === 'head' ? 'head' : 'tail' });
+    }
+    return [
+        ...cleaned.filter((m) => m.position === 'head'),
+        ...cleaned.filter((m) => m.position === 'tail'),
+    ];
 }
 
 export function normalizePreset(raw) {
