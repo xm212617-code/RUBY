@@ -430,6 +430,9 @@ function ensureDirectorMeta(aiCount) {
     d.history ||= [];
     d.woken ||= [];
     d.manualRuns ||= 0;
+    // 计划对象防畸变：plan 存在但 assignments 缺失/非数组（旧版本残留、写入中断、外部工具改写元数据）时兜底为空数组
+    if (d.plan && !Array.isArray(d.plan.assignments)) d.plan.assignments = [];
+    if (!Number.isFinite(d.nextDirectorFloor)) d.nextDirectorFloor = aiCount + 1;
     // 旧计划条目回填 position/woken（v2.9 前的计划只有 floor/taskId）：
     // woken 默认=楼层已过（重载后不重复触发）；未到楼层保持 false，由唤醒条件接管
     if (d.plan?.runFloor !== undefined && Array.isArray(d.plan.assignments)) {
@@ -552,7 +555,7 @@ async function tick() {
                     batch.push({ type: 'director', config: dirCfg, displayName: dirCfg.displayName || '导演模式', triggeredAt: 1, sourceFloor: cnt, source: 'auto' });
                     directorQueued = true;
                 }
-            } else if (dmeta.plan) {
+            } else if (dmeta.plan && Array.isArray(dmeta.plan.assignments)) {
                 // 到期即跑（不卡死）：计划条目按 position/floor 唤醒，错过计划楼层的
                 // （锚点错位/换楼/漏检）自动顺延到下一个处理楼层执行，永不过期作废
                 const due = dmeta.plan.assignments
@@ -808,8 +811,9 @@ async function runDirectorTask(d, ctxObj) {
 
     const round = runSeq;
     const prevPlan = dmeta.plan;
+    const prevAssignments = (prevPlan?.assignments && Array.isArray(prevPlan.assignments)) ? prevPlan.assignments : [];
     const nameOf = (taskId) => taskList.find((t) => t.id === taskId)?.name || `任务#${taskId}`;
-    const lastCycle = (prevPlan?.assignments || []).map((a) => ({
+    const lastCycle = prevAssignments.map((a) => ({
         position: a.floor - prevPlan.runFloor + 1,
         taskId: a.taskId,
         name: nameOf(a.taskId),
@@ -821,7 +825,7 @@ async function runDirectorTask(d, ctxObj) {
     }));
     const overdue = computeOverdue(dmeta, taskList, round);
     const lastStats = prevPlan ? {
-        planned: prevPlan.assignments.length,
+        planned: prevAssignments.length,
         woken: dmeta.woken.length,
         manual: dmeta.manualRuns || 0,
     } : null;
@@ -905,8 +909,8 @@ async function runDirectorTask(d, ctxObj) {
     if (prevPlan && Number.isFinite(prevPlan.runFloor)) {
         dmeta.history.unshift({
             runFloor: prevPlan.runFloor,
-            taskIds: prevPlan.assignments.map((a) => a.taskId),
-            planned: prevPlan.assignments.length,
+            taskIds: prevAssignments.map((a) => a.taskId),
+            planned: prevAssignments.length,
             woken: dmeta.woken.length,
             manual: dmeta.manualRuns || 0,
         });
