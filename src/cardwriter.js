@@ -598,7 +598,7 @@ function buildRoadmapContent(stepId) {
             lines.push(`当前：合成阶段（${overview.name}）。${overview.brief}。`);
         } else if (idx >= 0) {
             lines.push(`当前：第${idx + 1}/${total}步——${cur.id} ${cur.name}，${cur.brief}。`);
-            lines.push('每个步骤都可以反复工作：产出按记录入库，RUBY不自动切换，创作者自己决定何时走下一步。');
+            lines.push('每个步骤都可以反复工作：产出按记录入库，RUBY不自动顺延。创作者说切换时输出 <ruby切换/>；创作者的需求明确属于其他步骤（跨步/回补）时，直接输出 <ruby切换 步骤="StepX"/> 跳过去并用一句话告知。');
         } else {
             lines.push(`当前：${cur.id} ${cur.name}——${cur.brief}（${cur.special ? '特殊步骤，仅手动进入；重新点击步骤卡可刷新清点' : '工具步骤，不在主流程序列中'}）。`);
         }
