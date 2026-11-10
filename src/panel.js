@@ -314,6 +314,10 @@ function buildShellHtml() {
                             </div>
                             <div id="ra_pure_manual_tip" class="tip" style="margin:0 0 8px;"></div>
                             <div id="ra_manual_buttons" style="display:flex;flex-wrap:wrap;gap:10px;"><span>加载中...</span></div>
+                            <div style="margin-top:12px;padding:8px 10px;border:1.5px dashed #C41E3A;border-radius:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                                <button id="ra_director_reset" class="btn red small">🧹 清除导演计划并重排</button>
+                                <span style="font-size:12px;color:#888;">排障工具——作废当前导演计划（待触发任务全部作废）并让导演按当前正文立即重新规划；导演卡死、计划异常、任务不触发时使用</span>
+                            </div>
                             <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                                 <button id="ra_restore_snapshot" class="btn outline small" title="把最近一次分析任务写入输出条目之前的内容恢复回去——分析出错覆盖了好结果时用">⏪ 恢复上一层快照</button>
                                 <span id="ra_restore_snapshot_info" style="font-size:12px;color:#888;"></span>
@@ -1448,6 +1452,16 @@ function wirePlayerSections() {
         window.toastr?.success?.(e.target.checked
             ? '已开启无字符上限：正文不再截断，全部完整注入'
             : '已关闭无字符上限：恢复默认20万字符上限（超出部分末尾截断抛弃）');
+    });
+    on($('ra_director_reset'), 'click', async () => {
+        if (!window.confirm('清除当前导演计划并立即重新排期？\n旧计划的待触发任务全部作废，导演按当前正文重新规划。')) return;
+        try {
+            engine.clearDirectorPlan();
+            await engine.forceRun('director');
+            window.toastr?.success?.('导演计划已清除，重新排期完成');
+        } catch (e) {
+            window.toastr?.error?.(e.message || '重排失败', '', { timeOut: 6000 });
+        }
     });
     on($('ra_restore_snapshot'), 'click', async () => {
         const snap = getLastOutputSnapshot();

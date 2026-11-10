@@ -461,6 +461,26 @@ function computeOverdue(dmeta, taskList, runSeq) {
         .slice(0, 6);
 }
 
+/**
+ * 清除当前导演计划（排障用）：作废计划与本周期唤醒记录，下次导演位提到下一楼。
+ * 配合 forceRun('director') 即"清除并立即重排"——旧计划的待触发任务全部作废，
+ * 导演按当前正文从干净状态重新规划。
+ */
+export function clearDirectorPlan() {
+    const c = ctx();
+    if (!c) throw new Error('SillyTavern context unavailable');
+    const aiCount = reader.countAiReplies(c.chat);
+    const dmeta = ensureDirectorMeta(aiCount);
+    if (!dmeta) throw new Error('聊天元数据不可用');
+    dmeta.plan = null;
+    dmeta.woken = [];
+    dmeta.manualRuns = 0;
+    dmeta.nextDirectorFloor = aiCount + 1;
+    saveDirectorMeta();
+    emitState();
+    log(`director plan cleared (troubleshooting): next director floor -> ${dmeta.nextDirectorFloor}`);
+}
+
 /** 总结替代（普通任务与导演共用）：书签→总结边界之间的楼层换为总结文本，边界之后保持原文。
  *  只改 inc.text（分析素材），关键词扫描、楼层计数与书签均不受影响 */
 function applySummaryReplacement(c, inc, providerSummary, customTags = []) {
