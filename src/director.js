@@ -158,7 +158,7 @@ export function buildDirectorPrompt(p) {
         lines.push('下次导演间隔: 12');
     }
     lines.push('```');
-    lines.push(`要求：位置为2~${p.aggressive ? '下次导演间隔减1' : L}的整数；任务写任务清单中的task id；按位置从小到大排列；每个任务最多出现一次。${p.aggressive ? '"下次导演间隔"由你决定：几整数K（2~60），代表K次AI回复后你再次出现——按剧情节奏自定，剧情密集处可短、铺垫期可长。' : ''}`);
+    lines.push(`要求：位置是"周期内的第几次AI回复"的相对序号（2~${p.aggressive ? '下次导演间隔减1' : L}的整数），与对话的绝对楼层数完全无关——不管对话已经进行到第几楼，每个周期都从位置2开始重新排，禁止把正文或计划里出现的楼层数当作位置填入。任务写任务清单中的task id；按位置从小到大排列；每个任务最多出现一次。位置写错也不会有问题，RUBY会自动折算归位。${p.aggressive ? '"下次导演间隔"由你决定：整数K（2~60），代表K次AI回复后你再次出现——按剧情节奏自定，剧情密集处可短、铺垫期可长。' : ''}`);
 
     return lines.join('\n\n');
 }
@@ -253,7 +253,9 @@ export function parseDirectorSchedule(text, taskList) {
 }
 
 /**
- * 校验并规范化调度：剔除越界位置/未启用任务，同任务去重（保留最靠前位置），间隔违规仅警告。
+ * 校验并规范化调度：同任务去重（保留最靠前位置），间隔违规仅警告。
+ * 位置越界不剔除而是按周期折算归位——导演把绝对楼层当位置填写、或周期理解错位时，
+ * 任务保留并归位到合法周期位置，绝不因理解错楼层而整周期空转（卡死）。
  * @param {number} opts.maxPosition 位置合法上限（普通模式=周期长度；激进模式=下次导演间隔-1）
  * @returns {{assignments:{position:number,taskId:number}[], warnings:string[], retryable:boolean, reason:string}}
  */
@@ -261,22 +263,34 @@ export function validateSchedule(assignments, { maxPosition, minSpacing, taskLis
     const enabled = new Map(taskList.map((t) => [t.id, t]));
     const warnings = [];
     const byTask = new Map();
+    const max = Math.round(Number(maxPosition));
+    const span = max - 1;
+    // 周期折算：任意整数归位到 2..max（mod 环形），把"绝对楼层当位置"的误解无害化
+    const wrapPos = (n) => ((((n - 2) % span) + span) % span) + 2;
     for (const a of [...assignments].sort((x, y) => x.position - y.position)) {
-        const pos = Math.round(Number(a.position));
         const taskId = Math.round(Number(a.taskId));
-        if (!Number.isFinite(pos) || pos < 2 || pos > maxPosition) {
-            warnings.push(`位置${a.position}越界（合法范围2~${maxPosition}），已剔除`);
-            continue;
-        }
-        if (!enabled.has(taskId)) {
+        if (!Number.isFinite(taskId) || !enabled.has(taskId)) {
             warnings.push(`task${a.taskId}不在启用任务清单中，已剔除`);
             continue;
         }
-        if (byTask.has(taskId)) {
-            warnings.push(`task${taskId}出现多次，仅保留最早位置`);
+        const raw = Math.round(Number(a.position));
+        if (!Number.isFinite(raw)) {
+            warnings.push(`位置无法解析，已剔除`);
             continue;
         }
-        byTask.set(taskId, pos);
+        if (max < 2) {
+            warnings.push(`合法位置范围为空（导演间隔过短），位置${raw}已剔除`);
+            continue;
+        }
+        let pos;
+        if (raw < 2 || raw > max) {
+            pos = wrapPos(raw);
+            warnings.push(`位置${raw}越界（合法2~${max}，疑似把绝对楼层当成了位置），已按周期折算为位置${pos}——任务保留不卡死`);
+        } else {
+            pos = raw;
+        }
+        const prev = byTask.get(taskId);
+        if (prev === undefined || pos < prev) byTask.set(taskId, pos);
     }
     const final = [...byTask.entries()]
         .map(([taskId, position]) => ({ position, taskId }))

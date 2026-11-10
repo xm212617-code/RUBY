@@ -430,6 +430,14 @@ function ensureDirectorMeta(aiCount) {
     d.history ||= [];
     d.woken ||= [];
     d.manualRuns ||= 0;
+    // 旧计划条目回填 position/woken（v2.9 前的计划只有 floor/taskId）：
+    // woken 默认=楼层已过（重载后不重复触发）；未到楼层保持 false，由唤醒条件接管
+    if (d.plan?.runFloor !== undefined && Array.isArray(d.plan.assignments)) {
+        for (const a of d.plan.assignments) {
+            if (!Number.isFinite(a.position) && Number.isFinite(a.floor)) a.position = a.floor - d.plan.runFloor + 1;
+            if (a.woken === undefined) a.woken = Number.isFinite(a.floor) ? a.floor <= aiCount : false;
+        }
+    }
     return d;
 }
 
@@ -525,17 +533,23 @@ async function tick() {
                     directorQueued = true;
                 }
             } else if (dmeta.plan) {
-                for (const a of dmeta.plan.assignments.filter((x) => x.floor === cnt)) {
+                // 到期即跑（不卡死）：计划条目按 position/floor 唤醒，错过计划楼层的
+                // （锚点错位/换楼/漏检）自动顺延到下一个处理楼层执行，永不过期作废
+                const due = dmeta.plan.assignments
+                    .filter((a) => !a.woken && cnt >= a.floor)
+                    .sort((x, y) => (x.floor - y.floor) || (x.position - y.position));
+                for (const a of due) {
                     const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
-                    if (!task) continue;
+                    if (!task) { a.woken = true; continue; }
                     const type = `task_${task.id}`;
-                    const idemKey = `dir_${cnt}_${type}`;
+                    const idemKey = `dir_${a.floor}_${type}`;
                     if (state.triggered.has(idemKey)) {
-                        log(`idempotent skip: ${task.displayName} (floor ${cnt})`);
+                        a.woken = true;
                         continue;
                     }
                     state.triggered.add(idemKey);
-                    batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: cnt - dmeta.plan.runFloor + 1, sourceFloor: cnt, source: 'director' });
+                    a.woken = true;
+                    batch.push({ type, config: task, displayName: task.displayName || `任务#${task.id}`, triggeredAt: a.position ?? (cnt - dmeta.plan.runFloor + 1), sourceFloor: cnt, source: 'director' });
                     dmeta.woken.push({ floor: cnt, taskId: task.id });
                     saveDirectorMeta();
                 }
@@ -879,8 +893,8 @@ async function runDirectorTask(d, ctxObj) {
         dmeta.history = dmeta.history.slice(0, 5);
     }
     // 位置换算为绝对楼层只做一次：后续计划条目/通知都用这份带 floor 的清单，
-    // （此前直接在 validated.assignments（仅 position/taskId）上取 a.floor → 通知与计划条目显示“第undefined楼”）
-    const plannedAssignments = validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, taskId: a.taskId }));
+    // position 保留周期相对序号（唤醒/展示用），woken 标记到期即跑状态
+    const plannedAssignments = validated.assignments.map((a) => ({ floor: runFloor + a.position - 1, position: a.position, taskId: a.taskId, woken: false }));
     dmeta.plan = {
         runFloor,
         assignments: plannedAssignments,
