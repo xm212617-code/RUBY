@@ -736,6 +736,11 @@ export async function forceRun(kind, taskId, options = {}) {
 
     const runResults = await runPipeline(batch);
     // 结构化结果：HTML 前端拿 outputs 里的 outputKey 逐个 /ruby read 刷新
+    // 导演批次不产出 runResults 条目（排期结果写聊天元数据+计划条目，非输出条目）：
+    // 走到这里且批内唯一任务是导演 = runDirectorTask 已成功返回，直接按成功契约返回
+    if (batch.length === 1 && batch[0].type === 'director') {
+        return { ok: true, summary: '导演排期完成', completed: 1, failed: 0, tasks: [{ name: batch[0].displayName || '导演模式', ok: true, outputKey: '' }] };
+    }
     const completed = runResults.filter((r) => r.ok).length;
     const failed = runResults.length - completed;
     return {
@@ -990,7 +995,7 @@ export async function runPipeline(taskBatch) {
         if (!charBook) {
             warn('character world book not found');
             notify('warning', 'RUBY：未找到角色世界书，无法执行分析');
-            return;
+            return runResults; // forceRun 消费返回值做统计，裸 return 会对 undefined 调 .filter
         }
         log(`pipeline start | char book=${charBook} | chat book=${chatBook || '无'} | tasks=${taskBatch.length}`);
 
@@ -1082,7 +1087,7 @@ export async function runPipeline(taskBatch) {
             providerSummary, customTags, apiCfg, genParams, chatIdAtStart, characterIdAtStart,
             ignoreLatest,
         });
-        return; // finally 复位 running
+        return runResults; // forceRun 消费返回值做统计（.filter），裸 return 会抛 TypeError
     }
 
         for (let taskIndex = 0; taskIndex < taskBatch.length; taskIndex++) {
@@ -1096,7 +1101,7 @@ export async function runPipeline(taskBatch) {
             try {
                 if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
                     warn('chat or character changed during pipeline, aborting remaining tasks');
-                    return;
+                    return runResults; // 与下方同类早退保持一致，保证 forceRun 统计安全
                 }
 
                 log(`task ${taskIndex + 1}/${taskBatch.length}: ${taskDisplayName} (${current.source})`);
