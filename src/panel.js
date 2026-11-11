@@ -670,8 +670,16 @@ function buildShellHtml() {
                                     <option value="head">正文前</option>
                                     <option value="tail">正文后</option>
                                 </select>
-                                <input id="ra_marks_new_tag" class="w250" placeholder="纯文字即可，如：状态栏（尖括号自动包裹）">
+                                <input id="ra_marks_new_tag" class="w250" placeholder="纯文字即可，如：状态栏；支持 {{var:变量名}} 动态值（尖括号自动包裹）">
+                                <input id="ra_marks_new_anchor" class="w250" placeholder="可选：锚定标签，如 SceneInfo / report（逗号分隔多候选）" style="max-width:260px;">
+                                <select id="ra_marks_new_side" class="w150" title="锚定行相对位置">
+                                    <option value="before">锚行前</option>
+                                    <option value="after">锚行后</option>
+                                </select>
                                 <button id="ra_marks_add" class="btn green small">➕ 添加格式</button>
+                            </div>
+                            <div class="tip" style="margin-top:6px;">
+                                💡 v3：填了<strong>锚定标签</strong>的锚点不再走头/尾包裹，而是插到正文中首个命中 <code>&lt;锚标签&gt;</code> 行的<strong>锚行前/后</strong>（多个候选取首个命中；全部未命中回退到注入位置）——用于把开/闭标签精确插到 SceneInfo 上方、report/ledger 上方等场景。<code>{{var:变量名}}</code> 在写入时按聊天变量实时替换（如 <code>GamePhase type="{{var:_ruby_phase}}"</code>）。
                             </div>
                         </div>
                     </div>
@@ -1780,6 +1788,7 @@ function renderFormatMarks(data) {
             <span class="form-label">${m.position === 'head' ? '正文前' : '正文后'} #${no}</span>
             <span class="form-value" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 <code style="background:#f0f0e8;padding:2px 6px;border-radius:4px;">&lt;${h(m.tag)}&gt;</code>
+                ${m.relAnchor ? `<code style="background:#fff3d6;padding:2px 6px;border-radius:4px;color:#8a6d1a;">⚓ ${h(m.relAnchor)} ${m.relSide === 'after' ? '行后' : '行前'}</code>` : ''}
                 <span style="flex:1;"></span>
                 <button type="button" class="btn outline small mark-up" data-idx="${idx}" ${firstInGroup ? 'disabled' : ''}>上移</button>
                 <button type="button" class="btn outline small mark-down" data-idx="${idx}" ${lastInGroup ? 'disabled' : ''}>下移</button>
@@ -1806,13 +1815,17 @@ function wireFormatMarks() {
         const tag = String(input.value || '').replace(/[<>]/g, '').trim().slice(0, 60);
         if (!tag) { window.toastr?.warning?.('请填写标签文字（纯文字即可，尖括号自动包裹）'); return; }
         const position = $('ra_marks_new_position').value === 'head' ? 'head' : 'tail';
+        const relAnchor = String($('ra_marks_new_anchor')?.value || '').replace(/[<>]/g, '').trim().slice(0, 120);
+        const relSide = $('ra_marks_new_side')?.value === 'after' ? 'after' : 'before';
         if (config.resolveConfig().data.formatMarks.some((m) => m.tag === tag)) {
             window.toastr?.warning?.(`标签 <${tag}> 已存在（同名标签自动去重）`);
             return;
         }
-        saveFormatMarks((marks) => marks.push({ tag, position }));
+        saveFormatMarks((marks) => marks.push(relAnchor ? { tag, position, relAnchor, relSide } : { tag, position }));
         input.value = '';
-        window.toastr?.success?.(`已添加${position === 'head' ? '正文前' : '正文后'}格式：&lt;${tag}&gt;`.replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+        const anchorEl = $('ra_marks_new_anchor');
+        if (anchorEl) anchorEl.value = '';
+        window.toastr?.success?.(`已添加${relAnchor ? `锚定(${relAnchor} ${relSide})` : position === 'head' ? '正文前' : '正文后'}格式：&lt;${tag}&gt;`.replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
     });
     on($('ra_marks_new_tag'), 'keydown', (e) => {
         if (e.key === 'Enter') $('ra_marks_add')?.click();
@@ -2283,6 +2296,9 @@ function collectTasksFromUI() {
                 : []),
             keywordScanEnabled: !!card.querySelector(`.task-keyword-scan-enabled[data-id="${id}"]`)?.checked,
             keywordScanKeywords: [...card.querySelectorAll(`.task-keyword-scan-input[data-id="${id}"]`)].map((input) => input.value.trim()).filter(Boolean),
+            manualOnly: !!card.querySelector(`.task-manual-only[data-id="${id}"]`)?.checked,
+            readTagMode: card.querySelector(`.task-readtag-mode[data-id="${id}"]`)?.value || '',
+            readTags: (card.querySelector(`.task-readtags[data-id="${id}"]`)?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
             noRecursion: !!card.querySelector(`.task-no-recursion[data-id="${id}"]`)?.checked,
             position: insertPosition,
             depth,
@@ -2389,6 +2405,24 @@ function renderTaskSlots() {
                 <div class="form-row">
                     <span class="form-label">额外关键词</span>
                     <input class="task-extrakeys w250" data-id="${task.id}" value="${h(task.extraKeys || '')}" placeholder="角色名等，逗号分隔">
+                </div>
+                <div class="form-row">
+                    <span class="form-label">标签过滤</span>
+                    <span class="form-value" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <select class="task-readtag-mode w150" data-id="${task.id}" title="阅读时对正文标签的处理">
+                            <option value="">不过滤（原文）</option>
+                            <option value="include" ${task.readTagMode === 'include' ? 'selected' : ''}>只读列出标签（解包内容）</option>
+                            <option value="exclude" ${task.readTagMode === 'exclude' ? 'selected' : ''}>剥除列出标签</option>
+                        </select>
+                        <input class="task-readtags w250" data-id="${task.id}" value="${h((task.readTags || []).join(','))}" placeholder="标签名，逗号分隔，如：maintext">
+                    </span>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">触发方式</span>
+                    <span class="form-value" style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;">
+                        <label class="inline"><input type="checkbox" class="task-manual-only" data-id="${task.id}" ${task.manualOnly ? 'checked' : ''}> 仅手动触发（摘出周期与导演调度，只保留命令/前端手动执行与关键词扫描）</label>
+                        <span style="font-size:11px;color:#888;">适合前端联动任务（索敌/商店/合约等）：打开界面或点按钮时才运行，AI 不自动跑</span>
+                    </span>
                 </div>
                 <div class="form-row">
                     <span class="form-label">正文扫描</span>
@@ -2971,6 +3005,15 @@ function renderDirectorView() {
                     <span style="font-size:12px;color:#666;">次AI回复</span>
                 </div>
                 <div class="form-row">
+                    <span class="form-label">导演专注阅读 <span class="director-help" data-help="默认勾选：排期时正文只读每层首尾各100字（任务清单/参考条目/总结等参考照旧）。全文喂入会稀释输出格式纪律，是导演「输出未包yaml/解析不出位置任务」的主要诱因；排期质量主要取决于任务清单与参考，不需要全文。">?</span></span>
+                    <input type="checkbox" id="ra_director_focus_read" class="director-focus-read" ${dir.focusRead !== false ? 'checked' : ''}>
+                    <span style="font-size:12px;color:#666;">首</span>
+                    <input type="number" class="director-skim-head w120" min="0" max="2000" value="${Number.isFinite(Number(dir.skimHead)) ? Number(dir.skimHead) : 100}">
+                    <span style="font-size:12px;color:#666;">字 + 尾</span>
+                    <input type="number" class="director-skim-tail w120" min="0" max="2000" value="${Number.isFinite(Number(dir.skimTail)) ? Number(dir.skimTail) : 100}">
+                    <span style="font-size:12px;color:#666;">字</span>
+                </div>
+                <div class="form-row">
                     <span class="form-label">激进模式 <span class="director-help" data-help="勾选后导演可以自己决定下一次自己什么时候出现：每次排期时额外输出"下次导演间隔"（几条AI回复后再次执导），不再受固定周期长度约束——剧情密集处可频繁执导，铺垫期可长间隔。同时导演会收到上周期实际表现（计划数/触发数/手动次数）作为排期参考（非激进模式同样收到）。">?</span></span>
                     <input type="checkbox" id="ra_director_aggressive" class="director-aggressive" ${dir.aggressive ? 'checked' : ''}>
                 </div>
@@ -3026,6 +3069,9 @@ function collectDirectorFromUI() {
         aggressive: !!container.querySelector('.director-aggressive')?.checked,
         minSpacing: num('.director-spacing', base.minSpacing, 0),
         retryLimit: num('.director-retry', base.retryLimit, 0),
+        focusRead: !!container.querySelector('.director-focus-read')?.checked,
+        skimHead: num('.director-skim-head', 100, 0),
+        skimTail: num('.director-skim-tail', 100, 0),
         planKey: container.querySelector('.director-plankey')?.value.trim() || '',
         useReferences: [...container.querySelectorAll('.director-ref-cb:checked')].map((el) => el.dataset.var),
     };

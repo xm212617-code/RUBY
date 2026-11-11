@@ -66,6 +66,8 @@ SillyTavern/public/scripts/extensions/third-party/ruby-analyzer
 /ruby cw action=start    开始写卡会话（可加 step=Step3 指定起始步骤）
 /ruby cw action=end      结束写卡会话（草稿保留）
 /ruby cw action=compose  立即扫描聊天中的 <ruby合成> 清单（含当前楼层与历史，等同「手动合成」按钮）
+/ruby read <关键词>      消息内 HTML 只读数据通道（详见「/ruby read」节）
+/ruby write key=<关键词> 消息内 HTML 直写数据通道（详见「/ruby write」节）——不经分析 AI 直接写条目
 ```
 
 ## 消息内 HTML 接口之二：/ruby run（手动分析触发）
@@ -119,6 +121,53 @@ async function analyzeAndRefresh(specs, rerender) {
 ```
 
 与 `/ruby read` 组合即完整闭环：`read`（读）+ `run`（写）。渲染成状态栏、图鉴、进度条还是别的什么，全由前端决定——接口不预设格式。
+
+## 消息内 HTML 数据接口之二：/ruby write（前端直写通道）
+
+给消息内 HTML 前端提供的**直写数据通道**：不经分析 AI，前端把整份内容直接写进世界书条目（不存在则创建）。用于前端自持状态回写——典型如装甲叛客战斗结算：前端掷完骰子算好伤害后，把新敌情 YAML 整体覆写进敌情条目，完整度归零的敌机直接从内容里删掉即完成「删除」。写完向宿主派发 `ruby:chatbooks-changed`（`detail.source:'write'`），监听该事件的面板即时重读，无需轮询。
+
+### 语法
+
+```
+/ruby write key=<关键词> [book=chat|char|<书名>] [var=<变量名>] [content=...] [keys=逗号附加] [comment=...] [constant=true|false] [order=N] [depth=N]
+```
+
+> ⚠ **具名参数必须写在最前**（与 `/ruby read/run` 同款 ST 1.16 语序铁律）。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `key=` | 必填 | 条目关键词（精确匹配已有条目；无则新建） |
+| `book=` | chat | `chat`=聊天世界书（未绑定时按 RUBY 输出书命名规则创建）；`char`=角色（主）世界书；任意书名=全局导入的书 |
+| `var=` | 空 | **推荐**。临时变量名，内容从变量读取（支持多行 YAML）——前端先 `/setvar key=<变量名> <内容>`（或经变量接口），写完引擎自动清空该变量防残留 |
+| `content=` | 空 | 内联单行内容的简写（多行一律走 `var=`） |
+| `keys=` | 空 | 已有条目时要求覆写的完整关键词数组（逗号分隔；新建条目直接用） |
+| `comment=` | 空 | 条目名（写时顺手更新） |
+| `constant=` | false | 新建条目是否蓝灯常驻 |
+| `order=` / `depth=` | 100 / 4 | 仅新建条目生效：@D 位置与深度 |
+
+### 返回契约
+
+```json
+{"ok":true,"book":"ruby-角色名·剧情分析","uid":12,"created":false,"key":"装甲叛客_敌情"}
+```
+
+失败返回文本 `write failed: …`（前端需兜底 parse）。
+
+### 语义细节
+
+- **更新 vs 创建**：条目已存在 → 只更新内容与显式传入的状态字段（keys/comment/constant），位置/深度/灯位等结构不动；不存在 → 按默认模板创建（@D4、order 100、递归双禁、绿灯，`constant=true` 则蓝灯）
+- **整体覆写语义**：content 是整份替换——「删除敌机」这类增量操作由前端在内存里改好列表再整体写回，接口不做条目内编辑
+- **纯机械通道**：本接口与 AI、任务书签、周期调度完全无关，不推进任何阅读进度；与 `/ruby run` 的区别在于写什么由前端说了算，不花一次分析调用
+
+### 前端调用范式（多行 YAML）
+
+```js
+const yaml = serializeEnemies(state.enemies);          // 前端序列化（删掉的敌机已不在列表里）
+await runSlash('/setvar key=_rp_content ' + slashQuote(yaml));   // 经临时变量传递
+const out = await runSlash('/ruby write key=装甲叛客_敌情 var=_rp_content');
+const res = JSON.parse(out);                            // {ok, book, uid, created}
+// ruby:chatbooks-changed 事件已广播——监听方会自动 /ruby read 重读；此处也可主动重读
+```
 
 ## 消息内 HTML 数据接口：/ruby read
 
@@ -175,6 +224,7 @@ RUBY 不只被动等待前端拉取——**每份分析结果写入输出条目�
 |---|---|
 | 每份结果落笔后即时 | `{ key: '沛霖内心', keys: ['沛霖内心'], taskName: '沛霖内心' }` |
 | 批次收尾（整批任务跑完） | `{ keys: ['沛霖内心', '沛霖生理'] }` |
+| `/ruby write` 落笔后即时 | `{ key, keys: [key], source: 'write', book, uid, created }` |
 
 状态栏接收范式（与本项目状态栏实现一致）：
 

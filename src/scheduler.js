@@ -1,4 +1,6 @@
 export function taskPositions(task) {
+    // 仅手动任务（manualOnly）：摘出周期/导演调度，只保留 /ruby task= 手动触发与关键词扫描
+    if (task?.manualOnly) return [];
     if (Array.isArray(task?.cyclePositions) && task.cyclePositions.length > 0) {
         return task.cyclePositions.filter((n) => Number.isFinite(n) && n > 0);
     }

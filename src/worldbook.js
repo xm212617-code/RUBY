@@ -375,6 +375,64 @@ export async function readEntryContent(book, key) {
     return String(found?.entry?.content || '');
 }
 
+/**
+ * 直写接口（供 /ruby write 与消息内 HTML 前端使用）：
+ * 不经分析 AI，前端把整份内容直接写进世界书条目（不存在则创建）。
+ * 典型用途：装甲叛客战斗结算——前端算完骰子后把新敌情 YAML 整体覆写，
+ * 完整度归零的敌机直接从内容里删掉即完成「删除」。
+ * 新建条目默认 @D4、order 100、递归双禁、可注入（constant 按参数）。
+ * 返回 { uid, created }。
+ */
+export async function writeEntryByKey(bookName, options) {
+    const {
+        key, content = '', comment = '', keys = [],
+        constant = false, order = 100, depth = 4,
+    } = options;
+    if (!bookName || !key) throw new Error('writeEntryByKey: book or key missing');
+
+    const primaryKey = String(key).trim();
+    const extraKeys = (Array.isArray(keys) ? keys : String(keys || '').split(','))
+        .map((k) => String(k ?? '').trim()).filter(Boolean);
+    const allKeys = [primaryKey, ...extraKeys];
+
+    let uid;
+    const found = await findEntry(bookName, primaryKey);
+    if (found) {
+        uid = found.uid;
+        log(`write: entry found, updating: ${primaryKey} (uid ${uid})`);
+    } else {
+        const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
+        uid = parseInt(uidRaw, 10);
+        if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
+        // 新建条目：@D4 可注入、递归双禁（与 RUBY 输出条目同款默认）
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position 4`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${depth}`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
+        log(`write: entry created: ${primaryKey}`);
+    }
+
+    if (comment) {
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=comment ${q(String(comment).trim())}`);
+    }
+    if (found && extraKeys.length > 0) {
+        // 已有条目且要求附加关键词：整体覆写 key 数组
+        const keyVar = `_ruby_wk_${Date.now()}`;
+        await st(`/setvar key=${keyVar} ${q(allKeys.join(', '))}`);
+        await st(`/getvar ${keyVar} | /setentryfield file=${q(bookName)} uid=${uid} field=key`);
+    }
+
+    // 内容经临时变量写入（内容可能含竖线/引号/换行，与 writeOutputEntry 同款通道）
+    const contentVar = `_ruby_wc_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
+    await st(`/getvar ${contentVar} | /setentryfield file=${q(bookName)} uid=${uid} field=content`);
+
+    await st(`/setentryfield file=${q(bookName)} uid=${uid} field=constant ${constant ? 1 : 0}`);
+    await persistBook(bookName);
+    return { uid, created: !found };
+}
+
 /** 只恢复条目内容（快照回滚用）：不动 key/位置/状态等其余字段 */
 export async function writeEntryContent(book, key, content) {
     if (!book || !key) throw new Error('chat book or entry key missing');

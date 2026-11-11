@@ -147,17 +147,78 @@ export function initEngine() {
 }
 
 // ---------- 格式保护锚点注入 ----------
-// 注入目标：消息正文（mes）本身——锚点标签每个独占一行，正文前组按序排在正文上方、正文后组按序排在
-// 正文下方，任何情况下不与正文文字同行粘连（包括正文最后一个字）。三个消费方各取所需：
+// 注入目标：消息正文（mes）本身——锚点标签每个独占一行，三个消费方各取所需：
 // - 显示：卡片的 markdownOnly 显示正则把 <标签> 替换为状态栏 HTML（正则机制按惯例在正文上生效）；
 // - 提示词：卡片的 promptOnly 剥离正则（卡内 regex_scripts: promptOnly=true、replace 为空）把标签
 //   从发送给 AI 的提示词中剥掉——即"标签在正文中，但不发送给 AI"的正则机制；
 // - RUBY 阅读：reader.extractContent 自动剥离本插件注入的标签，分析管线不受污染。
-function buildFormatMarkWrap(marks) {
+// v3 锚点字段：{ tag, position: 'head'|'tail', relAnchor?, relSide? }
+// - tag 支持 {{var:NAME}} 动态值：写入时从聊天变量替换（读不到 → 空串）
+// - relAnchor：逗号分隔的锚标签名候选；正文中按行查找 <锚标签>/</锚标签>（取首个命中行），
+//   命中 → 该锚点插到那一行的 relSide（before/after）；全部未命中 → 回退 position（head=正文最上、tail=正文最下）
+function readChatVars() {
+    try {
+        const c = ctx();
+        const v = typeof c.getVariables === 'function' ? c.getVariables() : null;
+        return v && typeof v === 'object' ? v : {};
+    } catch {
+        return {};
+    }
+}
+
+function resolveMarkVars(tag, vars) {
+    return String(tag || '').replace(/\{\{var:([^}]+)\}\}/g, (_, name) => {
+        const v = vars ? vars[String(name).trim()] : undefined;
+        return v === undefined || v === null ? '' : String(v);
+    });
+}
+
+function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 在正文行数组中找锚标签所在行（候选逗号分隔，取首个命中行；未命中返回 -1） */
+function findAnchorLine(lines, relAnchor) {
+    const candidates = String(relAnchor || '').split(',').map((s) => s.trim()).filter(Boolean);
+    for (const cand of candidates) {
+        const re = new RegExp(`<\\/?${escapeRegExp(cand)}[\\s>/]`, 'i');
+        for (let i = 0; i < lines.length; i++) {
+            if (re.test(lines[i])) return i;
+        }
+    }
+    return -1;
+}
+
+/** 按配置把锚点写入正文行数组（相对定位优先，未命中回退 head/tail；返回 { mes, tags }） */
+function applyFormatMarks(mes, marks, vars) {
     const list = Array.isArray(marks) ? marks : [];
-    const head = list.filter((m) => m.position === 'head').map((m) => `<${m.tag}>`).join('\n');
-    const tail = list.filter((m) => m.position === 'tail').map((m) => `<${m.tag}>`).join('\n');
-    return { head, tail, tags: list.map((m) => m.tag), count: list.length };
+    const resolved = list
+        .map((m) => ({ ...m, value: resolveMarkVars(m.tag, vars) }))
+        .filter((m) => m.value);
+    const tags = resolved.map((m) => m.value);
+    if (resolved.length === 0) return { mes, tags };
+
+    let lines = mes.split('\n');
+    const inserts = [];
+    const fallbackHead = [];
+    const fallbackTail = [];
+    for (const m of resolved) {
+        if (m.relAnchor) {
+            const idx = findAnchorLine(lines, m.relAnchor);
+            if (idx >= 0) {
+                inserts.push({ at: m.relSide === 'after' ? idx + 1 : idx, value: m.value });
+                continue;
+            }
+        }
+        (m.position === 'tail' ? fallbackTail : fallbackHead).push(m.value);
+    }
+    // 行号从大到小插入，避免位移
+    inserts.sort((a, b) => b.at - a.at);
+    for (const ins of inserts) lines.splice(ins.at, 0, ins.value);
+    let out = lines.join('\n');
+    if (fallbackHead.length) out = `${fallbackHead.join('\n')}\n${out}`;
+    if (fallbackTail.length) out = `${out}\n${fallbackTail.join('\n')}`;
+    return { mes: out, tags };
 }
 
 function rerenderMarked(c, idx, m) {
@@ -184,9 +245,10 @@ function tidyAfterStrip(mes) {
 
 /**
  * 同步格式锚点到指定消息（无 id 时取最后一层）的正文。幂等：
- * 先剥掉本插件此前注入的旧标签（配置可能已变更）与正文中已存在的当前标签（旧卡 LLM 自行输出的场景，
- * 无论独立成行还是与正文粘连），边界空行收敛后按当前配置统一重包——每个锚点恰好出现一次、
- * 各自独占一行、位置符合配置。格式清空时把此前注入的标签全部撤除，正文回落原样。
+ * 先剥掉本插件此前注入的旧标签（记录的是动态解析后的完整标签文本，phase 变化也能剥干净）与
+ * 正文中已存在的当前标签（旧卡 LLM 自行输出的场景，无论独立成行还是与正文粘连），边界空行收敛后
+ * 按当前配置统一重包——相对定位锚点插到锚行前/后，其余按 head/tail 组包裹，每个锚点恰好出现一次、
+ * 各自独占一行。格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
 export function syncFormatMark(messageId) {
     const c = ctx();
@@ -198,7 +260,11 @@ export function syncFormatMark(messageId) {
     if (!String(m.mes || '').trim()) return;
 
     const { data } = config.resolveConfig();
-    const { head, tail, tags, count } = buildFormatMarkWrap(data.formatMarks);
+    const marks = Array.isArray(data.formatMarks) ? data.formatMarks : [];
+    const vars = readChatVars();
+    const resolvedTags = marks
+        .map((x) => resolveMarkVars(x.tag, vars))
+        .filter(Boolean);
 
     m.extra ||= {};
     // 清理 v2.7.0 旧版（display_text 方案）残留：标记为 true 且 display_text 存在 = 本插件注入过
@@ -206,16 +272,16 @@ export function syncFormatMark(messageId) {
         delete m.extra.display_text;
     }
 
-    // 此前注入的标签（配置可能已变更/清空）先撤干净
+    // 此前注入的标签（动态值可能已变化：记录的是上次解析结果）先撤干净，再撤当前解析值
     const applied = Array.isArray(m.extra.rubyFormatMarked) ? m.extra.rubyFormatMarked : [];
-    const stripSet = [...new Set([...applied, ...tags])].filter(Boolean);
+    const stripSet = [...new Set([...applied, ...resolvedTags])].filter(Boolean);
     let mes = String(m.mes || '');
     for (const t of stripSet) {
         mes = mes.split(`<${t}>`).join('');
     }
     mes = tidyAfterStrip(mes);
 
-    if (count === 0) {
+    if (marks.length === 0 || resolvedTags.length === 0) {
         if (mes !== m.mes || applied.length > 0) {
             m.mes = mes;
             delete m.extra.rubyFormatMarked;
@@ -225,13 +291,12 @@ export function syncFormatMark(messageId) {
         return;
     }
 
-    // 包裹：锚点块各自独占一行，与正文之间强制换行——绝不与正文文字同行
-    mes = [head, mes, tail].filter(Boolean).join('\n');
-    if (mes === m.mes) {
+    const { mes: wrapped, tags } = applyFormatMarks(mes, marks, vars);
+    if (wrapped === m.mes) {
         if (JSON.stringify(m.extra.rubyFormatMarked) !== JSON.stringify(tags)) m.extra.rubyFormatMarked = tags;
         return;
     }
-    m.mes = mes;
+    m.mes = wrapped;
     m.extra.rubyFormatMarked = tags;
     rerenderMarked(c, idx, m);
     saveChatSafe(c);
@@ -265,7 +330,8 @@ export function reinit() {
     }
     const preset = config.getActivePreset(data);
     const dirCfg = preset.director;
-    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled));
+    // 仅手动任务（manualOnly）不参与导演激活判定——全部任务手动化时导演自动休眠
+    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled && !t.manualOnly));
     const len = scheduler.cycleLength(preset.startupTask, preset.tasks);
 
     // 导演模式停用时清除遗留的导演元数据（重新启用会重新锚定，符合"回复1~2后首跑"）
@@ -531,7 +597,8 @@ async function tick() {
     }
     const preset = config.getActivePreset(data);
     const dirCfg = preset.director;
-    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled));
+    // 仅手动任务（manualOnly）不参与导演激活判定——全部任务手动化时导演自动休眠
+    const dirActive = !!(dirCfg?.enabled && (preset.tasks || []).some((t) => t.enabled && !t.manualOnly));
 
     // —— 导演模式：绝对楼层调度——导演在 nextDirectorFloor 运行，任务按计划楼层唤醒（静态位置被接管）——
     if (dirActive) {
@@ -562,7 +629,7 @@ async function tick() {
                     .filter((a) => !a.woken && cnt >= a.floor)
                     .sort((x, y) => (x.floor - y.floor) || (x.position - y.position));
                 for (const a of due) {
-                    const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled);
+                    const task = preset.tasks.find((t) => t.id === a.taskId && t.enabled && !t.manualOnly);
                     if (!task) { a.woken = true; continue; }
                     const type = `task_${task.id}`;
                     const idemKey = `dir_${a.floor}_${type}`;
@@ -776,12 +843,22 @@ async function runDirectorTask(d, ctxObj) {
         ? `独立（model=${effApiCfg.model || '未设置'}｜url=${dirApi.url ? '已覆盖' : '跟随'}｜key=${dirApi.key ? '已覆盖' : '跟随'}）`
         : '未启用 — 跟随RUBY基础API'}`);
 
+    // 导演专注阅读（focusRead，默认开）：每层只读首尾各 skimHead/skimTail 字——
+    // 排期不需要全文（任务清单/参考池/总结已足够参考），长文稀释格式纪律是"输出未包yaml/
+    // 解析不出位置任务"的主要诱因
+    const skim = (dirCfg.focusRead !== false)
+        ? {
+            head: Number.isFinite(Number(dirCfg.skimHead)) ? Number(dirCfg.skimHead) : 100,
+            tail: Number.isFinite(Number(dirCfg.skimTail)) ? Number(dirCfg.skimTail) : 100,
+        }
+        : null;
+
     // 增量正文（导演独立书签）；手动执行时书签已推进会导致空读，重置重读
-    let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary, ignoreLatest });
+    let inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary, ignoreLatest, skim });
     if (inc.count === 0 || !inc.text) {
         if (d.source === 'force') {
             reader.resetBookmark('director');
-            inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary });
+            inc = reader.incrementalRead('director', customTags, { noWindowLimit: !!providerSummary, skim });
             log(`director force run: bookmark reset, re-reading ${inc.count} floors`);
         } else {
             log('director: no new floors since last run (bookmark at current), scheduling with empty context');
@@ -791,7 +868,8 @@ async function runDirectorTask(d, ctxObj) {
     const contextText = reader.capText(inc.text, cfgData.unlimitedInputChars ? Infinity : undefined).text;
 
     // 任务清单：id+名称必发；简介手写优先，否则从提示词条目自动提取约200字切面
-    const enabledTasks = (preset.tasks || []).filter((t) => t.enabled);
+    // 仅手动任务（manualOnly）不进入导演候选——它们只由前端/命令手动触发
+    const enabledTasks = (preset.tasks || []).filter((t) => t.enabled && !t.manualOnly);
     const taskList = [];
     for (const t of enabledTasks) {
         let brief = String(t.directorSummary || '').trim();
@@ -1141,6 +1219,14 @@ export async function runPipeline(taskBatch) {
                 }
 
                 applySummaryReplacement(c, inc, providerSummary, customTags);
+
+                // 任务级标签过滤（v3）：readTagMode='include' 只读列出标签内容（解包），'exclude' 剥除列出标签块；
+                // 未配置则原文。过滤在截断之前——让字符上限吃在过滤后的有效文本上。
+                const filteredText = reader.applyTaskTagFilter(inc.text, taskConfig);
+                if (filteredText !== inc.text) {
+                    log(`task tag filter [${taskConfig.readTagMode}]: ${taskDisplayName} ${inc.text.length} → ${filteredText.length} chars`);
+                    inc.text = filteredText;
+                }
 
                 // 全局字符上限：默认 20 万，只截断对话正文（保留靠前部分、抛弃后续剩余正文）；
                 // 玩家面板勾选"无字符上限"后传 Infinity，正文永不截断。

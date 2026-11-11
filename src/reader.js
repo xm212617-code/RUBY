@@ -242,6 +242,12 @@ export function incrementalRead(taskKey, customTags = [], options = {}) {
         const role = isUserMsg(m) ? '{{user}}' : (m.name || charName);
         let text = extractContent(m.mes || '', customTags);
         text = cleanText(text);
+        // 专注阅读（skim）：每层只保留首 head 字 + 尾 tail 字——导演排期不需要全文，其他参考照旧
+        if (options.skim && Number.isFinite(options.skim.head) && options.skim.head >= 0 && text.length > (options.skim.head || 0) + (options.skim.tail || 0)) {
+            const headPart = text.slice(0, options.skim.head);
+            const tailPart = (options.skim.tail || 0) > 0 ? `……${text.slice(-options.skim.tail)}` : '……';
+            text = `${headPart}${tailPart}`;
+        }
         if (text) lines.push(`【${role}】${text}`);
     }
     return {
@@ -908,4 +914,42 @@ export function getBaibaibookStatus() {
     const boundary = at === 'before' ? Math.max(0, floor - 1) : floor;
     if (boundary < 0) return null;
     return { revision: Number(snapshot.revision) || 0, boundary };
+}
+
+/**
+ * 任务级标签过滤（v3）：随任务配置 readTagMode/readTags 生效。
+ * - include：只保留列出标签的内容（解包标签本身），按出现顺序拼接；全部未命中回退原文
+ * - exclude：剥除列出标签的整个块（含标签行）
+ * 都未配置则原文照旧——总结接口替换后的文本同样适用（在 applySummaryReplacement 之后调用）。
+ */
+export function applyTaskTagFilter(text, taskConfig) {
+    const mode = String(taskConfig?.readTagMode || '').toLowerCase();
+    const tags = Array.isArray(taskConfig?.readTags)
+        ? taskConfig.readTags.map((t) => String(t || '').trim()).filter(Boolean)
+        : (typeof taskConfig?.readTags === 'string'
+            ? taskConfig.readTags.split(',').map((s) => s.trim()).filter(Boolean)
+            : []);
+    if (!text || tags.length === 0 || (mode !== 'include' && mode !== 'exclude')) return text;
+    const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (mode === 'exclude') {
+        let out = text;
+        for (const t of tags) {
+            const re = new RegExp(`[ \\t]*<${esc(t)}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${esc(t)}>[ \\t]*\\n?`, 'gi');
+            out = out.replace(re, '\n');
+        }
+        return out.replace(/\n{3,}/g, '\n\n').trim();
+    }
+    // include：收集全部命中（按位置排序后拼接）
+    const found = [];
+    for (const t of tags) {
+        const re = new RegExp(`<${esc(t)}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${esc(t)}>`, 'gi');
+        let m;
+        while ((m = re.exec(text)) !== null) {
+            found.push({ start: m.index, content: (m[1] || '').trim() });
+            if (m.index === re.lastIndex) re.lastIndex++;
+        }
+    }
+    found.sort((a, b) => a.start - b.start);
+    if (found.length === 0) return text;
+    return found.map((f) => f.content).join('\n\n');
 }

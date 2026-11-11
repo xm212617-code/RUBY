@@ -1,4 +1,4 @@
-import { ctx, log, warn } from './src/env.js';
+import { ctx, log, warn, st } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
 import { initCardWriter, startSession, endSession, getState as getCwState, composeFromChat } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
@@ -119,6 +119,64 @@ async function rubyCommandCallback(args, text) {
                 return `read failed: ${e?.message || e}`;
             }
         }
+        if (sub === 'write') {
+            // /ruby write key=<关键词> [book=chat|char|<书名>] [var=<变量名>] [content=...] [keys=...] [comment=...] [constant=true|false] [order=N] [depth=N]
+            // 消息内 HTML 前端的直写数据通道：不经分析 AI，把整份内容直接写进世界书条目
+            //（不存在则创建，默认 @D4/order100/递归双禁；条目存在则只更新内容与状态字段）。
+            // 典型用途：装甲叛客战斗结算——前端掷完骰子后把新敌情 YAML 整体覆写，
+            // 完整度归零的敌机从内容里删掉即完成「删除」。写完派发 ruby:chatbooks-changed 通知前端重读。
+            const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
+            const key = String(args?.key ?? '').trim();
+            if (!key) {
+                return 'usage: /ruby write key=<关键词> [book=chat] [var=<变量名>] [content=...] [keys=逗号附加] [comment=...] [constant=true|false] [order=N] [depth=N]';
+            }
+            const bookRaw = String(args?.book || 'chat').trim();
+            const book = bookRaw.toLowerCase();
+            try {
+                let bookName;
+                if (book === 'chat') {
+                    // 优先用已绑定的聊天书；未绑定则按 RUBY 输出书命名规则创建
+                    bookName = (await worldbook.getExistingChatBookName()) || (await worldbook.getChatBookName());
+                } else if (book === 'char') {
+                    bookName = await worldbook.getCharBookName();
+                } else {
+                    bookName = bookRaw;
+                }
+                if (!bookName) return 'write failed: no world book available';
+
+                // 内容来源：var= 临时变量（推荐，支持多行 YAML）> content= 内联单行
+                let content = '';
+                const varName = String(args?.var || '').trim();
+                if (varName) {
+                    content = String(await st(`/getvar ${varName}`) ?? '').trim();
+                    // 用完即清，防变量残留
+                    try { await st(`/setvar key=${varName} ""`); } catch { /* 清理失败不影响写入 */ }
+                } else {
+                    content = String(args?.content ?? '');
+                }
+
+                const result = await worldbook.writeEntryByKey(bookName, {
+                    key,
+                    content,
+                    keys: String(args?.keys || ''),
+                    comment: String(args?.comment || ''),
+                    constant: flag(args?.constant),
+                    order: parseInt(String(args?.order || '100'), 10) || 100,
+                    depth: parseInt(String(args?.depth || '4'), 10) || 4,
+                });
+
+                // 与分析管线同款：写完即广播，前端状态栏/敌情面板即时重读
+                try {
+                    window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed', {
+                        detail: { key, keys: [key], source: 'write', book: bookName, uid: result.uid, created: result.created },
+                    }));
+                } catch { /* 事件失败不影响写入 */ }
+
+                return JSON.stringify({ ok: true, book: bookName, uid: result.uid, created: result.created, key });
+            } catch (e) {
+                return `write failed: ${e?.message || e}`;
+            }
+        }
         if (sub === 'status') {
             const es = getEngineState();
             const lines = [
@@ -168,7 +226,7 @@ async function rubyCommandCallback(args, text) {
             }
             return format(await forceRun('task', taskSpec));
         }
-        return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char|<任意书名>] [raw=true] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
+        return 'usage: /ruby [panel | status | run | reload | preset <名称> | read <关键词> [json=true] [all=true] [book=chat|char|<任意书名>] [raw=true] | write key=<关键词> [book=chat] [var=<变量名>] [content=...] | cw ...]  (run: task=<id> | startup=true | all=true | director=true)';
     } catch (e) {
         return `RUBY error: ${e.message}`;
     }
@@ -212,6 +270,60 @@ function registerRubyCommand() {
                 typeList: [c.ARGUMENT_TYPE.BOOLEAN],
                 isRequired: false,
             }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'key',
+                description: 'write: entry keyword to create or update',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'book',
+                description: 'write: chat (default) | char | any world book name',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'var',
+                description: 'write: temp variable name holding the content (supports multiline YAML)',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'content',
+                description: 'write: inline single-line content (prefer var= for multiline)',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'keys',
+                description: 'write: comma-separated extra keywords',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'comment',
+                description: 'write: entry comment/title',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'constant',
+                description: 'write: blue light (constant inject), default false',
+                typeList: [c.ARGUMENT_TYPE.BOOLEAN],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'order',
+                description: 'write: insertion order for new entries, default 100',
+                typeList: [c.ARGUMENT_TYPE.NUMBER],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'depth',
+                description: 'write: @D depth for new entries, default 4',
+                typeList: [c.ARGUMENT_TYPE.NUMBER],
+                isRequired: false,
+            }),
         );
     }
 
@@ -232,7 +344,7 @@ function registerRubyCommand() {
             returns: 'status text',
             unnamedArgumentList: unnamedArgs,
             namedArgumentList: namedArgs,
-            helpString: 'RUBY analyzer control: open panel, check status, force-run tasks, reload config, switch presets, read worldbook entries.<br>Examples: <code>/ruby panel</code>, <code>/ruby status</code>, <code>/ruby run task=沛霖内心 json=true</code>, <code>/ruby read 沛霖内心 json=true</code>, <code>/ruby reload</code>',
+            helpString: 'RUBY analyzer control: open panel, check status, force-run tasks, reload config, switch presets, read/write worldbook entries.<br>Examples: <code>/ruby panel</code>, <code>/ruby status</code>, <code>/ruby run task=沛霖内心 json=true</code>, <code>/ruby read 沛霖内心 json=true</code>, <code>/ruby write key=装甲叛客_敌情 var=_rp_content</code>, <code>/ruby reload</code>',
             aliases: ['rubyanalyzer'],
             callback: rubyCommandCallback,
         }));

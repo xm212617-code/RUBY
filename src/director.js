@@ -239,6 +239,23 @@ export function parseDirectorSchedule(text, taskList) {
         return { assignments, directorGap, retryable: false, reason: '' };
     }
 
+    // 中文语序层："第3楼：索敌" / "第7层 排查据点" / "第2回合: task1"——模型口语化排期的兜底
+    for (const block of blocks) {
+        for (const line of block.split('\n')) {
+            const m = line.match(/^\s*-?\s*第\s*(\d+)\s*[楼楼层回合]\s*[:：]?\s*(.+)/);
+            if (!m) continue;
+            const pos = parseInt(m[1], 10);
+            for (const part of m[2].split(/[,，、\s]+/)) {
+                const taskId = resolveTaskId(part);
+                if (Number.isFinite(taskId) && Number.isFinite(pos)) assignments.push({ position: pos, taskId });
+            }
+        }
+    }
+    if (assignments.length > 0) {
+        log(`[director] schedule parsed in zh-lenient mode (${assignments.length} entries, gap=${directorGap})`);
+        return { assignments, directorGap, retryable: false, reason: '' };
+    }
+
     // 显式空计划：周期安排: [] / 无
     const explicitEmpty = blocks.some((b) => /周期安排\s*[:：]\s*(\[\s*\]|无|空)/.test(b));
     if (explicitEmpty) {

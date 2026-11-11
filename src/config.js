@@ -37,6 +37,11 @@ export const DEFAULT_DIRECTOR = {
     retryLimit: 2,          // 导演输出格式错乱/不完整时的自动重试次数
     planKey: 'ruby导演计划', // 调度计划写入的聊天世界书条目（保持关闭，仅引擎读取）
     useReferences: [],      // 导演可勾选参考条目池
+    // 导演专注阅读（默认开）：排期只读每层首尾各100字——导演有任务清单/参考池/总结等足够参考，
+    // 全文喂入反而稀释格式纪律（输出未包yaml/解析不出位置任务的主要诱因）
+    focusRead: true,
+    skimHead: 100,
+    skimTail: 100,
 };
 
 const makeDefaultDirectorApi = () => ({
@@ -216,7 +221,13 @@ export function normalizeFormatMarks(raw) {
         const tag = String(item?.tag || '').replace(/[<>]/g, '').trim().slice(0, 60);
         if (!tag || seen.has(tag)) continue;
         seen.add(tag);
-        cleaned.push({ tag, position: item?.position === 'head' ? 'head' : 'tail' });
+        cleaned.push({
+            tag,
+            position: item?.position === 'head' ? 'head' : 'tail',
+            // v3 相对定位（可选）：relAnchor=锚标签名（逗号分隔多候选，取正文首个命中行）；relSide=插到命中行的前/后
+            relAnchor: String(item?.relAnchor || '').replace(/[<>]/g, '').trim().slice(0, 120),
+            relSide: item?.relSide === 'after' ? 'after' : 'before',
+        });
     }
     return [
         ...cleaned.filter((m) => m.position === 'head'),
@@ -295,6 +306,17 @@ export function normalizeTask(raw) {
             ? t.keywordScanKeywords.map((k) => String(k || '').trim()).filter(Boolean)
             : (typeof t.keywordScanKeywords === 'string'
                 ? t.keywordScanKeywords.split(',').map((k) => k.trim()).filter(Boolean)
+                : []),
+        // 仅手动任务：摘出周期/导演自动调度，只保留 /ruby task= 手动触发与关键词扫描（前端联动手动任务用）
+        manualOnly: !!t.manualOnly,
+        // 任务级标签过滤（v3）：readTagMode 'include'=只读列出标签内容（解包）/ 'exclude'=剥除列出标签块；空=原文
+        readTagMode: ['include', 'exclude'].includes(String(t.readTagMode || '').toLowerCase())
+            ? String(t.readTagMode).toLowerCase()
+            : '',
+        readTags: Array.isArray(t.readTags)
+            ? t.readTags.map((k) => String(k || '').trim()).filter(Boolean)
+            : (typeof t.readTags === 'string'
+                ? t.readTags.split(',').map((s) => s.trim()).filter(Boolean)
                 : []),
         useReferences: Array.isArray(t.useReferences) ? t.useReferences.map(String) : [],
         useOutputs: Array.isArray(t.useOutputs) ? t.useOutputs.map(String) : [],
