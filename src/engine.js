@@ -159,10 +159,8 @@ export function initEngine() {
 function readChatVars() {
     try {
         const c = ctx();
-        // /setvar 写入的变量存在 chat_metadata.variables 里——getVariables() 无参直接读这个对象，
-        // 不需要也不支持 {type} 参数
-        const v = typeof c.getVariables === 'function' ? c.getVariables() : null;
-        return v && typeof v === 'object' ? v : {};
+        // chat_metadata.variables 是聊天层变量的真实存储（ST 源码 script.js 导出 chat_metadata）
+        return c?.chat_metadata?.variables || {};
     } catch {
         return {};
     }
