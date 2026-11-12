@@ -10,8 +10,18 @@ import * as worldbook from './src/worldbook.js';
 let commandRegistered = false;
 
 async function rubyCommandCallback(args, text) {
+    // 子命令判定：无名参形式 /ruby <sub> ...（text 承载），或命名式 /ruby read="..."（text 为空，
+    // ST 解析器在无名参之后不再解析命名参数——read 等必须走命名式，args.read 承载键名）
     const rawText = String(text || args?.subcommand || '').trim();
-    const sub = rawText.toLowerCase().split(/\s+/)[0] || 'panel';
+    let sub = rawText ? rawText.toLowerCase().split(/\s+/)[0] : '';
+    if (!sub) {
+        for (const k of ['panel', 'open', 'status', 'preset', 'reload', 'reinit', 'run', 'read', 'write', 'cardwriter', 'cw']) {
+            if (args?.[k] !== undefined && String(args[k]).trim() !== '') {
+                sub = k === 'open' ? 'panel' : k;
+                break;
+            }
+        }
+    }
 
     try {
         if (sub === 'panel' || sub === 'open') {
@@ -87,9 +97,11 @@ async function rubyCommandCallback(args, text) {
             // loadWorldInfo 解析真实 uid，零 toastr、零副作用（不创建书、不写条目）。
             // 默认：聊天世界书（RUBY 分析输出所在）、最佳单条、content 经宏替换。
             // book=char 读角色（主）世界书；raw=true 保留 {{user}} 等宏原文；json=true 返回结构化记录。
+            // 两种调用形式：无名参 /ruby read <关键词>（注意：无名参之后的命名参数会被解析器吞进无名参，
+            //   不可靠）与命名式 /ruby read="关键词"（推荐，键在 args.read）。
             const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
             const positional = rawText.split(/\s+/).slice(1).join(' ').trim();
-            const key = String(args?.key ?? positional).trim();
+            const key = String(args?.key ?? args?.read ?? positional).trim();
             const asJson = flag(args?.json);
             const asAll = flag(args?.all);
             const raw = flag(args?.raw);
@@ -143,7 +155,8 @@ async function rubyCommandCallback(args, text) {
             // 典型用途：装甲叛客战斗结算——前端掷完骰子后把新敌情 YAML 整体覆写，
             // 完整度归零的敌机从内容里删掉即完成「删除」。写完派发 ruby:chatbooks-changed 通知前端重读。
             const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
-            const key = String(args?.key ?? '').trim();
+            // 键支持两种形式：key="..." 与命名式 write="..."（无名参后的命名参数会被解析器吞进无名参）
+            const key = String(args?.key ?? args?.write ?? '').trim();
             if (!key) {
                 return 'usage: /ruby write key=<关键词> [book=chat] [var=<变量名>] [content=...] [keys=逗号附加] [comment=...] [constant=true|false] [order=N] [depth=N]';
             }
@@ -237,7 +250,7 @@ async function rubyCommandCallback(args, text) {
             if (args?.director || flag(args?.director)) {
                 return format(await forceRun('director'));
             }
-            const taskSpec = String(args?.task ?? args?.tasks ?? '').trim();
+            const taskSpec = String(args?.task ?? args?.tasks ?? args?.run ?? '').trim();
             if (!taskSpec) {
                 return 'usage: /ruby run task=<id|任务名|关键词>[,...] [json=true] | /ruby run startup=true | /ruby run all=true | /ruby run director=true';
             }
@@ -285,6 +298,24 @@ function registerRubyCommand() {
                 name: 'all',
                 description: 'force-run all enabled tasks',
                 typeList: [c.ARGUMENT_TYPE.BOOLEAN],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'read',
+                description: 'named-style subcommand: /ruby read="<entry key>" json=true (named args must come before any unnamed token)',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'write',
+                description: 'named-style subcommand: /ruby write="<entry key>" var=<变量名>',
+                typeList: [c.ARGUMENT_TYPE.STRING],
+                isRequired: false,
+            }),
+            c.SlashCommandNamedArgument.fromProps({
+                name: 'subcommand',
+                description: 'unnamed subcommand captured for legacy /ruby <sub> ... form',
+                typeList: [c.ARGUMENT_TYPE.STRING],
                 isRequired: false,
             }),
             c.SlashCommandNamedArgument.fromProps({
