@@ -118,7 +118,10 @@ export async function findEntry(book, exactKey) {
  * 纯读：不创建书、不写条目、不改状态。
  */
 async function readEntriesFromBook(book, key, { all = false } = {}) {
+    // 精确匹配，仅此一种：key 是人类硬编码的标识符（前端数据通道/任务输出键），模糊匹配只会造成
+    // 前缀碰撞误读（装甲叛客_合约 命中 装甲叛客_合约板 之类），无任何合法用途。
     const wanted = String(key || '').trim();
+    if (!wanted) return [];
     const data = await loadBookData(book);
     if (!data?.entries || typeof data.entries !== 'object') return [];
 
@@ -132,25 +135,12 @@ async function readEntriesFromBook(book, key, { all = false } = {}) {
         constant: !!entry?.constant,
     });
 
-    const exact = [];
-    const fuzzy = [];
+    const hits = [];
     for (const [uid, entry] of Object.entries(data.entries)) {
-        const keys = entryKeys(entry);
-        if (keys.length === 0 && !wanted) continue; // 无关键词时跳过无键条目
-        if (!wanted) {
-            fuzzy.push(recordOf(uid, entry));
-        } else if (keys.includes(wanted)) {
-            exact.push(recordOf(uid, entry));
-        } else if (keys.some((k) => k.includes(wanted))) {
-            fuzzy.push(recordOf(uid, entry));
-        }
+        if (entryKeys(entry).includes(wanted)) hits.push(recordOf(uid, entry));
     }
-
-    if (all) {
-        const exactUids = new Set(exact.map((r) => r.uid));
-        return [...exact, ...fuzzy.filter((r) => !exactUids.has(r.uid))];
-    }
-    return exact.length ? [exact[0]] : (fuzzy.length ? [fuzzy[0]] : []);
+    if (all) return hits;
+    return hits.length ? [hits[0]] : [];
 }
 
 /**
@@ -174,7 +164,7 @@ export async function readChatBookEntries(key, { all = false } = {}) {
         }
     }
     if (!book) return [];
-    return readEntriesFromBook(book, wanted, { all });
+    return readEntriesFromBook(book, wanted, { all, exact });
 }
 
 /** 只读接口：检索角色（主）世界书条目——设定/参考条目所在的书。 */
