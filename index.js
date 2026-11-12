@@ -101,6 +101,23 @@ async function rubyCommandCallback(args, text) {
                     records = await worldbook.readCharBookEntries(key, { all: asAll });
                 } else if (book === 'chat') {
                     records = await worldbook.readChatBookEntries(key, { all: asAll });
+                    if (records.length === 0) {
+                        // 回退1：登记簿——管线实际写入的聊天书（部分 ST 版本 /getchatbook 无参不认
+                        // create=true 绑定的书名，按登记簿直接点名检索）
+                        try {
+                            const reg = (config.getGeneratedChatBooks() || [])
+                                .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                            for (const r of reg) {
+                                if (!r.chatBookName) continue;
+                                records = await worldbook.readBookEntriesByName(r.chatBookName, key, { all: asAll });
+                                if (records.length > 0) break;
+                            }
+                        } catch { /* 登记簿回退失败不影响主流程 */ }
+                    }
+                    if (records.length === 0) {
+                        // 回退2：角色书（防书错位兜底）
+                        records = await worldbook.readCharBookEntries(key, { all: asAll });
+                    }
                 } else {
                     // 任意书名：全局导入的世界书（无需绑定）；书不存在返回 []
                     records = await worldbook.readBookEntriesByName(bookRaw, key, { all: asAll });
