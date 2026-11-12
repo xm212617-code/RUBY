@@ -1,4 +1,5 @@
 import { ctx, st, q, log, warn } from './env.js';
+import { getGeneratedChatBooks } from './config.js';
 
 export async function getCharBookName() {
     return String(await st('/getcharbook')).trim();
@@ -17,12 +18,41 @@ function buildChatBookCandidates(charName) {
 }
 
 export async function getChatBookName() {
-    // 已绑定的聊天书直接返回（不做改名；旧聊天保持原书名）
     const c = ctx();
     let charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '';
     if (!charName) {
         try { charName = String(await st('/getcharbook')).trim(); } catch { /* 主世界书名兜底失败，用默认名 */ }
     }
+
+    // 0) 已绑定的聊天书直接返回（不做改名；旧聊天保持原书名）
+    try {
+        const bound = String(await st('/getchatbook')).trim();
+        if (bound) return bound;
+    } catch { /* 无绑定继续 */ }
+
+    // 1) 登记簿复用：本聊天/本角色最近一次注册的生成书——
+    //    部分 ST 版本忽略 /getchatbook 的 name= 参数且 create 不持久化绑定，
+    //    不复用登记簿会每次管线生成一本新书（churn），数据被分散到多本书里
+    try {
+        const chatId = String(c?.chatId ?? '');
+        const avatar = c?.characters?.[c?.characterId]?.avatar || '';
+        const reg = (getGeneratedChatBooks() || [])
+            .filter((r) => (chatId && r.chatId === chatId) || (!chatId && r.chatId === '') || (avatar && r.characterAvatar === avatar))
+            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        for (const r of reg) {
+            if (!r.chatBookName) continue;
+            const probe = await loadBookData(r.chatBookName);
+            if (probe?.entries && Object.keys(probe.entries).length > 0) return r.chatBookName;
+        }
+    } catch { /* 登记簿复用失败走创建 */ }
+
+    // 2) 候选名探测：已有内容的候选书优先复用（不空转创建）
+    for (const name of buildChatBookCandidates(charName)) {
+        const probe = await loadBookData(name);
+        if (probe?.entries && Object.keys(probe.entries).length > 0) return name;
+    }
+
+    // 3) 创建循环（原逻辑兜底）
     for (const name of buildChatBookCandidates(charName)) {
         try {
             const created = String(await st(`/getchatbook create=true name=${q(name)}`)).trim();
