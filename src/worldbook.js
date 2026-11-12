@@ -386,7 +386,7 @@ export async function readEntryContent(book, key) {
 export async function writeEntryByKey(bookName, options) {
     const {
         key, content = '', comment = '', keys = [],
-        constant = false, order = 100, depth = 4,
+        constant = false, order = 100, depth = 4, position = 4,
     } = options;
     if (!bookName || !key) throw new Error('writeEntryByKey: book or key missing');
 
@@ -405,7 +405,7 @@ export async function writeEntryByKey(bookName, options) {
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
         // 新建条目：角色后注入（position 1），递归双禁
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position 1`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
