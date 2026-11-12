@@ -1,5 +1,5 @@
 import { ctx, log, warn, st } from './src/env.js';
-import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
+import { initEngine, reinit, forceRun, getEngineState, syncFormatMark } from './src/engine.js';
 import { initCardWriter, startSession, endSession, getState as getCwState, composeFromChat } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
 import { initSettingsDrawer, initTheme } from './src/settings.js';
