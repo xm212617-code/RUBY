@@ -5,31 +5,34 @@ export async function getCharBookName() {
 }
 
 /**
- * 聊天世界书取名：ruby-<角色卡名或主世界书名>·剧情分析。
+ * 聊天世界书取名：ruby-<角色卡名或主世界书名>·剧情分析·<聊天ID>。
  * ST 的 /getchatbook 默认命名是 "Chat Book <聊天ID>"，ASCII 清洗会把中文角色名洗成下划线，
  * 得到 "Chat Book _ - 2026-..." 这类不可读名字；这里在聊天未绑定时主动用可读名创建。
- * 同一角色的多个聊天各自一本书（分析输出按 key 写入，共享会互相覆盖），撞名依次试后缀。
+ * v3.0.18 修复「重开聊天被绑回上一本书」：
+ * - 先查当前聊天已绑定的书（/getchatbook create=false），有就直接用，绝不重绑；
+ * - 未绑定时用带聊天 ID 的唯一名创建——旧的角色名候选（撞名后缀）在 ST 实测中会把
+ *   已存在的同名书绑到新聊天，导致新聊天读写上一本书，已弃用；
+ * - 旧聊天已绑定的书名保持原样（向后兼容，不做改名）。
  */
-function buildChatBookCandidates(charName) {
-    const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
-    const base = sanitize(`ruby-${sanitize(charName).slice(0, 40) || '聊天'}·剧情分析`) || 'ruby-剧情分析';
-    return [base, `${base} 2`, `${base} 3`, `${base} 4`, `${base} 5`, `${base} 6`];
-}
-
 export async function getChatBookName() {
-    // 已绑定的聊天书直接返回（不做改名；旧聊天保持原书名）
+    // 已绑定的聊天书直接返回（绝不重绑；旧聊天保持原书名）
+    const existing = await getExistingChatBookName();
+    if (existing) return existing;
     const c = ctx();
     let charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '';
     if (!charName) {
         try { charName = String(await st('/getcharbook')).trim(); } catch { /* 主世界书名兜底失败，用默认名 */ }
     }
-    for (const name of buildChatBookCandidates(charName)) {
+    const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
+    const chatId = sanitize(String(c?.chatId ?? c?.chat?.chatId ?? '')).slice(-40);
+    const base = sanitize(`ruby-${sanitize(charName).slice(0, 40) || '聊天'}·剧情分析${chatId ? `·${chatId}` : ''}`);
+    if (base) {
         try {
-            const created = String(await st(`/getchatbook create=true name=${q(name)}`)).trim();
+            const created = String(await st(`/getchatbook create=true name=${q(base)}`)).trim();
             if (created) return created;
-        } catch { /* ST 对已存在的指定名直接抛错：撞名，试下一个候选 */ }
+        } catch { /* 撞名（同聊天 ID 重建等，极少见）回落默认命名 */ }
     }
-    // 极端情况全部撞名：回落 ST 默认命名（保证永远拿得到书）
+    // 兜底：ST 默认命名（Chat Book <聊天ID>），保证永远拿得到书
     return String(await st('/getchatbook create=true')).trim();
 }
 
@@ -125,7 +128,8 @@ async function readEntriesFromBook(book, key, { all = false } = {}) {
 
 /**
  * 只读接口（供 /ruby read 与消息内 HTML 前端使用）：检索聊天世界书条目。
- * 已绑定的聊天书直接用；未绑定时按 RUBY 输出书的命名规则探测已存在的书（不创建）。
+ * 已绑定的聊天书直接用；未绑定时只探测本聊天 ID 对应的 RUBY 输出书（不创建、不探测他聊天书，
+ * 防止读到上一本书的内容——v3.0.18 与 getChatBookName 的聊天唯一命名对齐）。
  */
 export async function readChatBookEntries(key, { all = false } = {}) {
     const c = ctx();
@@ -138,9 +142,12 @@ export async function readChatBookEntries(key, { all = false } = {}) {
         if (!charName) {
             try { charName = String(await st('/getcharbook')).trim(); } catch { /* ignore */ }
         }
-        for (const name of buildChatBookCandidates(charName)) {
-            const probe = await loadBookData(name);
-            if (probe?.entries && Object.keys(probe.entries).length > 0) { book = name; break; }
+        const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
+        const chatId = sanitize(String(c?.chatId ?? c?.chat?.chatId ?? '')).slice(-40);
+        const base = sanitize(`ruby-${sanitize(charName).slice(0, 40) || '聊天'}·剧情分析${chatId ? `·${chatId}` : ''}`);
+        if (base) {
+            const probe = await loadBookData(base);
+            if (probe?.entries && Object.keys(probe.entries).length > 0) book = base;
         }
     }
     if (!book) return [];
