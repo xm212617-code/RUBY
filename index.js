@@ -11,9 +11,26 @@ let commandRegistered = false;
 
 async function rubyCommandCallback(args, text) {
     // 子命令判定：无名参形式 /ruby <sub> ...（text 承载），或命名式 /ruby read="..."（text 为空，
-    // ST 解析器在无名参之后不再解析命名参数——read 等必须走命名式，args.read 承载键名）
-    const rawText = String(text || args?.subcommand || '').trim();
-    let sub = rawText ? rawText.toLowerCase().split(/\s+/)[0] : '';
+    // ST 解析器在无名参之后不再解析命名参数——read 等必须走命名式，args.read 承载键名）。
+    // RPC 通道（最稳）：/ruby "RPC~<sub>~key=...~var=...~json=true"——单个带引号无名参，不依赖
+    // 命名参数解析；ST 解析器版本差异对其无影响。handler 自拆字段后复用原有取值路径。
+    let rawText = String(text || args?.subcommand || '').trim();
+    const payloadArgs = {};
+    let payloadMode = false;
+    if (rawText.startsWith('RPC~')) {
+        payloadMode = true;
+        const parts = rawText.slice(4).split('~').map((s) => s.trim()).filter(Boolean);
+        rawText = '';
+        var sub = parts.shift() || '';
+        for (const p of parts) {
+            const eq = p.indexOf('=');
+            if (eq > 0) payloadArgs[p.slice(0, eq)] = p.slice(eq + 1);
+            else payloadArgs[p] = 'true';
+        }
+        args = { ...(args || {}), ...payloadArgs };
+    } else {
+        var sub = rawText ? rawText.toLowerCase().split(/\s+/)[0] : '';
+    }
     if (!sub) {
         for (const k of ['panel', 'open', 'status', 'preset', 'reload', 'reinit', 'run', 'read', 'write', 'cardwriter', 'cw']) {
             if (args?.[k] !== undefined && String(args[k]).trim() !== '') {
@@ -22,6 +39,7 @@ async function rubyCommandCallback(args, text) {
             }
         }
     }
+    log(`ruby cmd: sub=${sub} | mode=${payloadMode ? 'RPC' : 'parsed'} | argsKeys=${args && typeof args === 'object' ? Object.keys(args).filter((k) => !k.startsWith('_')).join(',') : '(none)'}`);
 
     try {
         if (sub === 'panel' || sub === 'open') {
