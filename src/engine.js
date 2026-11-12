@@ -159,9 +159,19 @@ export function initEngine() {
 function readChatVars() {
     try {
         const c = ctx();
-        // chat_metadata.variables 是聊天层变量的真实存储（ST 源码 script.js 导出 chat_metadata）
-        return c?.chat_metadata?.variables || {};
-    } catch {
+        if (!c) { console.error('[readChatVars] ctx() 为空'); return {}; }
+        if (!c.chat_metadata) {
+            console.error('[readChatVars] ctx().chat_metadata 不存在, ctx keys:', Object.keys(c).slice(0, 20).join(','));
+            return {};
+        }
+        if (!c.chat_metadata.variables) {
+            console.error('[readChatVars] chat_metadata.variables 不存在, meta keys:', Object.keys(c.chat_metadata).slice(0, 15).join(','));
+            return {};
+        }
+        console.log('[readChatVars] _ruby_phase =', c.chat_metadata.variables._ruby_phase);
+        return c.chat_metadata.variables;
+    } catch (e) {
+        console.error('[readChatVars] 异常:', e);
         return {};
     }
 }
