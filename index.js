@@ -176,6 +176,7 @@ async function rubyCommandCallback(args, text) {
                     constant: flag(args?.constant),
                     order: parseInt(String(args?.order || '100'), 10) || 100,
                     depth: parseInt(String(args?.depth || '4'), 10) || 4,
+                    position: parseInt(String(args?.position || '4'), 10) || 4,
                 });
 
                 // 与分析管线同款：写完即广播，前端状态栏/敌情面板即时重读
