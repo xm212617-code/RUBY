@@ -1,5 +1,5 @@
 import { ctx, log, warn, st } from './src/env.js';
-import { initEngine, reinit, forceRun, getEngineState } from './src/engine.js';
+import { initEngine, reinit, forceRun, getEngineState, syncFormatMark } from './src/engine.js';
 import { initCardWriter, startSession, endSession, getState as getCwState, composeFromChat } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
 import { initSettingsDrawer, initTheme } from './src/settings.js';
@@ -11,8 +11,21 @@ let commandRegistered = false;
 
 async function rubyCommandCallback(args, text) {
     const rawText = String(text || args?.subcommand || '').trim();
-    const sub = rawText.toLowerCase().split(/\s+/)[0] || 'panel';
-
+        // RPC 通道：/ruby "RPC~<sub>~k=v~k=v"——单个无名参，不依赖命名参数解析
+        const _raw = String(text || '').trim();
+        if (_raw.startsWith('RPC~')) {
+            const parts = _raw.slice(4).split('~').map((x) => x.trim()).filter(Boolean);
+            const rpcSub = parts.shift() || '';
+            const rpcArgs = {};
+            for (const p2 of parts) {
+                const eq = p2.indexOf('=');
+                if (eq > 0) rpcArgs[p2.slice(0, eq)] = p2.slice(eq + 1);
+                else rpcArgs[p2] = 'true';
+            }
+            args = Object.assign(args || {}, rpcArgs);
+            args._rpcSub = rpcSub;
+        }
+    const sub = (args && args._rpcSub) || rawText.toLowerCase().split(/\s+/)[0] || "panel";
     try {
         if (sub === 'panel' || sub === 'open') {
             openPanel();
@@ -198,7 +211,11 @@ async function rubyCommandCallback(args, text) {
             reinit();
             return 'engine reloaded';
         }
-        if (sub === 'run') {
+                if (sub === 'resync') {
+            syncFormatMark(undefined, args?.phase);
+            return JSON.stringify({ ok: true, resynced: true, phase: args?.phase || null });
+        }
+if (sub === 'run') {
             // /ruby run task=<spec> [json=true] —— 手动执行接口（消息内 HTML 按钮的数据通道之一）。
             // spec：任务 id（1）/ displayName / promptKey / outputKey / 捕捉关键词，逗号分隔可批量：
             //   /ruby run task=沛霖内心,沛霖生理 json=true
