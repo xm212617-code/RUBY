@@ -159,8 +159,15 @@ export function initEngine() {
 function readChatVars() {
     try {
         const c = ctx();
-        const v = typeof c.getVariables === 'function' ? c.getVariables() : null;
-        return v && typeof v === 'object' ? v : {};
+        const merged = {};
+        // 合并全局层与聊天层——/setvar 默认写聊天层，getVariables() 无参默认是消息层（读不到聊天变量）
+        for (const type of ['global', 'chat']) {
+            try {
+                const v = typeof c.getVariables === 'function' ? c.getVariables({ type }) : null;
+                if (v && typeof v === 'object') Object.assign(merged, v);
+            } catch { /* 该层不存在则跳过 */ }
+        }
+        return merged;
     } catch {
         return {};
     }
@@ -193,8 +200,8 @@ function findAnchorLine(lines, relAnchor) {
 function applyFormatMarks(mes, marks, vars) {
     const list = Array.isArray(marks) ? marks : [];
     const resolved = list
-        .map((m) => ({ ...m, value: resolveMarkVars(m.tag, vars) }))
-        .filter((m) => m.value);
+        .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars)}>` }))
+        .filter((m) => m.value !== '<>');
     const tags = resolved.map((m) => m.value);
     if (resolved.length === 0) return { mes, tags };
 
@@ -278,6 +285,9 @@ export function syncFormatMark(messageId) {
     let mes = String(m.mes || '');
     for (const t of stripSet) {
         mes = mes.split(`<${t}>`).join('');
+        // 旧缺陷迁移清理：v3.0.2 之前漏包尖括号时写入的裸行（整行即标签文字），逐条自愈
+        const bareRe = new RegExp(`^[ \\t]*${escapeRegExp(t)}[ \\t]*$`, 'gm');
+        mes = mes.replace(bareRe, '');
     }
     mes = tidyAfterStrip(mes);
 
