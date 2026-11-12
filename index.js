@@ -42,7 +42,13 @@ async function rubyCommandCallback(args, text) {
     log(`ruby cmd: sub=${sub} | mode=${payloadMode ? 'RPC' : 'parsed'} | argsKeys=${args && typeof args === 'object' ? Object.keys(args).filter((k) => !k.startsWith('_')).join(',') : '(none)'}`);
 
     try {
-        if (sub === 'panel' || sub === 'open') {
+        if (sub === 'resync') {
+            // 格式锚点重注入：按当前 _ruby_phase 重包最新楼层（舱内/舱外变化时前端调用）
+            const c = ctx();
+            engine.syncFormatMark(c && Array.isArray(c.chat) ? c.chat.length - 1 : undefined);
+            return JSON.stringify({ ok: true, resynced: true });
+        }
+                if (sub === 'panel' || sub === 'open') {
             openPanel();
             return 'panel opened';
         }
