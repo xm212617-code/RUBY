@@ -160,16 +160,16 @@ function readChatVars() {
     try {
         const c = ctx();
         if (!c) { console.error('[readChatVars] ctx() 为空'); return {}; }
-        if (!c.chat_metadata) {
-            console.error('[readChatVars] ctx().chat_metadata 不存在, ctx keys:', Object.keys(c).slice(0, 20).join(','));
+        if (!c.chatMetadata) {
+            console.error('[readChatVars] ctx().chatMetadata 不存在, ctx keys:', Object.keys(c).slice(0, 20).join(','));
             return {};
         }
-        if (!c.chat_metadata.variables) {
-            console.error('[readChatVars] chat_metadata.variables 不存在, meta keys:', Object.keys(c.chat_metadata).slice(0, 15).join(','));
+        if (!c.chatMetadata.variables) {
+            console.error('[readChatVars] chatMetadata.variables 不存在, meta keys:', Object.keys(c.chat_metadata).slice(0, 15).join(','));
             return {};
         }
-        console.log('[readChatVars] _ruby_phase =', c.chat_metadata.variables._ruby_phase);
-        return c.chat_metadata.variables;
+        console.log('[readChatVars] _ruby_phase =', c.chatMetadata.variables._ruby_phase);
+        return c.chatMetadata.variables;
     } catch (e) {
         console.error('[readChatVars] 异常:', e);
         return {};
@@ -204,7 +204,7 @@ function findAnchorLine(lines, relAnchor) {
 }
 
 /** 按配置把锚点写入正文行数组（相对定位优先，未命中回退 head/tail；返回 { mes, tags }） */
-function applyFormatMarks(mes, marks, vars) {
+function applyFormatMarks(mes, marks, vars, phaseOverride) {
     const list = Array.isArray(marks) ? marks : [];
     const resolved = list
         .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars, phaseOverride)}>` }))
