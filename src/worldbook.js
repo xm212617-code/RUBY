@@ -164,7 +164,7 @@ export async function readChatBookEntries(key, { all = false } = {}) {
         }
     }
     if (!book) return [];
-    return readEntriesFromBook(book, wanted, { all, exact });
+    return readEntriesFromBook(book, wanted, { all });
 }
 
 /** 只读接口：检索角色（主）世界书条目——设定/参考条目所在的书。 */
