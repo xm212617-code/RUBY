@@ -168,8 +168,12 @@ function readChatVars() {
     }
 }
 
-function resolveMarkVars(tag, vars) {
+function resolveMarkVars(tag, vars, phaseOverride) {
     return String(tag || '').replace(/\{\{var:([^}]+)\}\}/g, (_, name) => {
+        // phaseOverride 直接覆盖 _ruby_phase——不依赖任何变量存储，从前端 RPC 传值
+        if (phaseOverride !== undefined && phaseOverride !== null && String(name).trim() === '_ruby_phase') {
+            return String(phaseOverride);
+        }
         const v = vars ? vars[String(name).trim()] : undefined;
         return v === undefined || v === null ? '' : String(v);
     });
@@ -195,7 +199,7 @@ function findAnchorLine(lines, relAnchor) {
 function applyFormatMarks(mes, marks, vars) {
     const list = Array.isArray(marks) ? marks : [];
     const resolved = list
-        .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars)}>` }))
+        .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars, phaseOverride)}>` }))
         .filter((m) => m.value !== '<>');
     const tags = resolved.map((m) => m.value);
     if (resolved.length === 0) return { mes, tags };
@@ -252,7 +256,7 @@ function tidyAfterStrip(mes) {
  * 按当前配置统一重包——相对定位锚点插到锚行前/后，其余按 head/tail 组包裹，每个锚点恰好出现一次、
  * 各自独占一行。格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
-export function syncFormatMark(messageId) {
+export function syncFormatMark(messageId, phaseOverride) {
     const c = ctx();
     if (!c || !Array.isArray(c.chat) || c.chat.length === 0) return;
     const chat = c.chat;
