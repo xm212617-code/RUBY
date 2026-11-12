@@ -159,15 +159,10 @@ export function initEngine() {
 function readChatVars() {
     try {
         const c = ctx();
-        const merged = {};
-        // 合并全局层与聊天层——/setvar 默认写聊天层，getVariables() 无参默认是消息层（读不到聊天变量）
-        for (const type of ['global', 'chat']) {
-            try {
-                const v = typeof c.getVariables === 'function' ? c.getVariables({ type }) : null;
-                if (v && typeof v === 'object') Object.assign(merged, v);
-            } catch { /* 该层不存在则跳过 */ }
-        }
-        return merged;
+        // /setvar 写入的变量存在 chat_metadata.variables 里——getVariables() 无参直接读这个对象，
+        // 不需要也不支持 {type} 参数
+        const v = typeof c.getVariables === 'function' ? c.getVariables() : null;
+        return v && typeof v === 'object' ? v : {};
     } catch {
         return {};
     }
