@@ -404,9 +404,8 @@ export async function writeEntryByKey(bookName, options) {
         const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
-        // 新建条目：@D4 可注入、递归双禁（与 RUBY 输出条目同款默认）
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position 4`);
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${depth}`);
+        // 新建条目：角色后注入（position 1），递归双禁
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position 1`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
