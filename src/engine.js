@@ -159,15 +159,30 @@ export function initEngine() {
 function readChatVars() {
     try {
         const c = ctx();
-        const v = typeof c.getVariables === 'function' ? c.getVariables() : null;
-        return v && typeof v === 'object' ? v : {};
+        const merged = {};
+        // v3.0.19 修复（回归自 v3.0.10-v3.0.12 线）：变量源合并——
+        // getVariables 无参默认消息层且在部分 ST 版本不存在；chatMetadata.variables 是聊天层权威。
+        // 三源依次合并（后者覆盖前者）：global 层 → chat 层（getVariables）→ chatMetadata.variables。
+        for (const type of ['global', 'chat']) {
+            try {
+                const v = typeof c?.getVariables === 'function' ? c.getVariables({ type }) : null;
+                if (v && typeof v === 'object') Object.assign(merged, v);
+            } catch { /* 该层不存在则跳过 */ }
+        }
+        const meta = c?.chatMetadata?.variables;
+        if (meta && typeof meta === 'object') Object.assign(merged, meta);
+        return merged;
     } catch {
         return {};
     }
 }
 
-function resolveMarkVars(tag, vars) {
+function resolveMarkVars(tag, vars, phaseOverride) {
     return String(tag || '').replace(/\{\{var:([^}]+)\}\}/g, (_, name) => {
+        // phaseOverride 直接覆盖 _ruby_phase——不依赖任何变量存储，从前端 RPC 传值
+        if (phaseOverride !== undefined && phaseOverride !== null && String(name).trim() === '_ruby_phase') {
+            return String(phaseOverride);
+        }
         const v = vars ? vars[String(name).trim()] : undefined;
         return v === undefined || v === null ? '' : String(v);
     });
@@ -190,11 +205,13 @@ function findAnchorLine(lines, relAnchor) {
 }
 
 /** 按配置把锚点写入正文行数组（相对定位优先，未命中回退 head/tail；返回 { mes, tags }） */
-function applyFormatMarks(mes, marks, vars) {
+function applyFormatMarks(mes, marks, vars, phaseOverride) {
     const list = Array.isArray(marks) ? marks : [];
     const resolved = list
-        .map((m) => ({ ...m, value: resolveMarkVars(m.tag, vars) }))
-        .filter((m) => m.value);
+        // v3.0.19 修复（回归自 v3.0.3）：锚点必须包尖括号——v3.0.0 重构时漏包，
+        // 导致写入裸标签文字且每次同步重复堆叠（用户实测 <ruby/> 变成 8 行裸 ruby/）
+        .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars, phaseOverride)}>` }))
+        .filter((m) => m.value !== '<>');
     const tags = resolved.map((m) => m.value);
     if (resolved.length === 0) return { mes, tags };
 
@@ -250,7 +267,7 @@ function tidyAfterStrip(mes) {
  * 按当前配置统一重包——相对定位锚点插到锚行前/后，其余按 head/tail 组包裹，每个锚点恰好出现一次、
  * 各自独占一行。格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
-export function syncFormatMark(messageId) {
+export function syncFormatMark(messageId, phaseOverride) {
     const c = ctx();
     if (!c || !Array.isArray(c.chat) || c.chat.length === 0) return;
     const chat = c.chat;
@@ -263,7 +280,7 @@ export function syncFormatMark(messageId) {
     const marks = Array.isArray(data.formatMarks) ? data.formatMarks : [];
     const vars = readChatVars();
     const resolvedTags = marks
-        .map((x) => resolveMarkVars(x.tag, vars))
+        .map((x) => resolveMarkVars(x.tag, vars, phaseOverride))
         .filter(Boolean);
 
     m.extra ||= {};
@@ -276,8 +293,14 @@ export function syncFormatMark(messageId) {
     const applied = Array.isArray(m.extra.rubyFormatMarked) ? m.extra.rubyFormatMarked : [];
     const stripSet = [...new Set([...applied, ...resolvedTags])].filter(Boolean);
     let mes = String(m.mes || '');
-    for (const t of stripSet) {
+    for (const raw of stripSet) {
+        // 统一剥尖括号形式与裸行形式（applied 记录的是带括号的完整标签，resolved 是裸名）
+        const t = raw.startsWith('<') && raw.endsWith('>') ? raw.slice(1, -1) : raw;
+        if (!t) continue;
         mes = mes.split(`<${t}>`).join('');
+        // 旧缺陷迁移清理：漏包尖括号时代写入的裸行（整行即标签文字），逐条自愈
+        const bareRe = new RegExp(`^[ \\t]*${escapeRegExp(t)}[ \\t]*$`, 'gm');
+        mes = mes.replace(bareRe, '');
     }
     mes = tidyAfterStrip(mes);
 
@@ -291,7 +314,7 @@ export function syncFormatMark(messageId) {
         return;
     }
 
-    const { mes: wrapped, tags } = applyFormatMarks(mes, marks, vars);
+    const { mes: wrapped, tags } = applyFormatMarks(mes, marks, vars, phaseOverride);
     if (wrapped === m.mes) {
         if (JSON.stringify(m.extra.rubyFormatMarked) !== JSON.stringify(tags)) m.extra.rubyFormatMarked = tags;
         return;
