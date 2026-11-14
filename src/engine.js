@@ -618,6 +618,17 @@ async function tick() {
         emitState();
         return;
     }
+
+    // 纯手动分析开启（玩家面板勾选）：周期/导演两条自动调度整体暂停——新AI回复不再触发
+    // 任何自动分析（周期不查位置表、导演不锚定不排期不唤醒），tick 只记账不排任务。
+    // baseline 照常推进：关闭开关后自动调度从"当下"恢复，不回放暂停期间的位置欠账；
+    // 各任务书签保持不动：恢复后第一次自动分析从暂停前的书签读起，正文不丢楼层
+    if (config.getUi().pureManualRun) {
+        state.baseline = aiCount;
+        log(`pure manual mode: cycle/director auto scheduling paused at AI reply ${aiCount} (manual runs unaffected)`);
+        return;
+    }
+
     const preset = config.getActivePreset(data);
     const dirCfg = preset.director;
     // 仅手动任务（manualOnly）不参与导演激活判定——全部任务手动化时导演自动休眠

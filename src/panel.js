@@ -305,7 +305,7 @@ function buildShellHtml() {
                         <div class="form-header red">■ 手动执行分析</div>
                         <div class="form-body">
                             <div style="margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap;">
-                                <label class="inline" style="cursor:pointer;" title="纯手动分析：执行走独立手动流——独立书签、不计入导演迭代统计，与周期/导演两条自动逻辑互不干扰；关闭时保持原有补充模式（与自动流共享阅读进度）">
+                                <label class="inline" style="cursor:pointer;" title="纯手动分析：开启后周期/导演两条自动更新整体暂停——新AI回复不再自动触发分析，手动执行走独立手动流（独立书签、不计入导演迭代统计）；关闭后自动调度从当下恢复（不回放暂停期间的欠账），手动执行回到补充模式（与自动流共享阅读进度）">
                                     <input type="checkbox" id="ra_pure_manual"> <span style="font-size:12px;color:#888;">纯手动分析</span>
                                 </label>
                                 <label class="inline" style="cursor:pointer;" title="忽略最新一层：RUBY读取时最新一条AI回复（及其后你新输入的消息）不读也不计数——最新楼被截断/失败时不会被算作已分析，留到下一次分析再读，避免坏楼层污染结果">
@@ -1114,8 +1114,8 @@ function syncPureManualUi() {
     const tip = $('ra_pure_manual_tip');
     if (tip) {
         tip.textContent = box?.checked
-            ? '已开启：点击下方按钮执行纯手动分析——独立书签、不计导演统计，不影响周期与导演的自动进度'
-            : '已关闭：补充模式——手动执行与周期/导演共享阅读进度（原有行为）';
+            ? '已开启：周期/导演自动更新已暂停——分析只在你点下方按钮时执行（独立书签、不计导演统计）；关闭开关后自动调度从当下恢复'
+            : '已关闭：周期/导演自动更新正常运行，手动执行为补充模式（与自动流共享阅读进度）';
     }
 }
 
@@ -1203,6 +1203,12 @@ function renderSchedule(data, layer) {
     }
     if (layer !== 'character') {
         el.innerHTML = '<span class="status-warn">⚠ 配置未绑定角色卡，任务不会自动执行——保存修改将自动绑定到当前角色卡</span>';
+        return;
+    }
+
+    // 纯手动分析开启：自动调度暂停，时间表不再生效——醒目提示，避免对着表等触发
+    if (config.getUi().pureManualRun) {
+        el.innerHTML = '<span class="status-warn">⏸ 纯手动分析已开启：周期/导演自动更新已暂停——任务时间表暂不生效，分析只在「手动执行分析」按钮按下时执行</span>';
         return;
     }
 
@@ -1446,8 +1452,8 @@ function wirePlayerSections() {
         config.saveUi({ pureManualRun: e.target.checked });
         syncPureManualUi();
         window.toastr?.success?.(e.target.checked
-            ? '已开启纯手动分析：手动执行走独立流，不影响周期/导演'
-            : '已关闭纯手动分析：恢复补充模式（与自动流共享阅读进度）');
+            ? '已开启纯手动分析：周期/导演自动更新已暂停，分析只由你手动执行；关闭后从当下恢复自动调度'
+            : '已关闭纯手动分析：周期/导演自动更新已恢复，手动执行回到补充模式（与自动流共享阅读进度）');
     });
     on($('ra_ignore_latest'), 'change', (e) => {
         config.saveUi({ ignoreLatestFloor: e.target.checked });
