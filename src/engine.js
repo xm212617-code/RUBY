@@ -7,7 +7,6 @@ import * as ai from './ai.js';
 import * as director from './director.js';
 import { BUILTIN_REFERENCES } from './builtin-refs.js';
 import { buildMessages } from './jailbreak.js';
-import { sanitizeReply, summarizeRemoved } from './sanitizer.js';
 
 const state = {
     armed: false,
@@ -260,7 +259,6 @@ function tidyAfterStrip(mes) {
         .replace(/(?:\r?\n)+[ \t]*$/, '')   // 尾部锚点撤除后残留的空行
         .replace(/\n{3,}/g, '\n\n');        // 中部撤除后的多余连续空行收敛（保留段落间单个空行）
 }
-
 
 /**
  * 同步格式锚点到指定消息（无 id 时取最后一层）的正文。幂等：
@@ -620,6 +618,17 @@ async function tick() {
         emitState();
         return;
     }
+
+    // 纯手动分析开启（玩家面板勾选）：周期/导演两条自动调度整体暂停——新AI回复不再触发
+    // 任何自动分析（周期不查位置表、导演不锚定不排期不唤醒），tick 只记账不排任务。
+    // baseline 照常推进：关闭开关后自动调度从"当下"恢复，不回放暂停期间的位置欠账；
+    // 各任务书签保持不动：恢复后第一次自动分析从暂停前的书签读起，正文不丢楼层
+    if (config.getUi().pureManualRun) {
+        state.baseline = aiCount;
+        log(`pure manual mode: cycle/director auto scheduling paused at AI reply ${aiCount} (manual runs unaffected)`);
+        return;
+    }
+
     const preset = config.getActivePreset(data);
     const dirCfg = preset.director;
     // 仅手动任务（manualOnly）不参与导演激活判定——全部任务手动化时导演自动休眠
@@ -1353,21 +1362,14 @@ export async function runPipeline(taskBatch) {
                 const messages = buildMessages(taskDisplayName, promptTemplate, cfgData);
                 const result = await ai.callModel({ apiCfg, genParams, messages, taskLabel: taskDisplayName });
 
-                // 外部审查器：接收到的回复先过机械清洗——约束库硬条件八股直接替换为空，再校验/写入
-                const sanitized = sanitizeReply(result);
-                if (sanitized.removed.length > 0) {
-                    log(`external sanitizer [${taskDisplayName}]: stripped (${summarizeRemoved(sanitized.removed)})`);
-                }
-                const reply = sanitized.text;
-
-                if (!reply || reply.trim().length < 2) {
+                if (!result || result.trim().length < 2) {
                     warn(`${taskDisplayName}: result empty or too short`);
                     notify('error', `${taskDisplayName}分析失败：内容过短`);
                     failedCount++;
                     runResults.push({ name: taskDisplayName, ok: false, reason: '内容过短' });
                     continue;
                 }
-                log(`generation done: ${reply.length} chars`);
+                log(`generation done: ${result.length} chars`);
 
                 if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
                     warn(`${taskDisplayName}: chat changed during generation, result discarded`);
@@ -1379,7 +1381,7 @@ export async function runPipeline(taskBatch) {
 
                 if (!outputKey) {
                     log(`${taskDisplayName}: no output entry configured, result kept in memory only`);
-                    outputValues[outputVarName] = reply.trim();
+                    outputValues[outputVarName] = result.trim();
                     reader.saveBookmark(bmKey, inc.endFloor);
                     completedCount++;
                     runResults.push({ name: taskDisplayName, ok: true, outputKey: '' });
@@ -1407,7 +1409,7 @@ export async function runPipeline(taskBatch) {
                 await worldbook.writeOutputEntry(chatBook, {
                     key: outputKey,
                     extraKeys: taskConfig.extraKeys,
-                    content: reply,
+                    content: result,
                     constant: !!taskConfig.outputConstant,
                     disable: !!taskConfig.outputDisable,
                     noRecursion: !!taskConfig.noRecursion,
@@ -1421,7 +1423,7 @@ export async function runPipeline(taskBatch) {
                 wroteToChatBook = true;
 
                 await worldbook.disableCharEntry(charBook, outputKey);
-                outputValues[outputVarName] = reply.trim();
+                outputValues[outputVarName] = result.trim();
                 reader.saveBookmark(bmKey, inc.endFloor);
                 completedCount++;
                 runResults.push({ name: taskDisplayName, ok: true, outputKey });
