@@ -313,7 +313,7 @@ function buildShellHtml() {
                                 <label class="inline" style="cursor:pointer;" title="忽略最新一层：RUBY读取时最新一条AI回复（及其后你新输入的消息）不读也不计数——最新楼被截断/失败时不会被算作已分析，留到下一次分析再读，避免坏楼层污染结果">
                                     <input type="checkbox" id="ra_ignore_latest"> <span style="font-size:12px;color:#888;">忽略最新一层</span>
                                 </label>
-                                <label class="inline" title="入口样式：悬浮球=屏幕浮动圆球（可拖拽）；QR栏=在输入框上方的快捷回复栏区域显示一行 RUBY 快捷按钮（悬浮球自动隐藏），含任务快捷执行">
+                                <label class="inline" title="入口样式：悬浮球=屏幕浮动圆球（可拖拽）；QR栏=在输入框上方的快捷回复栏区域显示一个 RUBY 主按钮（状态点＋开面板，悬浮球自动隐藏）">
                                     <span style="font-size:12px;color:#888;">入口样式</span>
                                     <select id="ra_entry_mode" style="font-size:12px;padding:2px 6px;">
                                         <option value="orb">悬浮球</option>
@@ -1484,7 +1484,7 @@ function wirePlayerSections() {
         window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
         window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
         window.toastr?.success?.(mode === 'qrbar'
-            ? 'RUBY 入口已切换为 QR 栏——悬浮球已隐藏，快捷按钮在输入框上方'
+            ? 'RUBY 入口已切换为 QR 栏——悬浮球已隐藏，主按钮在输入框上方'
             : 'RUBY 入口已切换为悬浮球');
     });
     on($('ra_unlimited_chars'), 'change', (e) => {
