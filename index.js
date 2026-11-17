@@ -2,6 +2,7 @@ import { ctx, log, warn, st } from './src/env.js';
 import { initEngine, reinit, forceRun, getEngineState, syncFormatMark } from './src/engine.js';
 import { initCardWriter, startSession, endSession, getState as getCwState, composeFromChat } from './src/cardwriter.js';
 import { ensureOrb } from './src/orb.js';
+import { ensureQrBar } from './src/qrbar.js';
 import { initSettingsDrawer, initTheme } from './src/settings.js';
 import { openPanel } from './src/panel.js';
 import * as config from './src/config.js';
@@ -383,6 +384,7 @@ function bootstrap() {
     initEngine();
     initCardWriter();
     ensureOrb();
+    ensureQrBar();
     initSettingsDrawer();
     initTheme();
     log('RUBY Analyzer extension loaded (independent edition)');

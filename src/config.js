@@ -88,6 +88,8 @@ const makeDefaultApi = () => ({
 
 const makeDefaultUi = () => ({
     orbHidden: false,
+    // 入口样式：'orb'=悬浮球（默认）| 'qrbar'=QR栏按钮行（悬浮球自动隐藏）
+    entryMode: 'orb',
     orbSize: 60,
     orbX: null,
     orbY: null,
@@ -587,7 +589,7 @@ export function saveApiConfig(patch = {}) {
 
 export function getUi() {
     const store = getSettings();
-    return store ? store.ui : makeDefaultUi();
+    return store ? { ...makeDefaultUi(), ...store.ui } : makeDefaultUi();
 }
 
 export function saveUi(patch = {}) {
