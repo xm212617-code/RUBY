@@ -1232,6 +1232,9 @@
 #ra_panel .form-body .custom-tag button { color: #fff !important; }
 #ra_panel .form-body .checkbox-group label:has(input:checked) { color: var(--ra-brand-deep) !important; }
 #ra_panel .form-body .checkbox-group label { color: var(--ra-text) !important; }
+#ra_panel .form-body .ra-seg-btn { color: var(--ra-text) !important; }
+#ra_panel .form-body .ra-seg-btn:hover { color: var(--ra-text) !important; }
+#ra_panel .form-body .ra-seg-btn.active { color: #fff !important; }
 
 /* 焦点可达性 */
 #ra_panel .btn:focus-visible,
