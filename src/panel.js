@@ -313,13 +313,13 @@ function buildShellHtml() {
                                 <label class="inline" style="cursor:pointer;" title="忽略最新一层：RUBY读取时最新一条AI回复（及其后你新输入的消息）不读也不计数——最新楼被截断/失败时不会被算作已分析，留到下一次分析再读，避免坏楼层污染结果">
                                     <input type="checkbox" id="ra_ignore_latest"> <span style="font-size:12px;color:#888;">忽略最新一层</span>
                                 </label>
-                                <label class="inline" title="入口样式：悬浮球=屏幕浮动圆球（可拖拽）；QR栏=在输入框上方的快捷回复栏区域显示一个 RUBY 主按钮（状态点＋开面板，悬浮球自动隐藏）">
-                                    <span style="font-size:12px;color:#888;">入口样式</span>
-                                    <select id="ra_entry_mode" style="font-size:12px;padding:2px 6px;">
-                                        <option value="orb">悬浮球</option>
-                                        <option value="qrbar">QR栏</option>
-                                    </select>
-                                </label>
+                                <span class="inline" title="显示位置：悬浮球=屏幕浮动圆球（可拖拽）；QR栏=在输入框上方的快捷回复栏区域显示一个 RUBY 主按钮（状态点＋开面板，悬浮球自动隐藏）">
+                                    <span style="font-size:12px;color:#888;">显示位置</span>
+                                    <span class="ra-seg" id="ra_entry_mode_seg" role="group" aria-label="显示位置">
+                                        <button type="button" class="ra-seg-btn" data-mode="orb">悬浮球</button>
+                                        <button type="button" class="ra-seg-btn" data-mode="qrbar">QR栏</button>
+                                    </span>
+                                </span>
                             </div>
                             <div id="ra_pure_manual_tip" class="tip" style="margin:0 0 8px;"></div>
                             <div id="ra_manual_buttons" style="display:flex;flex-wrap:wrap;gap:10px;"><span>加载中...</span></div>
@@ -1134,10 +1134,14 @@ function syncIgnoreLatestUi() {
     if (box) box.checked = !!config.getUi().ignoreLatestFloor;
 }
 
-/** 入口样式选择：悬浮球 / QR栏 */
+/** 显示位置分段开关：悬浮球 / QR栏 */
 function syncEntryModeUi() {
-    const sel = $('ra_entry_mode');
-    if (sel) sel.value = String(config.getUi().entryMode || 'orb').toLowerCase() === 'qrbar' ? 'qrbar' : 'orb';
+    const seg = $('ra_entry_mode_seg');
+    if (!seg) return;
+    const mode = String(config.getUi().entryMode || 'orb').toLowerCase() === 'qrbar' ? 'qrbar' : 'orb';
+    seg.querySelectorAll('.ra-seg-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
 }
 
 /** 快照恢复区：显示最近一次分析写入前的输出快照状态 */
@@ -1477,16 +1481,23 @@ function wirePlayerSections() {
             ? '已开启忽略最新一层：RUBY读取不含最新AI回复（防截断/失败楼层被计入书签）'
             : '已关闭忽略最新一层：恢复正常读取');
     });
-    on($('ra_entry_mode'), 'change', (e) => {
-        const mode = e.target.value === 'qrbar' ? 'qrbar' : 'orb';
-        config.saveUi({ entryMode: mode });
-        // 悬浮球与 QR 栏按钮行都监听此事件：各自切到对应显隐态
-        window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
-        window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
-        window.toastr?.success?.(mode === 'qrbar'
-            ? 'RUBY 入口已切换为 QR 栏——悬浮球已隐藏，主按钮在输入框上方'
-            : 'RUBY 入口已切换为悬浮球');
-    });
+    const seg = $('ra_entry_mode_seg');
+    if (seg) {
+        seg.querySelectorAll('.ra-seg-btn').forEach((btn) => {
+            on(btn, 'click', () => {
+                const mode = btn.dataset.mode === 'qrbar' ? 'qrbar' : 'orb';
+                if (config.getUi().entryMode === mode) return;
+                config.saveUi({ entryMode: mode });
+                syncEntryModeUi();
+                // 悬浮球与 QR 栏主按钮都监听此事件：各自切到对应显隐态
+                window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+                window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
+                window.toastr?.success?.(mode === 'qrbar'
+                    ? 'RUBY 显示位置已切换为 QR 栏——悬浮球已隐藏，主按钮在输入框上方'
+                    : 'RUBY 显示位置已切换为悬浮球');
+            });
+        });
+    }
     on($('ra_unlimited_chars'), 'change', (e) => {
         withConfigData((d) => { d.unlimitedInputChars = e.target.checked; });
         window.toastr?.success?.(e.target.checked

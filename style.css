@@ -506,34 +506,68 @@
 #ra_panel .w120 { width: 120px; } #ra_panel .w150 { width: 150px; } #ra_panel .w200 { width: 200px; }
 #ra_panel .w250 { width: 250px; } #ra_panel .w320 { width: 320px; }
 
+/* 单选圆点式复选框：空圆圈，选中=圈内实心点（红宝石色，双主题高对比） */
 #ra_panel input[type="checkbox"] {
     appearance: none;
     -webkit-appearance: none;
     width: 18px;
     height: 18px;
-    border: 1.5px solid var(--ra-border-strong);
-    border-radius: 5px;
+    border: 2px solid var(--ra-border-strong);
+    border-radius: 50%;
     background: var(--ra-panel);
     position: relative;
     cursor: pointer;
     flex-shrink: 0;
     margin: 0;
     vertical-align: middle;
-    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    transition: border-color .15s ease, box-shadow .15s ease;
 }
 
-#ra_panel input[type="checkbox"]:hover { border-color: var(--ra-brand); box-shadow: 0 0 0 2px rgba(184, 33, 56, .1); }
-#ra_panel input[type="checkbox"]:checked { background: var(--ra-brand); border-color: var(--ra-brand); }
+#ra_panel input[type="checkbox"]:hover { border-color: var(--ra-brand); box-shadow: 0 0 0 2px rgba(184, 33, 56, .12); }
+#ra_panel input[type="checkbox"]:checked { border-color: var(--ra-brand); }
 #ra_panel input[type="checkbox"]:checked::after {
     content: '';
     position: absolute;
-    left: 5.5px;
-    top: 2px;
-    width: 4px;
-    height: 8.5px;
-    border: solid #fff;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
+    inset: 0;
+    margin: auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ra-brand);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .35) inset;
+}
+
+/* ---------- 分段开关（显示位置：悬浮球 / QR栏） ---------- */
+#ra_panel .ra-seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--ra-border-strong);
+    border-radius: 999px;
+    background: var(--ra-surface-2);
+}
+
+#ra_panel .ra-seg-btn {
+    min-height: 28px;
+    padding: 2px 16px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ra-text-2);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+#ra_panel .ra-seg-btn:hover { color: var(--ra-text); background: var(--ra-surface-3); }
+#ra_panel .ra-seg-btn.active {
+    background: linear-gradient(180deg, var(--ra-ink-3), var(--ra-ink));
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), var(--ra-shadow-1);
 }
 
 /* ---------- 按钮：红宝石主语言（渐变填充 + 内侧高光 + 按压回落） ---------- */
@@ -1312,6 +1346,12 @@ body.ruby-dark #ra_panel .btn.green { border-color: #2A5A33; }
 body.ruby-dark #ra_panel .btn.red { border-color: #6E1022; }
 body.ruby-dark #ra_panel .btn.blue { border-color: #173B77; }
 body.ruby-dark #ra_panel .btn.outline { background: var(--ra-panel-2); }
+
+/* 黑夜下单选圆点与分段开关保持高对比（杜绝黑底黑样式） */
+body.ruby-dark #ra_panel input[type="checkbox"] { border-color: #8A919C; }
+body.ruby-dark #ra_panel input[type="checkbox"]:hover { border-color: var(--ra-brand); box-shadow: 0 0 0 2px rgba(210, 66, 92, .18); }
+body.ruby-dark #ra_panel input[type="checkbox"]:checked::after { background: var(--ra-brand); box-shadow: 0 0 0 1px rgba(0, 0, 0, .4) inset; }
+body.ruby-dark #ra_panel .ra-seg-btn.active { background: linear-gradient(180deg, #2E333D, #232830); }
 
 /* 亮色限定色在暗色下的替换（令牌覆盖不到的硬编码色） */
 body.ruby-dark #ra_panel .status-ok { color: #6FDC8F !important; }
