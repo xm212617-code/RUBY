@@ -101,6 +101,8 @@ function withConfigData(mutator) {
     mutator(data);
     config.saveConfigData(data);
     config.flushCardPersistNow().catch(() => { /* flush 内部已上报错误 */ });
+    // 广播配置变更：QR 栏快捷按钮等外围 UI 据此重建（任务增删、方案切换、绑定变化）
+    try { window.dispatchEvent(new CustomEvent('ruby:config-changed')); } catch { /* 事件失败不影响保存 */ }
 }
 
 /** 全局破限加载：优先从全局 UI 设置读取（源真相），回退到配置层数据。
@@ -311,6 +313,13 @@ function buildShellHtml() {
                                 <label class="inline" style="cursor:pointer;" title="忽略最新一层：RUBY读取时最新一条AI回复（及其后你新输入的消息）不读也不计数——最新楼被截断/失败时不会被算作已分析，留到下一次分析再读，避免坏楼层污染结果">
                                     <input type="checkbox" id="ra_ignore_latest"> <span style="font-size:12px;color:#888;">忽略最新一层</span>
                                 </label>
+                                <span class="inline" title="显示位置：悬浮球=屏幕浮动圆球（可拖拽）；QR栏=在输入框上方的快捷回复栏区域显示一个 RUBY 主按钮（状态点＋开面板，悬浮球自动隐藏）">
+                                    <span style="font-size:12px;color:#888;">显示位置</span>
+                                    <span class="ra-seg" id="ra_entry_mode_seg" role="group" aria-label="显示位置">
+                                        <button type="button" class="ra-seg-btn" data-mode="orb">悬浮球</button>
+                                        <button type="button" class="ra-seg-btn" data-mode="qrbar">QR栏</button>
+                                    </span>
+                                </span>
                             </div>
                             <div id="ra_pure_manual_tip" class="tip" style="margin:0 0 8px;"></div>
                             <div id="ra_manual_buttons" style="display:flex;flex-wrap:wrap;gap:10px;"><span>加载中...</span></div>
@@ -387,7 +396,7 @@ function buildShellHtml() {
                                 <span class="form-value" style="display:flex;gap:16px;flex-wrap:wrap;">
                                     <label class="inline" id="ra_api_stream_label" title="此开关仅控制自定义端点的请求方式；主API的流式与否由酒馆自身机制按当前后端决定，RUBY 不干预"><input type="checkbox" id="ra_api_stream" checked> 流式传输</label>
                                     <label class="inline"><input type="checkbox" id="ra_notify" checked> 分析进度提示</label>
-                                    <label class="inline"><input type="checkbox" id="ra_orb_show" checked> 显示悬浮球</label>
+                                    <label class="inline" title="控制悬浮球显隐；若玩家页「入口样式」选了 QR 栏，则入口由 QR 栏按钮行接管，此开关不生效"><input type="checkbox" id="ra_orb_show" checked> 显示悬浮球</label>
                                 </span>
                             </div>
                             <div class="form-row" id="ra_dir_api_wrap" style="flex-direction:column;align-items:stretch;gap:8px;border:1.5px dashed #bbb;border-radius:6px;padding:10px 12px;">
@@ -1125,6 +1134,16 @@ function syncIgnoreLatestUi() {
     if (box) box.checked = !!config.getUi().ignoreLatestFloor;
 }
 
+/** 显示位置分段开关：悬浮球 / QR栏 */
+function syncEntryModeUi() {
+    const seg = $('ra_entry_mode_seg');
+    if (!seg) return;
+    const mode = String(config.getUi().entryMode || 'orb').toLowerCase() === 'qrbar' ? 'qrbar' : 'orb';
+    seg.querySelectorAll('.ra-seg-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+}
+
 /** 快照恢复区：显示最近一次分析写入前的输出快照状态 */
 function syncSnapshotUi() {
     const btn = $('ra_restore_snapshot');
@@ -1146,6 +1165,7 @@ function renderManualButtons(data, layer) {
     if (!el) return;
     syncPureManualUi();
     syncIgnoreLatestUi();
+    syncEntryModeUi();
     syncSnapshotUi();
     const preset = config.getActivePreset(data);
     const identity = config.getCharacterIdentity();
@@ -1461,6 +1481,23 @@ function wirePlayerSections() {
             ? '已开启忽略最新一层：RUBY读取不含最新AI回复（防截断/失败楼层被计入书签）'
             : '已关闭忽略最新一层：恢复正常读取');
     });
+    const seg = $('ra_entry_mode_seg');
+    if (seg) {
+        seg.querySelectorAll('.ra-seg-btn').forEach((btn) => {
+            on(btn, 'click', () => {
+                const mode = btn.dataset.mode === 'qrbar' ? 'qrbar' : 'orb';
+                if (config.getUi().entryMode === mode) return;
+                config.saveUi({ entryMode: mode });
+                syncEntryModeUi();
+                // 悬浮球与 QR 栏主按钮都监听此事件：各自切到对应显隐态
+                window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+                window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
+                window.toastr?.success?.(mode === 'qrbar'
+                    ? 'RUBY 显示位置已切换为 QR 栏——悬浮球已隐藏，主按钮在输入框上方'
+                    : 'RUBY 显示位置已切换为悬浮球');
+            });
+        });
+    }
     on($('ra_unlimited_chars'), 'change', (e) => {
         withConfigData((d) => { d.unlimitedInputChars = e.target.checked; });
         window.toastr?.success?.(e.target.checked
@@ -1628,6 +1665,7 @@ function wirePlayerSections() {
                 orbHidden: !$('ra_orb_show').checked,
             });
             window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+            window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
 
             const num = (id) => {
                 const v = parseFloat($(id)?.value);

@@ -56,7 +56,7 @@ function applyPosition(orb, pos) {
     orb.style.top = `${Math.max(4, Math.min(window.innerHeight - pad, pos.y))}px`;
 }
 
-function badgeState(engineState) {
+export function badgeState(engineState) {
     const cw = cardwriter.getState();
     if (cw.active && cw.busy) return 'cardwriting';
     if (engineState.running) return 'working';
@@ -197,7 +197,10 @@ function hideStepBubble() {
 /** 按当前 UI 配置刷新悬浮球显隐（面板保存 / 扩展栏开关均调用） */
 export function refreshVisibility() {
     const el = document.getElementById(ORB_ID);
-    if (el) el.classList.toggle('hidden', !!config.getUi().orbHidden);
+    if (!el) return;
+    // 入口样式二选一：QR栏模式下悬浮球让位隐藏
+    const mode = String(config.getUi()?.entryMode || 'orb').toLowerCase();
+    el.classList.toggle('hidden', !!config.getUi().orbHidden || mode === 'qrbar');
 }
 
 export function ensureOrb() {
