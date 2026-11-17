@@ -7,6 +7,7 @@ import * as ai from './ai.js';
 import * as director from './director.js';
 import { BUILTIN_REFERENCES } from './builtin-refs.js';
 import { buildMessages } from './jailbreak.js';
+import { sanitizeReply, summarizeRemoved } from './sanitizer.js';
 
 const state = {
     armed: false,
@@ -1304,6 +1305,21 @@ export async function runPipeline(taskBatch) {
                 const bodySections = [];
                 const refSections = [];
 
+                // 阅读最新变量：勾选后把聊天变量（全局层+聊天层）的当前最新值注入提示词；
+                // 只读变量本身（当前值快照），不读变量历史
+                let varsSection = '';
+                if (taskConfig?.readChatVars) {
+                    const snapshot = readChatVars();
+                    const varLines = Object.entries(snapshot).map(([k, v]) => {
+                        const text = (v === undefined || v === null) ? '' : (typeof v === 'string' ? v : JSON.stringify(v));
+                        return `${k}: ${text}`;
+                    });
+                    if (varLines.length > 0) {
+                        varsSection = `【最新变量（当前聊天变量值，供分析取材）】\n${varLines.join('\n')}`;
+                        log(`chat vars injected: ${varLines.length} vars`);
+                    }
+                }
+
                 if (!hasRecentMessagesPlaceholder && inc.text) {
                     const truncNote = inc.truncatedChars
                         ? `\n\n（⚠️ 本次正文超过字符上限，末尾约 ${inc.truncatedChars} 字符已被截断抛弃，仅上方保留部分为有效分析素材）`
@@ -1348,6 +1364,7 @@ export async function runPipeline(taskBatch) {
                 if (refSections.length > 0) {
                     assembledParts.push(`【历史分析参考（需根据上方正文更新，勿照搬）】\n${refSections.join('\n\n')}`);
                 }
+                if (varsSection) assembledParts.push(varsSection);
                 if (assembledParts.length > 0) {
                     promptTemplate = `${assembledParts.join('\n\n')}\n\n[任务指令]\n${promptTemplate}`;
                     log(`prompt assembled: body(${inc.count} floors, ${(inc.text || '').length} chars) + refs(${refSections.length})`);
@@ -1362,14 +1379,21 @@ export async function runPipeline(taskBatch) {
                 const messages = buildMessages(taskDisplayName, promptTemplate, cfgData);
                 const result = await ai.callModel({ apiCfg, genParams, messages, taskLabel: taskDisplayName });
 
-                if (!result || result.trim().length < 2) {
+                // 外部审查器：接收到的回复先过机械清洗——约束库硬条件八股直接替换为空，再校验/写入
+                const sanitized = sanitizeReply(result);
+                if (sanitized.removed.length > 0) {
+                    log(`external sanitizer [${taskDisplayName}]: stripped (${summarizeRemoved(sanitized.removed)})`);
+                }
+                const reply = sanitized.text;
+
+                if (!reply || reply.trim().length < 2) {
                     warn(`${taskDisplayName}: result empty or too short`);
                     notify('error', `${taskDisplayName}分析失败：内容过短`);
                     failedCount++;
                     runResults.push({ name: taskDisplayName, ok: false, reason: '内容过短' });
                     continue;
                 }
-                log(`generation done: ${result.length} chars`);
+                log(`generation done: ${reply.length} chars`);
 
                 if (c.getCurrentChatId?.() !== chatIdAtStart || c.characterId !== characterIdAtStart) {
                     warn(`${taskDisplayName}: chat changed during generation, result discarded`);
@@ -1381,7 +1405,7 @@ export async function runPipeline(taskBatch) {
 
                 if (!outputKey) {
                     log(`${taskDisplayName}: no output entry configured, result kept in memory only`);
-                    outputValues[outputVarName] = result.trim();
+                    outputValues[outputVarName] = reply.trim();
                     reader.saveBookmark(bmKey, inc.endFloor);
                     completedCount++;
                     runResults.push({ name: taskDisplayName, ok: true, outputKey: '' });
@@ -1409,7 +1433,7 @@ export async function runPipeline(taskBatch) {
                 await worldbook.writeOutputEntry(chatBook, {
                     key: outputKey,
                     extraKeys: taskConfig.extraKeys,
-                    content: result,
+                    content: reply,
                     constant: !!taskConfig.outputConstant,
                     disable: !!taskConfig.outputDisable,
                     noRecursion: !!taskConfig.noRecursion,
@@ -1423,7 +1447,7 @@ export async function runPipeline(taskBatch) {
                 wroteToChatBook = true;
 
                 await worldbook.disableCharEntry(charBook, outputKey);
-                outputValues[outputVarName] = result.trim();
+                outputValues[outputVarName] = reply.trim();
                 reader.saveBookmark(bmKey, inc.endFloor);
                 completedCount++;
                 runResults.push({ name: taskDisplayName, ok: true, outputKey });

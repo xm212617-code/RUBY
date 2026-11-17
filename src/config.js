@@ -310,6 +310,8 @@ export function normalizeTask(raw) {
                 : []),
         // 仅手动任务：摘出周期/导演自动调度，只保留 /ruby task= 手动触发与关键词扫描（前端联动手动任务用）
         manualOnly: !!t.manualOnly,
+        // 阅读最新变量：分析时把聊天变量（含全局层）的当前值作为素材注入提示词；只读最新值，不带变量历史
+        readChatVars: !!t.readChatVars,
         // 任务级标签过滤（v3）：readTagMode 'include'=只读列出标签内容（解包）/ 'exclude'=剥除列出标签块；空=原文
         readTagMode: ['include', 'exclude'].includes(String(t.readTagMode || '').toLowerCase())
             ? String(t.readTagMode).toLowerCase()

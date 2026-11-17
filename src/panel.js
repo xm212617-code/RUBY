@@ -2303,6 +2303,7 @@ function collectTasksFromUI() {
             keywordScanEnabled: !!card.querySelector(`.task-keyword-scan-enabled[data-id="${id}"]`)?.checked,
             keywordScanKeywords: [...card.querySelectorAll(`.task-keyword-scan-input[data-id="${id}"]`)].map((input) => input.value.trim()).filter(Boolean),
             manualOnly: !!card.querySelector(`.task-manual-only[data-id="${id}"]`)?.checked,
+            readChatVars: !!card.querySelector(`.task-read-chat-vars[data-id="${id}"]`)?.checked,
             readTagMode: card.querySelector(`.task-readtag-mode[data-id="${id}"]`)?.value || '',
             readTags: (card.querySelector(`.task-readtags[data-id="${id}"]`)?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
             noRecursion: !!card.querySelector(`.task-no-recursion[data-id="${id}"]`)?.checked,
@@ -2441,6 +2442,13 @@ function renderTaskSlots() {
                                 勾选后会在发送API前扫描正文；未填写关键词时，命中周期就照常分析；填写多个关键词时，命中任意一个才发送。
                             </div>
                         </div>
+                    </span>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">变量阅读</span>
+                    <span class="form-value" style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;">
+                        <label class="inline"><input type="checkbox" class="task-read-chat-vars" data-id="${task.id}" ${task.readChatVars ? 'checked' : ''}> 阅读最新变量</label>
+                        <span class="tip" style="padding:4px 8px;font-size:11px;">勾选后分析时会把聊天变量（含全局变量）的当前最新值注入提示词作为素材；只读变量本身，不读变量历史。</span>
                     </span>
                 </div>
                 <div class="form-row">
