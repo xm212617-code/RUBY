@@ -14,9 +14,10 @@
    ================================================================== */
 
 /* ---------- 设计令牌（白昼：暖纸 × 墨石 × 红宝石） ---------- */
-/* #chat .scx-inline（消息内情潮面板）与 #ra_panel 共用同一套令牌 */
+/* #chat .scx-inline / #chat .scx-scene（消息内情潮面板与场景卡）与 #ra_panel 共用同一套令牌 */
 #ra_panel,
-#chat .scx-inline {
+#chat .scx-inline,
+#chat .scx-scene {
     --ra-surface: #F6F4EF;        /* 卡片底（暖纸） */
     --ra-panel: #FFFFFF;          /* 区块底 */
     --ra-panel-2: #FBFAF7;        /* 区块底（次） */
@@ -1299,7 +1300,8 @@
    仅覆盖令牌与少数硬编码色，其余规则随白昼版本自动生效
    ================================================================== */
 body.ruby-dark #ra_panel,
-body.ruby-dark #chat .scx-inline {
+body.ruby-dark #chat .scx-inline,
+body.ruby-dark #chat .scx-scene {
     --ra-surface: #15171C;
     --ra-panel: #1D2027;
     --ra-panel-2: #22262E;
@@ -1965,3 +1967,32 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
     background: var(--ra-panel-2);
     font-size: 12.5px; line-height: 1.8; text-align: center;
 }
+
+
+/* ---------- 场景卡（AI 的 SceneInfo 块在显示层的替换体，对齐县城范式） ---------- */
+#chat .scx-scene {
+    margin: 12px 0;
+    border: 1px solid var(--ra-border-strong);
+    border-radius: var(--ra-radius-m);
+    background: var(--ra-panel);
+    box-shadow: var(--ra-shadow-1);
+    color: var(--ra-text);
+    font-family: inherit;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+#chat .scx-scene .scx-scene-meta { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+#chat .scx-scene .scx-scene-cast { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+#chat .scx-scene .scx-chip2 {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 10px;
+    border: 1px solid var(--ra-border);
+    border-radius: 99px;
+    background: var(--ra-panel-2);
+    font-size: 11px; font-weight: 600;
+    color: var(--ra-text);
+}
+#chat .scx-scene .scx-chip2.cast { border-color: var(--ra-border-strong); color: var(--ra-text); }
+#chat .scx-scene .scx-type { color: var(--ra-ink-text); background: var(--ra-brand); border-color: var(--ra-brand-deep); }

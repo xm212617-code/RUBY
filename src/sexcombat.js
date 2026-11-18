@@ -1,5 +1,6 @@
 ﻿import { ctx, log, warn, st, q } from './env.js';
 import * as config from './config.js';
+import * as worldbook from './worldbook.js';
 
 const K = { state:'通用性斗_当局', report:'通用性斗_战况', rule:'通用性斗_场景判断', open:'通用性斗_开局', stage:'通用性斗_阶段状态', exp:'通用性斗_经验总档', lp:'通用性斗_等级_' };
 const L = [
@@ -175,40 +176,105 @@ const HIDE_RES = () => ([
 ]);
 function stripXml(s) { let o = String(s ?? ''); for (const re of HIDE_RES()) o = o.replace(re, ''); return o; }
 
-// 显示层：#chat 上挂 MutationObserver——洗掉情潮 XML / report；渲染由 RUBY 代行（refreshInline），
-// AI 不输出任何渲染锚点。观察回调一律去抖（流式输出时每 token 都会突变，直接处理会打架+卡死）。
+// 显示层（对齐县城范式）：#chat 挂 MutationObserver——
+// ① 洗掉情潮 XML / report；② 把每层 AI 输出的 <SceneInfo> 块整体替换为场景卡（+最新楼战况面板）。
+// 观察回调一律去抖（流式输出每 token 都突变，直接处理会打架+卡死）。
 function ensureDomHide() {
   if (SC.domObs) return;
   const chatEl = document.getElementById('chat');
   if (!chatEl) { setTimeout(ensureDomHide, 1000); return; }
-  let scrubTimer = 0;
-  let refreshTimer = 0;
-  const scheduleScrub = () => {
-    if (scrubTimer) return;
-    scrubTimer = setTimeout(() => { scrubTimer = 0; scrub(chatEl); }, 150);
-  };
-  const scheduleRefresh = () => {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => { refreshTimer = 0; safe(refreshInline); }, 250);
-  };
-  const scrub = (el) => {
-    if (!el || !(el instanceof Element)) return;
-    const targets = el.classList?.contains('mes_text') ? [el] : [...(el.querySelectorAll?.('.mes_text') || [])];
-    for (const t of targets) {
-      const html = t.innerHTML; if (!html) continue;
-      const out = stripXml(html);
-      if (out !== html) t.innerHTML = out;
-    }
-  };
+  let passTimer = 0;
   SC.domObs = new MutationObserver(() => {
     if (!SC.booted) return;
-    scheduleScrub();
-    scheduleRefresh();
+    if (passTimer) return;
+    passTimer = setTimeout(() => { passTimer = 0; safe(domPass); }, 150);
   });
   SC.domObs.observe(chatEl, { childList: true, subtree: true, characterData: true });
-  scrub(chatEl); // 启动即扫一遍已渲染楼层（含启用前的旧楼层）
-  safe(refreshInline);
-  log('[性斗] RUBY 代行隐藏已挂载（显示层）');
+  safe(domPass); // 启动即扫一遍已渲染楼层（含启用前的旧楼层）
+  log('[性斗] 显示层渲染已挂载（SceneInfo → 场景卡/战况面板）');
+}
+
+// ── 正文渲染（RUBY 代行，对齐县城 regex 替换范式）──
+// 每层 AI 输出的 <sceneTag> 块在显示层整体替换为场景卡（地点/时间/类型/在场角色）；
+// 最新一层 AI 楼额外挂战况面板（签名判等，状态变了才重绘）；非最新楼的战况面板移除。
+function replaceSceneBlocks(html, isLatest) {
+  const tag = scTag();
+  const te = tagReEsc(tag);
+  const card = (inner) => sceneCardHTML(inner, isLatest);
+  let out = html.replace(new RegExp('<' + te + '[^>]*>([\\s\\S]*?)<\\/' + te + '>', 'gi'), (m, inner) => card(inner));
+  out = out.replace(new RegExp('&lt;' + te + '[^&]*&gt;([\\s\\S]*?)&lt;\\/' + te + '&gt;', 'gi'), (m, inner) => card(inner));
+  return out;
+}
+function sceneCardHTML(text, isLatest) {
+  const s = String(text || '');
+  const g = (re) => { const m = s.match(re); return m ? m[1].trim() : ''; };
+  const loc = g(/地点\s*[：:]\s*([^\n]+)/);
+  const time = g(/时间\s*[：:]\s*([^\n]+)/);
+  const type = g(/场景类型\s*[：:]\s*([^\n]+)/);
+  const chars = [];
+  const cm = s.match(/在场角色\s*[：:]\s*([\s\S]*?)(?=\n\s*\n|\n\s*<|$)/i);
+  if (cm) cm[1].split(/\r?\n/).forEach((l) => {
+    let t = l.trim().replace(/^[-•*·—]\s*/, '');
+    if (!t || /^[^|]{0,8}[：:]/.test(t)) return;
+    const n = (t.includes('|') ? t.split('|')[0] : t.split(/[、，,]/)[0]).trim();
+    if (n && n !== uName() && !chars.includes(n)) chars.push(esc(n));
+  });
+  const chips = [];
+  if (time) chips.push(esc(time));
+  if (loc) chips.push(esc(loc));
+  if (type) chips.push('<span class="scx-type">' + esc(type) + '</span>');
+  return '<div class="scx-scene">' +
+    (chips.length ? '<div class="scx-scene-meta">' + chips.map((c) => '<span class="scx-chip2">' + c + '</span>').join('') + '</div>' : '') +
+    (chars.length ? '<div class="scx-scene-cast">' + chars.map((n) => '<span class="scx-chip2 cast">' + n + '</span>').join('') + '</div>' : '') +
+    (isLatest ? battlePanelHTML() : '') +
+    '</div>';
+}
+// 战况面板外壳：签名判等（数据指纹不变绝不重绘——防观察器自激死循环）
+function battlePanelHTML() {
+  const s = SC.state;
+  if (!s || s.cleared) return '';
+  return '<div class="scx-inline scx-live" data-scx-sig="' + esc(scxSig(s)) + '"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
+}
+function scxSig(s) {
+  if (!s) return '';
+  const ended = s.ended ? [s.ended.type, ...(s.ended.names || [])].join(',') : '';
+  return [s.round, s.p, s.user.pos, s.user.ex, ended, ...s.opps.map(o => [o.name, o.pos, o.ex, o.present].join(':'))].join('|');
+}
+function domPass() {
+  const chatEl = document.getElementById('chat'); if (!chatEl) return;
+  const s = SC.state;
+  // 最新一层 AI 楼（战况面板挂这里）
+  let target = null;
+  if (s && !s.cleared) {
+    const mess = chatEl.querySelectorAll('.mes');
+    for (let i = mess.length - 1; i >= 0; i--) {
+      const el = mess[i];
+      if (el.getAttribute('is_user') === 'true' || el.getAttribute('is_system') === 'true') continue;
+      const t = el.querySelector('.mes_text');
+      if (t) { target = t; break; }
+    }
+  }
+  for (const t of chatEl.querySelectorAll('.mes_text')) {
+    const html = t.innerHTML; if (!html) continue;
+    const out = replaceSceneBlocks(stripXml(html), t === target);
+    if (out !== html) t.innerHTML = out;
+  }
+  // 非最新楼的战况面板移除（场景卡保留）
+  chatEl.querySelectorAll('.mes_text .scx-inline.scx-live').forEach((el) => {
+    if (el.closest('.mes_text') !== target) el.remove();
+  });
+  // 最新楼战况面板：签名变了才刷新内容
+  if (target) {
+    const panel = target.querySelector('.scx-inline.scx-live');
+    if (panel) {
+      const sig = scxSig(s);
+      if (panel.dataset.scxSig !== sig) {
+        panel.dataset.scxSig = sig;
+        const body = panel.querySelector('.scx-inline-body');
+        if (body) body.innerHTML = panelInner(s);
+      }
+    }
+  }
 }
 
 // 提示词层：
@@ -269,7 +335,15 @@ function ruleT() {
   if (T) {
     lines.push(
       T + '=真正发生性行为（性器相接即算）。',
-      '场景类型为 ' + T + ' 时：正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入）。',
+      '场景类型为 ' + T + ' 时，正文末尾 <' + tag + '> 之后附 <report>（其余楼层禁止输出 <report>）。',
+      '<report> 协议（' + T + ' 楼必附）：',
+      '<report>',
+      '角色名:',
+      '  单向: 0-3（次数）',
+      '  双向: 0-2（次数）',
+      '</report>',
+      '数值权威：进展与结果以战况通报为准，照数值写，不粉饰不翻转。',
+      '不应期纪律：已到顶角色进入不应期——敏感度大幅钝化，性刺激不引发反应；禁止继续主动性行为。',
     );
   }
   return lines.join('\n');
@@ -416,14 +490,6 @@ function battleT() {
   const op = s.opps.filter(o => !o.exited && o.present !== false).map(o => o.name + ' 距顶' + Math.max(0, o.pos - s.p)).join('｜');
   return '【情潮战况】\n高潮条：' + u + ' 距顶' + uD + '｜' + op + '\n从容：' + cal + ' 更从容（以此最新战况为准）';
 }
-function openT() {
-  const s = SC.state; const u = uName();
-  const roles = [u].concat(s.opps.map(o => o.name)).join('，');
-  const solo = s.opps.length === 1;
-  const rv = solo ? '两人的交融也是面向高潮的较量——都想让对方先到顶。' : '交融中，' + u + '与每个对手各自较量。';
-  const T = String(cfg().trigger || 'nsfwh').toUpperCase();
-  return ['<情潮开局 角色="' + roles + '">', '写作指导：性关系开始。' + rv, u + '的输入只是意图——写出来的不等于真实结果。', '进展与结果以情潮战况为准——照数值写，不粉饰不翻转。', '不自行判顶点，不自行写高潮，不虚报。', '职责=氛围与体感。', '每轮末尾按 report 协议申报：', '<report> 协议（' + T + ' 楼必附，其余楼层禁止输出）：', '<report>', '角色名:', '  单向: 0-3（次数）', '  双向: 0-2（次数）', '</report>', '</情潮开局>'].join('\n');
-}
 function stageT(n, e) {
   const s = stageOf(e);
   if (s === 3) return '<情潮状态 角色="' + n + '" 阶段="3" 进度="' + e + '/100">\n' + n + '的兴奋值已过半。单向增多，更密更贴。\n</情潮状态>';
@@ -445,8 +511,9 @@ function bFl() { return '<情潮收场 类型="疲软收场">写作指导：双�
 function bWin() { return '<情潮收场 类型="user胜利终局">写作指导：在场对手全部高潮进入不应期——写' + uName() + '的从容，由其决定如何对待众人。\n</情潮收场>'; }
 
 // ── 持久化 ──
-// 世界书双通道：类型判断指令（蓝灯 @D0，ensureRule 自愈）+ 战局内容（蓝灯常驻，随战斗每层刷新）；
-// 数据条目（当局/经验/等级）为绿灯存储。正文只承载情潮面板渲染（refreshInline）。
+// 对齐县城范式：世界书 = 数据（绿灯：当局/经验/等级）+ 两类蓝灯
+// （类型判断指令 @D0 自愈 + 战况通报随战斗每层刷新——战况/阶段/收场指导合一，不再拆多条）；
+// 正文 = 渲染（SceneInfo 块替换为场景卡+战况面板，见 domPass）。
 function persist() {
   const s = SC.state; if (!s) return;
   writeE(K.state, JSON.stringify(s), { constant: false, comment: '当局' });
@@ -455,26 +522,25 @@ function persist() {
   s.opps.forEach(o => writeE(K.lp + o.name, '等级: ' + L[lvI(o.name)].n + '\n经验: ' + expOf(o.name), { constant: false, comment: '等级' }));
   writeE(K.lp + uName(), '等级: ' + L[lvI(uName())].n + '\n经验: ' + expOf(uName()), { constant: false, comment: '等级' });
   if (s.cleared) {
-    // 清场：战局条目全部清空（场景判断指令条目保留——下一局开局判定仍靠它）
+    // 清场：战况通报清空（类型判断指令条目保留——下一局开局判定仍靠它）；旧版条目退役清理
     writeE(K.report, '', { constant: false });
     writeE(K.open, '', { constant: false });
     writeE(K.stage, '', { constant: false });
     clearEndEntries(s);
-  } else if (!s.ended) {
-    writeE(K.report, battleT(), { constant: true, comment: '战况通报' });
-    writeE(K.open, openT(), { constant: true, ord: 900, comment: '情潮开局' });
-    const st = stageTAll();
-    if (st) writeE(K.stage, st, { constant: true, ord: 898, comment: '阶段状态' });
   } else {
-    // 收场：战况/开局/阶段清空，按终局类型写收场指导
-    writeE(K.report, '', { constant: false });
-    writeE(K.open, '', { constant: false });
-    writeE(K.stage, '', { constant: false });
-    const e = s.ended;
-    if (e.type === 'opp') (e.names || []).forEach((n, i) => writeE('通用性斗_收场_' + (n || i), bOpp(n), { constant: true, ord: 890, comment: '收场' }));
-    else if (e.type === 'user') writeE('通用性斗_收场_user', bUser((s.opps.find(o => o.present !== false) || {}).name || '对手'), { constant: true, ord: 890, comment: '收场' });
-    else if (e.type === 'flaccid') writeE('通用性斗_收场_疲软', bFl(), { constant: true, ord: 890, comment: '收场' });
-    else writeE('通用性斗_收场_胜利', bWin(), { constant: true, ord: 890, comment: '收场' });
+    let text;
+    if (!s.ended) {
+      text = battleT();
+      const st = stageTAll();
+      if (st) text += '\n\n' + st;
+    } else {
+      const e = s.ended;
+      if (e.type === 'opp') text = (e.names || []).map(n => bOpp(n)).join('\n\n');
+      else if (e.type === 'user') text = bUser((s.opps.find(o => o.present !== false) || {}).name || '对手');
+      else if (e.type === 'flaccid') text = bFl();
+      else text = bWin();
+    }
+    writeE(K.report, text, { constant: true, ord: 900, comment: '战况通报' });
   }
 }
 
@@ -601,7 +667,7 @@ async function tick() {
   SC.lastFloor = last; SC.lastSig = sig;
   try {
     if (SC.state && !SC.state.active && !SC.state.cleared && last > SC.state.endedFloor) {
-      log('[性斗] 清场 @楼' + last); SC.state.cleared = true; await persist(); SC.state = null; refreshInline(); await safe(syncBlocks); return;
+      log('[性斗] 清场 @楼' + last); SC.state.cleared = true; await persist(); SC.state = null; domPass(); await safe(syncBlocks); return;
     }
     let scan = SC.state?.active ? Math.max(SC.state.scanFloor || SC.state.startFloor, SC.state.startFloor, SC.state.lastSettledFloor + 1) : last;
     const TRr = trigRe();
@@ -627,7 +693,7 @@ async function tick() {
     persist();
     await safe(ensureRule);
     await safe(syncBlocks);
-  } catch (e) { warn('[性斗] tick 失败:', e?.message || e); } finally { refreshInline(); }
+  } catch (e) { warn('[性斗] tick 失败:', e?.message || e); } finally { domPass(); }
 }
 function restart(fl, chars) { log('[性斗] 换人重开 @楼' + fl); newB(fl, chars); }
 
@@ -656,50 +722,6 @@ function panelInner(s) {
     '<div class="scx-chip"><span class="scx-av opp">彼</span><span>' + esc(s.opps.map(o => o.name).join('、')) + '</span></div></div>' + bars +
     '<div class="scx-fatigue"><span class="scx-ftag">疲软</span><div class="scx-ftrack"><div class="scx-ffill" style="width:' + s.round * 10 + '%"></div></div><span class="scx-fnum">' + s.round + '/10</span></div>';
 }
-// 内联面板外壳：战斗期间挂到最新 AI 楼正文显示层末尾，无状态/清场时移除
-function inlinePanelHTML() {
-  const s = SC.state;
-  if (!s || s.cleared) return '';
-  return '<div class="scx-inline" data-scx-sig="' + esc(scxSig(s)) + '"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
-}
-// 面板状态签名：战况数值指纹——签名不变绝不重绘（innerHTML 字符串比对永远不等，
-// 会造成 观察器→重绘→再突变 死循环把酒馆卡死）
-function scxSig(s) {
-  if (!s) return '';
-  const ended = s.ended ? [s.ended.type, ...(s.ended.names || [])].join(',') : '';
-  return [s.round, s.p, s.user.pos, s.user.ex, ended, ...s.opps.map(o => [o.name, o.pos, o.ex, o.present].join(':'))].join('|');
-}
-// 正文内渲染：RUBY 代行——把情潮面板挂到最新一层 AI 回复的显示层末尾（不动消息数据、不进提示词、AI 零参与）。
-// 幂等：无状态/清场时清掉全部面板；有状态时保证最新 AI 楼恰好一个面板，签名变化才刷新内容。
-function refreshInline() {
-  const chatEl = document.getElementById('chat'); if (!chatEl) return;
-  const s = SC.state;
-  let target = null;
-  if (s && !s.cleared) {
-    const mess = chatEl.querySelectorAll('.mes');
-    for (let i = mess.length - 1; i >= 0; i--) {
-      const el = mess[i];
-      if (el.getAttribute('is_user') === 'true' || el.getAttribute('is_system') === 'true') continue;
-      const t = el.querySelector('.mes_text');
-      if (t) { target = t; break; }
-    }
-  }
-  [...chatEl.querySelectorAll('.mes_text .scx-inline')].forEach((el) => { if (el.closest('.mes_text') !== target) el.remove(); });
-  if (!target) return;
-  const sig = scxSig(s);
-  let panel = target.querySelector('.scx-inline');
-  if (!panel) {
-    target.insertAdjacentHTML('beforeend', inlinePanelHTML());
-    panel = target.querySelector('.scx-inline');
-    if (panel) panel.dataset.scxSig = sig;
-    return;
-  }
-  if (panel.dataset.scxSig !== sig) {
-    panel.dataset.scxSig = sig;
-    const body = panel.querySelector('.scx-inline-body');
-    if (body) body.innerHTML = panelInner(s);
-  }
-}
 function bindEvents() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(bindEvents, 1000); return; }
   if (SC.bound) return; SC.bound = true;
@@ -717,6 +739,12 @@ async function start() {
   ensureRe(); ensureDomHide(); ensurePromptHide(); bindEvents();
   hydrateCfg();
   await ensureRule();
+  // 退役条目清理：开局/阶段状态（并入战况通报）与旧版收场条目
+  for (const k of [K.open, K.stage]) writeE(k, '', { constant: false });
+  try {
+    const legacyEnds = await worldbook.readChatBookEntries('通用性斗_收场', { all: true });
+    (legacyEnds || []).forEach(r => writeE(r.keys?.[0] || ('通用性斗_收场_' + r.uid), '', { constant: false }));
+  } catch { /* 清理失败不影响主流程 */ }
   const rec = await readE(K.state);
   const body = rec?.content ? String(rec.content) : '';
   const jm = body.match(/\{[\s\S]*\}/);
@@ -731,9 +759,12 @@ async function start() {
 }
 async function stop() {
   for (const k of [K.report, K.rule, K.open, K.stage]) await writeE(k, '', { constant: false });
-  clearEndEntries(SC.state);
+  try {
+    const legacyEnds = await worldbook.readChatBookEntries('通用性斗_收场', { all: true });
+    (legacyEnds || []).forEach(r => writeE(r.keys?.[0] || ('通用性斗_收场_' + r.uid), '', { constant: false }));
+  } catch { /* 清理失败不影响主流程 */ }
   await writeE(K.state, '', { constant: false });
-  SC.exp = {}; SC.state = null; SC.booted = false; SC.ready = false; refreshInline();
+  SC.exp = {}; SC.state = null; SC.booted = false; SC.ready = false; domPass();
   log('[性斗] 已停用');
 }
 
@@ -763,6 +794,7 @@ export function init() {
   c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
   refresh();
 }
+
 
 
 
