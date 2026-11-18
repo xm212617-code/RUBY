@@ -76,6 +76,27 @@ export function initSettingsDrawer() {
                 </label>
                 <div class="ra-ext-tip">默认跟随系统外观，手动切换后记住你的选择；面板右上角也有 🌙/☀️ 切换按钮</div>
                 <div class="ra-ext-divider"></div>
+                <div class="ra-ext-divider"></div>
+                <div class="ra-cb-section">
+                    <div class="ra-cb-head"><b>🧩 脚本库</b></div>
+                    <div class="ra-ext-tip">随卡脚本：启用后自动创建聊天世界书的场景判断条目与隐藏正则，性斗面板随战局出现。</div>
+                    <div class="ra-sc-row">
+                        <span style="font-weight:700;">通用性斗</span>
+                        <span id="ruby_sc_state" style="margin-left:auto;font-size:11px;color:#8b8f86;">—</span>
+                        <button id="ruby_sc_toggle" class="ra-cb-refresh">启用</button>
+                        <button id="ruby_sc_cfg" class="ra-cb-refresh">等级底账</button>
+                    </div>
+                    <div id="ruby_sc_editor" style="display:none;padding:8px 10px;border:1px dashed #c6d6c4;border-radius:8px;margin-top:6px;">
+                        <div class="ra-ext-tip">指定角色等级：输入角色名字与经验数值，旁边显示对应等级；战斗结束按楼数入账、跨场累计。</div>
+                        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+                            <input id="ruby_sc_name" placeholder="角色名字" style="flex:1 1 110px;min-width:0;" />
+                            <input id="ruby_sc_exp" placeholder="经验数值" type="number" min="0" max="100" style="flex:0 0 90px;min-width:0;" />
+                            <span id="ruby_sc_hint" style="font-size:11px;color:#5d7b66;flex:0 0 auto;">—</span>
+                            <button id="ruby_sc_add" class="ra-cb-refresh">增加</button>
+                        </div>
+                        <div id="ruby_sc_list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px;"></div>
+                    </div>
+                </div>
                 <div class="ra-cb-section">
                     <div class="ra-cb-head">
                         <b>📖 生成的角色分析聊天书</b>

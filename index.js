@@ -5,6 +5,7 @@ import { ensureOrb } from './src/orb.js';
 import { ensureQrBar } from './src/qrbar.js';
 import { initSettingsDrawer, initTheme } from './src/settings.js';
 import { openPanel } from './src/panel.js';
+import * as sexcombat from './src/sexcombat.js';
 import * as config from './src/config.js';
 import * as worldbook from './src/worldbook.js';
 
@@ -387,6 +388,7 @@ function bootstrap() {
     ensureQrBar();
     initSettingsDrawer();
     initTheme();
+    sexcombat.init();
     log('RUBY Analyzer extension loaded (independent edition)');
 }
 

@@ -74,6 +74,8 @@ export const makeDefaultConfigData = () => ({
     activePresetId: 'default',
     jailbreak: null,
     gen: {},
+    // 随卡脚本：每卡安装的脚本（导入的源码 + 启用状态）；内置脚本（通用性斗）只存启用状态
+    scripts: { sexcombat: { enabled: false }, installed: {} },
 });
 
 const makeDefaultApi = () => ({
@@ -198,6 +200,11 @@ export function normalizeConfigData(raw) {
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
     // 格式保护：创作者配置的锚点标签列表（随卡导出；显示正则需匹配同名的 <标签>）
     result.formatMarks = normalizeFormatMarks(data.formatMarks);
+    // 随卡脚本：导入的创作者脚本（源码+UI+启用态）与内置脚本开关——原样透传
+    result.scripts = {
+      sexcombat: { enabled: data.scripts?.sexcombat?.enabled === true },
+      installed: (data.scripts?.installed && typeof data.scripts.installed === 'object') ? data.scripts.installed : {},
+    };
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
         ? data.presets.map(normalizePreset)
         : [makeDefaultPreset()];
