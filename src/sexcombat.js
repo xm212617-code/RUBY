@@ -101,7 +101,7 @@ export function saveToCard(patch = {}) {
       config.flushCardPersistNow();
     }
   } catch (e) { warn('[性斗] 写卡失败:', e?.message || e); }
-  if (SC.booted) safe(syncBlocks);
+  if (SC.booted) { safe(ensureRule); safe(syncBlocks); }
 }
 function isEnabled() { const k = cardKey(); return k ? !!cfg()[k] : false; }
 function setEnabled(v) { const k = cardKey(); if (k) { cfg()[k] = !!v; config.persist(); } }
@@ -465,7 +465,29 @@ function clearEndEntries(s) {
   else writeE('通用性斗_收场_胜利', '', { constant: false });
 }
 
-// ── 正文注入（三位置，随格式保护机制）：引擎指导内容写进最新一层 AI 消息正文 ──
+// ── 类型判断蓝灯条目（常驻指令，自愈：消失/被清/内容过期/被禁用 → 立即注回） ──
+async function ensureRule() {
+  const c = ctx();
+  if (cfg().ruleEnabled === false) {
+    const rec = await readE(K.rule);
+    if (rec && String(rec.content || '').trim()) await writeE(K.rule, '', { constant: false, comment: '场景判断' });
+    return;
+  }
+  const want = ruleT();
+  const rec = await readE(K.rule);
+  const cur = rec && rec.content !== undefined ? String(rec.content) : '';
+  if (!cur.trim() || cur.trim() !== want.trim()) {
+    // 位置映射：正文前=角色后（对话前）；正文后/自定义XML之后=@D0（正文之后）
+    const pos = cfg().ruleWhere === 'head' ? 1 : 4;
+    await writeE(K.rule, want, { constant: true, pos, depth: pos === 4 ? 0 : undefined, ord: 999, comment: '场景判断' });
+    return;
+  }
+  // 条目在但被手动禁用 → 重新点亮
+  if (rec?.disabled && rec.uid !== undefined && c) {
+    try { await st('/setentryfield file=' + q(rec.book || 'chat') + ' uid=' + rec.uid + ' field=disable 0'); } catch { /* 点亮失败下次再试 */ }
+  }
+}
+// ── 正文注入（三位置，随格式保护机制）：战局标签（战况/开局/阶段/收场）写进最新一层 AI 消息正文 ──
 // 'head'=正文前 | 'tail'=正文后 | 'anchor'=自定义XML之后（战局标签在类型判断启用时锚=类型判断块）
 // 显示被隐藏正则/DOM代行洗掉；AI 经下一层历史读到（提示词层只剥 report，不剥引擎注入块）。
 function findScxAnchorLine(lines, tags) {
@@ -509,12 +531,9 @@ function applyScxBlocks(mes, blocks) {
 }
 function buildScxBlocks() {
   const blocks = [];
-  const ruleOn = cfg().ruleEnabled !== false;
-  if (ruleOn) {
-    blocks.push({ where: cfg().ruleWhere || 'tail', anchorTags: [cfg().ruleAnchor || scTag()], text: '<情潮场景判断>\n' + ruleT() + '\n</情潮场景判断>' });
-  }
   const s = SC.state;
   if (s && !s.cleared) {
+    const ruleOn = cfg().ruleEnabled !== false;
     const where = cfg().scWhere || 'anchor';
     // 类型判断启用 → 锚=类型判断块（AI 输出的 <sceneTag> 块）；禁用 → 玩家自填锚名（空则回退类型判断块、再回退正文后）
     const anchorTags = ruleOn ? [scTag()] : (cfg().scAnchor ? [cfg().scAnchor, scTag()] : [scTag()]);
@@ -589,6 +608,7 @@ async function tick() {
     }
     if (SC.state) SC.state.scanFloor = Math.max(SC.state.scanFloor || SC.state.startFloor, last + 1);
     persist();
+    await safe(ensureRule);
     await safe(syncBlocks);
   } catch (e) { warn('[性斗] tick 失败:', e?.message || e); } finally { refreshInline(); }
 }
@@ -650,8 +670,9 @@ async function start() {
   if (SC.booted) return; SC.booted = true;
   ensureRe(); ensureDomHide(); ensurePromptHide(); bindEvents();
   hydrateCfg();
-  // 旧版世界书战局条目清理（内容已迁至正文注入）
-  for (const k of [K.report, K.rule, K.open, K.stage]) writeE(k, '', { constant: false });
+  // 旧版世界书战局条目清理（内容已迁至正文注入）；蓝灯类型判断条目自愈注入
+  for (const k of [K.report, K.open, K.stage]) writeE(k, '', { constant: false });
+  await ensureRule();
   const rec = await readE(K.state);
   const body = rec?.content ? String(rec.content) : '';
   const jm = body.match(/\{[\s\S]*\}/);
@@ -682,7 +703,7 @@ export function removeInitLevel(n) { delete cfg().initialLevels[n]; delete SC.ex
 export function entryWrite(key, content, opts) { return writeE(key, content, opts); }
 export async function entryRead(key, book) { return readE(key, book); }
 export function getScriptCfg() { return cfg(); }
-export function saveScriptCfg() { config.persist(); if (SC.booted) safe(syncBlocks); }
+export function saveScriptCfg() { config.persist(); if (SC.booted) { safe(ensureRule); safe(syncBlocks); } }
 export function getStatus() { const k = cardKey(); return { supported: !!k, enabled: isEnabled(), cardName: k ? (config.getCharacterIdentity()?.name || '') : '' }; }
 async function safe(fn) { try { await fn(); } catch (e) { warn('[性斗] 失败:', e?.message || e); } }
 export async function toggle() { const v = !isEnabled(); setEnabled(v); if (v) await safe(start); else await safe(stop); return isEnabled(); }
