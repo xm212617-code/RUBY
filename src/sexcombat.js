@@ -118,12 +118,16 @@ function ensureRegexes() {
 /* ══════════ 场景判断（胶水版：分级判定 + 数值权威，格式教学归卡片规则条目） ══════════ */
 function ruleText() {
     return [
-      '<通用性斗_场景判断>',
-      '场景类型：SFW=无性内容 / NSFW=有性内容未发生性行为 / NSFWH=真正发生性行为（性器相接即算）',
-      'NSFWH 楼正文尾部附 <report>：每参与者一段（user 固定写 user），仅两键——单向0-3 / 双向0-2',
-      '性行为进展与结果以情潮战况数值为准，不自行判定',
-      '顶点归零 = 不应期，禁止继续性行为'
-    ].join('\n');
+      '<SceneInfo>',
+      '地点：具体地点',
+      '时间：YYYY年MM月DD日 周X 时段 HH:MM',
+      '场景类型：SFW / NSFW / NSFWH',
+      '在场角色：',
+      '- 角色名|状态',
+      '</SceneInfo>',
+      'NSFWH=真正发生性行为（性器相接即算）。NSFWH 楼正文尾部附 <report>。',
+    ].join('
+');
   }
 
   function scriptCfg() {
