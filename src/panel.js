@@ -1,4 +1,4 @@
-import { ctx, log, h } from './env.js';
+﻿import { ctx, log, h } from './env.js';
 import * as config from './config.js';
 import * as sexcombat from './sexcombat.js';
 import * as scheduler from './scheduler.js';
@@ -1008,7 +1008,8 @@ function wireTabs(root) {
   }
   function scxSave(r) { config.saveConfigData(r.data); }
   function scxApi(id, handles) {
-    return {
+    const cleanups = [];
+    const api = {
       read: async (key, book) => { const rec = await sexcombat.entryRead(key, book || 'chat'); return rec && rec.content ? rec.content : ''; },
       write: async (key, content, opts) => sexcombat.entryWrite(key, content, opts || {}),
       getChat: () => (ctx() || {}).chat || [],
@@ -1021,7 +1022,25 @@ function wireTabs(root) {
       registerUI: (fn) => { handles.ui = fn; },
       onEnable: (fn) => { handles.onEnable = fn; },
       onDisable: (fn) => { handles.onDisable = fn; },
+      // 回合钩子：每次 AI 生成结束触发（fn(楼层号, 消息文本)）；停用脚本时自动解绑，防泄漏
+      onTick: (fn) => {
+        const c = ctx();
+        if (!c?.eventSource || !c?.eventTypes || typeof fn !== 'function') return;
+        const wrapped = (messageId) => {
+          try {
+            const chat = c.chat || [];
+            const idx = typeof messageId === 'number' ? messageId : chat.length - 1;
+            const msg = chat[idx];
+            if (!msg || msg.is_user) return;
+            fn(idx, String(msg.mes || ''));
+          } catch (e) { log('[脚本:' + id + '] onTick 失败:', e?.message || e); }
+        };
+        c.eventSource.on(c.eventTypes.GENERATION_ENDED, wrapped);
+        cleanups.push(() => { try { c.eventSource.removeListener(c.eventTypes.GENERATION_ENDED, wrapped); } catch { /* 忽略 */ } });
+      },
     };
+    handles._cleanups = cleanups;
+    return api;
   }
   function scxActivate(id, rec) {
     if (scxRunning[id]) return;
@@ -1032,11 +1051,11 @@ function wireTabs(root) {
     } catch (e) { log('[脚本:' + id + '] 执行失败:', e?.message || e); return; }
     scxRunning[id] = { handles: handles, rec: rec };
     try { if (handles.onEnable) handles.onEnable(); } catch (e) { log('[脚本:' + id + '] onEnable 失败:', e?.message || e); }
-    renderScxUiWindow(id);
   }
   function scxDeactivate(id) {
     const run = scxRunning[id];
     try { if (run && run.handles.onDisable) run.handles.onDisable(); } catch (e) { log('[脚本:' + id + '] onDisable 失败:', e?.message || e); }
+    try { (run?.handles._cleanups || []).forEach((fn) => fn()); } catch { /* 忽略 */ }
     const w = document.getElementById('scx_window_' + id);
     if (w) w.remove();
     delete scxRunning[id];
@@ -1182,7 +1201,7 @@ function wireTabs(root) {
       '<option value="head"' + (c.ruleWhere === 'head' ? ' selected' : '') + '>正文前</option>' +
       '<option value="tail"' + ((c.ruleWhere || 'tail') === 'tail' ? ' selected' : '') + '>正文后</option>' +
       '</select>' +
-      '<span class="scx-hint">战况/开局/阶段/收场为世界书蓝灯条目，随战斗每层刷新；情潮面板渲染在最新一层正文末尾</span>' +
+      '<span class="scx-hint">战况通报（战况/阶段/收场合一）为世界书蓝灯条目，随战斗每层刷新；场景卡/战况面板渲染在各层 SceneInfo 处</span>' +
       '</div>' +
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
       '<span class="scx-hint" style="flex:none;">识别关键词</span>' +
@@ -1259,7 +1278,7 @@ function wireTabs(root) {
       if (hint) hint.textContent = '已保存并写入角色卡 ✓';
     });
   }
-  const SCX_DOCS = "# RUBY 随卡脚本 · 函数参考\n\n随卡脚本保存在角色卡内（data.extensions.RubyAnalyzer.scripts.installed），启用时以 new Function(\"api\", code) 执行——代码里直接使用 api 对象。\n\n## 生命周期\n- api.onEnable(fn)：启用/面板载入时执行\n- api.onDisable(fn)：停用时执行（清理条目、解绑）\n- api.registerUI(fn)：注册 UI 渲染函数 fn(container)，「UI 窗口」按钮打开时调用\n\n## 世界书读写（persistBook 安全通道）\n- api.read(key, book=\"chat\") → 条目内容文本\n- api.write(key, content, opts) → 写条目；opts = { constant, position, order, depth, comment, book }\n  蓝灯注入：opts.constant = true；@D 深度：opts.position = 4 且 opts.depth = N\n\n## 聊天与角色\n- api.getChat() → 聊天数组\n- api.getChatLength() → 楼层数\n- api.getCharName() → 角色名\n\n## 等级底账（与通用性斗共用）\n- api.getLevels() → { 角色名: 经验 }\n- api.setLevel(name, exp) → 设置角色初始经验\n- api.levelNameFor(exp) → 等级名（处子/新手/经验/老手/魅魔）\n\n## 通用性斗固定条目（引擎保留，请勿覆写）\n通用性斗_战况 / _当局 / _场景判断 / _开局 / _阶段状态 / _收场_* / _经验总档 / _等级_<角色名> / _report协议\n\n## 注意\n- 永远不要在脚本里调用 saveChat 改写消息文本（会杀掉结算队列——装甲叛客血泪 #1）\n- 条目写入走 persistBook（saveWorldInfo），安全\n- 脚本出错只影响自身，RUBY 主引擎不受影响";
+  const SCX_DOCS = "# RUBY 随卡脚本 · 函数参考\n\n随卡脚本保存在角色卡内（data.extensions.RubyAnalyzer.scripts.installed），启用时以 new Function(\"api\", code) 执行——代码里直接使用 api 对象。\n世界书读写一律走「聊天已绑定的世界书」（未绑定则用 RUBY 自动创建并绑定的聊天书）。\n\n## 生命周期\n- api.onEnable(fn)：启用/面板载入时执行\n- api.onDisable(fn)：停用时执行（清理条目、解绑）\n- api.onTick(fn)：每层 AI 回复结束后触发，fn(楼层号, 消息文本)；停用时自动解绑\n- api.registerUI(fn)：注册 UI 渲染函数 fn(container)，「UI 窗口」按钮打开时调用\n\n## 世界书读写（安全通道）\n- api.read(key, book=\"chat\") → 条目内容文本\n- api.write(key, content, opts) → 写条目；opts = { constant, position, order, depth, comment, book }\n  蓝灯注入：opts.constant = true；@D 深度：opts.position = 4 且 opts.depth = N\n  写入目标 = 聊天已绑定的世界书（book=\"chat\" 时自动解析）\n\n## 聊天与角色\n- api.getChat() → 聊天数组\n- api.getChatLength() → 楼层数\n- api.getCharName() → 角色名\n\n## 等级底账（与通用性斗共用）\n- api.getLevels() → { 角色名: 经验 }\n- api.setLevel(name, exp) → 设置角色初始经验\n- api.levelNameFor(exp) → 等级名（处子/新手/经验/老手/魅魔）\n\n## 通用性斗固定条目（引擎保留，请勿覆写）\n通用性斗_战况（蓝灯·战况通报/阶段/收场合一） / 通用性斗_场景判断（蓝灯 @D0）\n通用性斗_当局 / _经验总档 / _等级_<角色名>（绿灯数据）\n\n## 注意\n- 永远不要在脚本里调用 saveChat 改写消息文本（会杀掉结算队列——装甲叛客血泪 #1）\n- 条目写入走世界书写锁（串行），并发安全\n- 脚本出错只影响自身，RUBY 主引擎不受影响";
 
   function scxWire() {
     /* 内置脚本库：展开/收起 + 安装（安装后进入脚本列表，与其他脚本同等管理） */
@@ -4236,3 +4255,4 @@ function wireCardWriterControls() {
 
     renderCardWriterTab();
 }
+
