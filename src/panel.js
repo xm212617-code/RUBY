@@ -1,5 +1,6 @@
 import { ctx, log, h } from './env.js';
 import * as config from './config.js';
+import * as sexcombat from './sexcombat.js';
 import * as scheduler from './scheduler.js';
 import * as jailbreak from './jailbreak.js';
 import * as engine from './engine.js';
@@ -986,6 +987,22 @@ function wireTabs(root) {
 
   /* ═══ 随卡脚本 ═══ */
   const scxRunning = {};
+  const SCX_TAB_CSS = [
+    '#scx_installed .scx-row, #scx_builtin { display:flex; align-items:center; gap:12px; flex-wrap:nowrap; padding:12px 14px; border:1px solid #dfe6df; border-radius:10px; background:rgba(255,255,255,.6); margin-bottom:10px; }',
+    '#scx_builtin > div:first-child, #scx_installed .scx-row > div:first-child { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0; flex-wrap:nowrap; }',
+    '#scx_doc_dl, #scx_import, .scx-row button, #scx_bz_ui, #scx_bz_toggle, #scx_bz_add { white-space:nowrap; min-width:76px; padding:6px 14px; border-radius:8px; border:1px solid #c6d6c4; background:#f4f7f2; color:#26332c; cursor:pointer; font-size:12px; flex:0 0 auto; }',
+    '#scx_doc_dl:hover, #scx_import:hover, .scx-row button:hover, #scx_bz_ui:hover, #scx_bz_toggle:hover, #scx_bz_add:hover { background:#eaf3e8; }',
+    '#scx_bz_panel { border:1px dashed #c6d6c4; border-radius:8px; padding:10px 12px; background:#fbfdf9; margin-top:8px; }',
+    '#scx_bz_list > div { border-bottom:1px dashed #e2e8de; padding:5px 0; }',
+    '#scx_bz_name, #scx_bz_exp { padding:5px 8px; border:1px solid #c6d6c4; border-radius:6px; background:#fff; color:#26332c; }',
+    '#scx_installed .scx-row > div:first-child > span:first-child { font-size:13px; }',
+    '#scx_bz_state, #scx_st_ { white-space:nowrap; }',
+  ].join('\n');
+  const stEl = document.createElement('style');
+  stEl.id = 'ruby_scx_tab_css';
+  stEl.textContent = SCX_TAB_CSS;
+  document.head.appendChild(stEl);
+
   function scxData() {
     const r = config.resolveConfig();
     r.data.scripts = r.data.scripts || { sexcombat: { enabled: false }, installed: {} };
@@ -1187,7 +1204,7 @@ function wireGlobalInteractions() {
     if (interactionsBound) return;
     interactionsBound = true;
 
-    initScriptsTab();
+    try { initScriptsTab(); } catch (e) { console.error('[随卡脚本] 初始化失败:', e); }
     document.addEventListener('click', (e) => {
         const refGroupHeader = e.target?.closest?.('.ref-group-header');
         if (refGroupHeader && !e.target.closest('.help-tip') && !e.target.closest('.ref-scan-cb')) {
