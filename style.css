@@ -14,9 +14,9 @@
    ================================================================== */
 
 /* ---------- 设计令牌（白昼：暖纸 × 墨石 × 红宝石） ---------- */
-/* #ruby_sc_panel（情潮悬浮面板，挂在 body 下）与 #ra_panel 共用同一套令牌 */
+/* #chat .scx-inline（消息内情潮面板）与 #ra_panel 共用同一套令牌 */
 #ra_panel,
-#ruby_sc_panel {
+#chat .scx-inline {
     --ra-surface: #F6F4EF;        /* 卡片底（暖纸） */
     --ra-panel: #FFFFFF;          /* 区块底 */
     --ra-panel-2: #FBFAF7;        /* 区块底（次） */
@@ -1299,7 +1299,7 @@
    仅覆盖令牌与少数硬编码色，其余规则随白昼版本自动生效
    ================================================================== */
 body.ruby-dark #ra_panel,
-body.ruby-dark #ruby_sc_panel {
+body.ruby-dark #chat .scx-inline {
     --ra-surface: #15171C;
     --ra-panel: #1D2027;
     --ra-panel-2: #22262E;
