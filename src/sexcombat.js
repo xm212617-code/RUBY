@@ -35,18 +35,6 @@ function cardKey() {
     const id = config.getCharacterIdentity();
     return id ? id.avatar : null;
 }
-function scriptCfg() {
-    const store = config.getSettings();
-    if (!store) return { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
-    store.scripts = store.scripts || {};
-    store.scripts.sexcombat = store.scripts.sexcombat || { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
-    const sc = store.scripts.sexcombat;
-    if (sc.defaultLevel === undefined) sc.defaultLevel = 10;
-    if (!sc.userName) sc.userName = 'user';
-    if (!sc.trigger) sc.trigger = 'nsfwh';
-    sc.positions = sc.positions || { reportPos: 1, reportOrder: 210, openPos: 1, openOrder: 900, stagePos: 1, stageOrder: 898, rulePos: 4, ruleOrder: 989 };
-    return sc;
-}
 function isEnabled() {
     const k = cardKey(); if (!k) return false;
     return !!scriptCfg()[k];
@@ -126,8 +114,7 @@ function ruleText() {
       '- 角色名|状态',
       '</SceneInfo>',
       'NSFWH=真正发生性行为（性器相接即算）。NSFWH 楼正文尾部附 <report>。',
-    ].join('
-');
+    ].join('\n');
   }
 
   function scriptCfg() {
