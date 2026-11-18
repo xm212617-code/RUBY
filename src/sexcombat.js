@@ -286,19 +286,34 @@ function pRep(mes) {
   });
   return Object.keys(out).length ? out : null;
 }
+// ── 识别：只看两样东西——触发词 + 角色名字，其余格式（包裹/杠号/状态列/地点时间）一律不关注 ──
 function pScene(mes) {
-  const tag = tagReEsc(scTag());
-  const m = String(mes || '').match(new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>', 'i'));
-  if (!m) return { hard:false, chars:[] };
-  const blk = m[1];
-  const hard = !!trigRe()?.test(blk);
-  const cm = blk.match(new RegExp('在场角色[：:]\\s*([\\s\\S]*?)(?=\\n\\n|\\n<\\/' + tagReEsc(scTag()) + '>|$)'));
+  const m = String(mes || '');
+  const hard = !!trigRe()?.test(m);
   const chars = [];
-  if (cm) cm[1].split(/\r?\n/).forEach(l => {
-    const t = l.trim(); if (!t.startsWith('-')) return;
-    const n = t.replace(/^-\s*/, '').split('|')[0].trim();
-    if (n && n !== uName() && !chars.includes(n)) chars.push(n);
-  });
+  const push = (n) => {
+    n = String(n || '').trim().replace(/^[-•*·—]\s*/, '');
+    if (!n || n.length > 20 || chars.includes(n) || n === uName()) return;
+    if (/^(无|暂无|无人|none)$/i.test(n)) return;
+    chars.push(n);
+  };
+  // ① 场景块存在时，宽松抓“在场角色”区：有无 <tag> 包裹、有无杠前缀、有无状态列都无所谓
+  const tag = tagReEsc(scTag());
+  const blockM = m.match(new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>', 'i'));
+  if (blockM) {
+    const cm = blockM[1].match(/在场角色\s*[：:]\s*([\s\S]*?)(?=\n\s*\n|\n\s*<|$)/i);
+    if (cm) cm[1].split(/\r?\n/).forEach((l) => {
+      let t = l.trim();
+      if (!t) return;
+      t = t.replace(/^[-•*·—]\s*/, '');
+      if (/^[^|]{0,8}[：:]/.test(t)) return;   // 跳过“地点：/时间：”等标签行
+      if (t.includes('|')) { push(t.split('|')[0]); return; }
+      t.split(/[、，,]/).forEach(push);          // 无状态列：一行多人（顿号/逗号分隔）
+    });
+  }
+  // ② 底账登记的角色名字出现在正文里也算在场——场景块缺失/漏写照样开局
+  const il = cfg().initialLevels || {};
+  Object.keys(il).forEach((n) => { if (n && n !== uName() && m.includes(n)) push(n); });
   return { hard, chars };
 }
 function syncR(chars) {
@@ -478,7 +493,8 @@ async function tick() {
         log('[性斗] 结算 @楼' + f); settle(rep, f, c); if (SC.state.ended) break;
       } else if (!SC.state?.active && TRr && TRr.test(m)) {
         const sc = pScene(m);
-        if (sc.hard && sc.chars.length) { log('[性斗] 开局 @楼' + f); newB(f, sc.chars); const r0 = pRep(m); if (r0) settle(r0, f, c); if (SC.state.ended) break; }
+        if (sc.chars.length) { log('[性斗] 开局 @楼' + f, '角色：' + sc.chars.join('、')); newB(f, sc.chars); const r0 = pRep(m); if (r0) settle(r0, f, c); if (SC.state.ended) break; }
+        else { log('[性斗] 触发词已命中但未开局 @楼' + f, '（未识别到在场角色：场景块缺在场角色区，且底账未登记任何出场角色）'); }
       } else if (SC.state?.active && !SC.state.ended && TRr && TRr.test(m)) {
         const scF = pScene(m);
         if (scF.chars.length && !scF.chars.some(n => SC.state.opps.some(o => o.name === n && !o.exited))) restart(f, scF.chars); else syncR(scF.chars);

@@ -1262,13 +1262,16 @@ function wireTabs(root) {
       libBtn.textContent = open ? '收起' : '打开';
     });
     const bzInstall = document.getElementById('scx_bz_install');
-    if (bzInstall) bzInstall.addEventListener('click', () => {
+    if (bzInstall) bzInstall.addEventListener('click', async () => {
       const r = scxData();
       if (r.data.scripts.installed[BUILTIN_SCX.id]) return;
       r.data.scripts.installed[BUILTIN_SCX.id] = { name: BUILTIN_SCX.name, builtin: true, code: '', ui: 'builtin', enabled: false };
+      // 安装即启用：装上就开跑，不用再找一次启停
+      if (!sexcombat.getStatus().enabled) await sexcombat.toggle();
+      r.data.scripts.sexcombat.enabled = sexcombat.getStatus().enabled;
       scxSave(r);
       scxRefresh();
-      log('[随卡脚本] 已安装内置脚本：' + BUILTIN_SCX.name);
+      log('[随卡脚本] 已安装并启用内置脚本：' + BUILTIN_SCX.name);
     });
     /* 下载脚本文档 */
     const dl = document.getElementById('scx_doc_dl');
