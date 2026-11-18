@@ -65,6 +65,17 @@ function entryKeys(entry) {
     return keys;
 }
 
+// ── 世界书写入锁 ──
+// ST 端 worldInfoCache 是 cloneOnGet 的：loadWorldInfo 每次返回独立快照，saveWorldInfo 把快照存回缓存。
+// 并发写入时，迟到的旧快照一存回就会把其他并发写入刚建的条目从缓存里抹掉（条目闪没、uid 反复复用）。
+// 因此所有写路径（写条目/存书/禁用条目）必须串行；读路径不受限。
+let _writeQueue = Promise.resolve();
+function serialized(fn) {
+    const run = _writeQueue.then(fn);
+    _writeQueue = run.then(() => {}, () => {});
+    return run;
+}
+
 /**
  * 精确查找条目：直接遍历世界书数据，key 数组元素逐一比对。
  * 不经斜杠命令（/getentryfield 的返回值是 JSON 序列化字符串，
@@ -220,15 +231,17 @@ export async function findEntryPublic(book, key) {
 
 export async function disableCharEntry(charBook, entryKey) {
     if (!charBook || !entryKey) return;
-    try {
-        const found = await findEntry(charBook, entryKey);
-        if (found) {
-            await st(`/setentryfield file=${q(charBook)} uid=${found.uid} field=disable 1`);
-            log(`char book entry disabled: ${entryKey}`);
+    await serialized(async () => {
+        try {
+            const found = await findEntry(charBook, entryKey);
+            if (found) {
+                await st(`/setentryfield file=${q(charBook)} uid=${found.uid} field=disable 1`);
+                log(`char book entry disabled: ${entryKey}`);
+            }
+        } catch (e) {
+            warn(`disableCharEntry failed: ${entryKey}`);
         }
-    } catch (e) {
-        warn(`disableCharEntry failed: ${entryKey}`);
-    }
+    });
 }
 
 /** 查询当前聊天已绑定的世界书名；未绑定时返回 ''（不创建书） */
@@ -257,49 +270,51 @@ export async function sanitizeOutputFilters(chatBook, tasks) {
     if (!chatBook || !Array.isArray(tasks) || tasks.length === 0) return 0;
     sanitizingFilters = true;
     try {
-        const data = await loadBookData(chatBook);
-        if (!data?.entries || typeof data.entries !== 'object') return 0;
+        return await serialized(async () => {
+            const data = await loadBookData(chatBook);
+            if (!data?.entries || typeof data.entries !== 'object') return 0;
 
-        const fixes = [];
-        for (const task of tasks) {
-            const outputKey = String(task?.outputKey || '').trim();
-            if (!outputKey) continue;
-            const found = Object.entries(data.entries).find(([, entry]) => entryKeys(entry).includes(outputKey));
-            if (!found) continue;
-            const uid = parseInt(found[0], 10);
-            if (isNaN(uid)) continue;
-            const entry = found[1];
-            const wantSelective = !!task?.selective;
-            const wantKeys = wantSelective && task?.selectiveKeysEnabled && Array.isArray(task?.selectiveKeys)
-                ? task.selectiveKeys.map((k) => String(k ?? '').trim()).filter(Boolean)
-                : [];
-            const currentKeys = Array.isArray(entry?.keysecondary)
-                ? entry.keysecondary.map((k) => String(k ?? '').trim()).filter(Boolean)
-                : [];
-            const keysDiffer = currentKeys.join('\u0001') !== wantKeys.join('\u0001');
-            const selectiveDiffers = !!entry?.selective !== wantSelective;
-            if (!keysDiffer && !selectiveDiffers) continue;
-            fixes.push({ uid, outputKey, keysDiffer, selectiveDiffers, wantKeys, wantSelective, currentKeys });
-        }
-        if (fixes.length === 0) return 0;
+            const fixes = [];
+            for (const task of tasks) {
+                const outputKey = String(task?.outputKey || '').trim();
+                if (!outputKey) continue;
+                const found = Object.entries(data.entries).find(([, entry]) => entryKeys(entry).includes(outputKey));
+                if (!found) continue;
+                const uid = parseInt(found[0], 10);
+                if (isNaN(uid)) continue;
+                const entry = found[1];
+                const wantSelective = !!task?.selective;
+                const wantKeys = wantSelective && task?.selectiveKeysEnabled && Array.isArray(task?.selectiveKeys)
+                    ? task.selectiveKeys.map((k) => String(k ?? '').trim()).filter(Boolean)
+                    : [];
+                const currentKeys = Array.isArray(entry?.keysecondary)
+                    ? entry.keysecondary.map((k) => String(k ?? '').trim()).filter(Boolean)
+                    : [];
+                const keysDiffer = currentKeys.join('\u0001') !== wantKeys.join('\u0001');
+                const selectiveDiffers = !!entry?.selective !== wantSelective;
+                if (!keysDiffer && !selectiveDiffers) continue;
+                fixes.push({ uid, outputKey, keysDiffer, selectiveDiffers, wantKeys, wantSelective, currentKeys });
+            }
+            if (fixes.length === 0) return 0;
 
-        for (const fix of fixes) {
-            if (fix.keysDiffer) {
-                if (fix.wantKeys.length > 0) {
-                    const selVar = `_ruby_sel_${Date.now()}_${fix.uid}`;
-                    await st(`/setvar key=${selVar} ${q(fix.wantKeys.join(', '))}`);
-                    await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary`);
-                } else {
-                    await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary ""`);
+            for (const fix of fixes) {
+                if (fix.keysDiffer) {
+                    if (fix.wantKeys.length > 0) {
+                        const selVar = `_ruby_sel_${Date.now()}_${fix.uid}`;
+                        await st(`/setvar key=${selVar} ${q(fix.wantKeys.join(', '))}`);
+                        await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary`);
+                    } else {
+                        await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=keysecondary ""`);
+                    }
                 }
+                if (fix.selectiveDiffers) {
+                    await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=selective ${fix.wantSelective ? 1 : 0}`);
+                }
+                log(`output filter sanitized: ${fix.outputKey} (uid ${fix.uid}) keysecondary [${fix.currentKeys.join(', ')}] -> [${fix.wantKeys.join(', ')}]`);
             }
-            if (fix.selectiveDiffers) {
-                await st(`/setentryfield file=${q(chatBook)} uid=${fix.uid} field=selective ${fix.wantSelective ? 1 : 0}`);
-            }
-            log(`output filter sanitized: ${fix.outputKey} (uid ${fix.uid}) keysecondary [${fix.currentKeys.join(', ')}] -> [${fix.wantKeys.join(', ')}]`);
-        }
-        await persistBook(chatBook);
-        return fixes.length;
+            await persistBook(chatBook);
+            return fixes.length;
+        });
     } finally {
         sanitizingFilters = false;
     }
@@ -313,67 +328,69 @@ export async function writeOutputEntry(chatBook, options) {
     } = options;
     if (!chatBook || !key) throw new Error('chat book or output key missing');
 
-    let uid;
-    const found = await findEntry(chatBook, key);
-    if (found) {
-        uid = found.uid;
-        log(`output entry found, updating: ${key} (uid ${uid})`);
-    } else {
-        const uidRaw = await st(`/createentry file=${q(chatBook)} key=${q(key)} ""`);
-        uid = parseInt(uidRaw, 10);
-        if (isNaN(uid)) throw new Error(`create entry failed: ${key}`);
-        log(`output entry created: ${key}`);
-    }
+    await serialized(async () => {
+        let uid;
+        const found = await findEntry(chatBook, key);
+        if (found) {
+            uid = found.uid;
+            log(`output entry found, updating: ${key} (uid ${uid})`);
+        } else {
+            const uidRaw = await st(`/createentry file=${q(chatBook)} key=${q(key)} ""`);
+            uid = parseInt(uidRaw, 10);
+            if (isNaN(uid)) throw new Error(`create entry failed: ${key}`);
+            log(`output entry created: ${key}`);
+        }
 
-    if (comment) {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=comment ${q(String(comment).trim())}`);
-    }
+        if (comment) {
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=comment ${q(String(comment).trim())}`);
+        }
 
-    const extraKeysList = String(extraKeys || '').split(',').map((k) => k.trim()).filter(Boolean);
-    const allKeys = [key, ...extraKeysList].join(', ');
+        const extraKeysList = String(extraKeys || '').split(',').map((k) => k.trim()).filter(Boolean);
+        const allKeys = [key, ...extraKeysList].join(', ');
 
-    if (extraKeysList.length > 0) {
-        const varName = `_ruby_key_${Date.now()}`;
-        await st(`/setvar key=${varName} ${q(allKeys)}`);
-        await st(`/getvar ${varName} | /setentryfield file=${q(chatBook)} uid=${uid} field=key`);
-    }
+        if (extraKeysList.length > 0) {
+            const varName = `_ruby_key_${Date.now()}`;
+            await st(`/setvar key=${varName} ${q(allKeys)}`);
+            await st(`/getvar ${varName} | /setentryfield file=${q(chatBook)} uid=${uid} field=key`);
+        }
 
-    const contentVar = `_ruby_tmp_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    await st(`/setvar key=${contentVar} ${q(String(content || '').trim())}`);
-    await st(`/getvar ${contentVar} | /setentryfield file=${q(chatBook)} uid=${uid} field=content`);
+        const contentVar = `_ruby_tmp_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        await st(`/setvar key=${contentVar} ${q(String(content || '').trim())}`);
+        await st(`/getvar ${contentVar} | /setentryfield file=${q(chatBook)} uid=${uid} field=content`);
 
-    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=constant ${constant ? 1 : 0}`);
-    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=disable ${disable ? 1 : 0}`);
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=constant ${constant ? 1 : 0}`);
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=disable ${disable ? 1 : 0}`);
 
-    if (noRecursion) {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=excludeRecursion 1`);
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=preventRecursion 1`);
-    }
+        if (noRecursion) {
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=excludeRecursion 1`);
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=preventRecursion 1`);
+        }
 
-    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=position ${position}`);
-    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=order ${order}`);
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=position ${position}`);
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=order ${order}`);
 
-    if (position === 4) {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=depth ${depth}`);
-    }
+        if (position === 4) {
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=depth ${depth}`);
+        }
 
-    // 副关键词（过滤关键词）是高效用字段，严禁任何默认值兜底：
-    // 只有调用方显式传入非空 selectiveKeys 才写入，否则一律清空；
-    // 非绿灯条目一律复位 selective=0 并清空副关键词，防止旧状态残留。
-    const filterKeys = (Array.isArray(selectiveKeys) ? selectiveKeys : [])
-        .map((k) => String(k ?? '').trim()).filter(Boolean);
-    if (filterKeys.length > 0) {
-        const selVar = `_ruby_sel_${Date.now()}`;
-        await st(`/setvar key=${selVar} ${q(filterKeys.join(', '))}`);
-        await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary`);
-    } else {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary ""`);
-    }
-    await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selective ${selective ? 1 : 0}`);
-    if (selective) {
-        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selectiveLogic 0`);
-    }
-    log(`output written: ${key}${extraKeysList.length ? ` (keys: ${allKeys})` : ''}`);
+        // 副关键词（过滤关键词）是高效用字段，严禁任何默认值兜底：
+        // 只有调用方显式传入非空 selectiveKeys 才写入，否则一律清空；
+        // 非绿灯条目一律复位 selective=0 并清空副关键词，防止旧状态残留。
+        const filterKeys = (Array.isArray(selectiveKeys) ? selectiveKeys : [])
+            .map((k) => String(k ?? '').trim()).filter(Boolean);
+        if (filterKeys.length > 0) {
+            const selVar = `_ruby_sel_${Date.now()}`;
+            await st(`/setvar key=${selVar} ${q(filterKeys.join(', '))}`);
+            await st(`/getvar ${selVar} | /setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary`);
+        } else {
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=keysecondary ""`);
+        }
+        await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selective ${selective ? 1 : 0}`);
+        if (selective) {
+            await st(`/setentryfield file=${q(chatBook)} uid=${uid} field=selectiveLogic 0`);
+        }
+        log(`output written: ${key}${extraKeysList.length ? ` (keys: ${allKeys})` : ''}`);
+    });
 }
 
 /** 读单个条目当前内容（快照用）；条目不存在返回空串 */
@@ -402,53 +419,57 @@ export async function writeEntryByKey(bookName, options) {
         .map((k) => String(k ?? '').trim()).filter(Boolean);
     const allKeys = [primaryKey, ...extraKeys];
 
-    let uid;
-    const found = await findEntry(bookName, primaryKey);
-    if (found) {
-        uid = found.uid;
-        log(`write: entry found, updating: ${primaryKey} (uid ${uid})`);
-    } else {
-        const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
-        uid = parseInt(uidRaw, 10);
-        if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
-        // 新建条目：position（4=@D 深度注入）/ order / depth（指定时）/ 递归双禁
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
-        if (Number.isFinite(Number(depth))) await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${Number(depth)}`);
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
-        log(`write: entry created: ${primaryKey}`);
-    }
+    return serialized(async () => {
+        let uid;
+        const found = await findEntry(bookName, primaryKey);
+        if (found) {
+            uid = found.uid;
+            log(`write: entry found, updating: ${primaryKey} (uid ${uid})`);
+        } else {
+            const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
+            uid = parseInt(uidRaw, 10);
+            if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
+            // 新建条目：position（4=@D 深度注入）/ order / depth（指定时）/ 递归双禁
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
+            if (Number.isFinite(Number(depth))) await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${Number(depth)}`);
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
+            log(`write: entry created: ${primaryKey}`);
+        }
 
-    if (comment) {
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=comment ${q(String(comment).trim())}`);
-    }
-    if (found && extraKeys.length > 0) {
-        // 已有条目且要求附加关键词：整体覆写 key 数组
-        const keyVar = `_ruby_wk_${Date.now()}`;
-        await st(`/setvar key=${keyVar} ${q(allKeys.join(', '))}`);
-        await st(`/getvar ${keyVar} | /setentryfield file=${q(bookName)} uid=${uid} field=key`);
-    }
+        if (comment) {
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=comment ${q(String(comment).trim())}`);
+        }
+        if (found && extraKeys.length > 0) {
+            // 已有条目且要求附加关键词：整体覆写 key 数组
+            const keyVar = `_ruby_wk_${Date.now()}`;
+            await st(`/setvar key=${keyVar} ${q(allKeys.join(', '))}`);
+            await st(`/getvar ${keyVar} | /setentryfield file=${q(bookName)} uid=${uid} field=key`);
+        }
 
-    // 内容经临时变量写入（内容可能含竖线/引号/换行，与 writeOutputEntry 同款通道）
-    const contentVar = `_ruby_wc_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
-    await st(`/getvar ${contentVar} | /setentryfield file=${q(bookName)} uid=${uid} field=content`);
+        // 内容经临时变量写入（内容可能含竖线/引号/换行，与 writeOutputEntry 同款通道）
+        const contentVar = `_ruby_wc_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
+        await st(`/getvar ${contentVar} | /setentryfield file=${q(bookName)} uid=${uid} field=content`);
 
-    await st(`/setentryfield file=${q(bookName)} uid=${uid} field=constant ${constant ? 1 : 0}`);
-    await persistBook(bookName);
-    return { uid, created: !found };
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=constant ${constant ? 1 : 0}`);
+        await persistBook(bookName);
+        return { uid, created: !found };
+    });
 }
 
 /** 只恢复条目内容（快照回滚用）：不动 key/位置/状态等其余字段 */
 export async function writeEntryContent(book, key, content) {
     if (!book || !key) throw new Error('chat book or entry key missing');
-    const found = await findEntry(book, key);
-    if (!found) throw new Error(`未找到输出条目：${key}`);
-    const contentVar = `_ruby_restore_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
-    await st(`/getvar ${contentVar} | /setentryfield file=${q(book)} uid=${found.uid} field=content`);
-    log(`entry content restored: ${key} (uid ${found.uid})`);
+    await serialized(async () => {
+        const found = await findEntry(book, key);
+        if (!found) throw new Error(`未找到输出条目：${key}`);
+        const contentVar = `_ruby_restore_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        await st(`/setvar key=${contentVar} ${q(String(content ?? ''))}`);
+        await st(`/getvar ${contentVar} | /setentryfield file=${q(book)} uid=${found.uid} field=content`);
+        log(`entry content restored: ${key} (uid ${found.uid})`);
+    });
 }
 
 export async function persistBook(bookName) {
@@ -459,16 +480,18 @@ export async function persistBook(bookName) {
         }
         return;
     }
-    try {
-        const worldData = await c.loadWorldInfo(bookName);
-        await c.saveWorldInfo(bookName, worldData, true);
-        log(`world book persisted: ${bookName}`);
-    } catch (e) {
-        warn(`saveWorldInfo failed: ${e.message}`);
-        if (typeof c?.saveChat === 'function') {
-            try { await c.saveChat(); } catch (e2) { warn(`saveChat fallback failed: ${e2.message}`); }
+    await serialized(async () => {
+        try {
+            const worldData = await c.loadWorldInfo(bookName);
+            await c.saveWorldInfo(bookName, worldData, true);
+            log(`world book persisted: ${bookName}`);
+        } catch (e) {
+            warn(`saveWorldInfo failed: ${e.message}`);
+            if (typeof c?.saveChat === 'function') {
+                try { await c.saveChat(); } catch (e2) { warn(`saveChat fallback failed: ${e2.message}`); }
+            }
         }
-    }
+    });
 }
 
 export function extractEntryKeywords(entry) {
@@ -519,10 +542,11 @@ export async function setVersionEntryGroups(bookName, activeSuffix) {
         throw new Error(`unknown version suffix: ${activeSuffix}`);
     }
     if (!bookName) throw new Error('world book name missing');
-    const data = await loadBookData(bookName);
-    if (!data?.entries || typeof data.entries !== 'object') {
-        throw new Error(`world book not found: ${bookName}`);
-    }
+    return serialized(async () => {
+        const data = await loadBookData(bookName);
+        if (!data?.entries || typeof data.entries !== 'object') {
+            throw new Error(`world book not found: ${bookName}`);
+        }
 
     const wantLao = suffix === '老马版';
     const byUid = new Map();
@@ -557,6 +581,7 @@ export async function setVersionEntryGroups(bookName, activeSuffix) {
         if (g.group === 'lao') changedLao++;
         else changedXiao++;
     }
-    await persistBook(bookName);
-    return { laoCount: laoBases.size, changedLao, changedXiao };
+        await persistBook(bookName);
+        return { laoCount: laoBases.size, changedLao, changedXiao };
+    });
 }
