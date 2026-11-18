@@ -708,20 +708,20 @@ function buildShellHtml() {
                                 <button id="scx_import" class="menu_button">📂 导入脚本</button>
                                 <input id="scx_import_file" type="file" accept=".js,.txt" style="display:none;" />
                             </div>
-                            <div id="scx_builtin">
-                                <div style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;">
-                                    <span style="font-weight:700;flex:none;">通用性斗</span>
-                                    <span class="tip" style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">内置 · 性斗结算 + 情潮面板</span>
-                                    <span id="scx_bz_state" style="font-size:11px;color:#1a1a1a;flex:none;white-space:nowrap;"></span>
-                                    <button id="scx_bz_ui" class="menu_button" style="flex:none;white-space:nowrap;">⚙ 设置</button>
-                                    <button id="scx_bz_toggle" class="menu_button" style="flex:none;white-space:nowrap;">启用</button>
+                            <div id="scx_builtin" class="inline-drawer">
+                                <div class="inline-drawer-toggle inline-drawer-header">
+                                    <b>通用性斗</b>
+                                    <span id="scx_bz_state" style="font-size:11px;margin-left:8px;"></span>
+                                    <button id="scx_bz_toggle" class="menu_button" style="margin-left:auto;white-space:nowrap;">启用</button>
+                                    <div class="inline-drawer-icon fa-solid fa-chevron-down"></div>
                                 </div>
-                                <div id="scx_bz_modal" style="display:none;margin-top:10px;padding:14px;border:1px solid #c6d6c4;border-radius:10px;background:#fbfdf9;">
-                                    <div class="form-header blue" style="font-size:11px;">▶ 触发标记</div>
+                                <div class="inline-drawer-content" style="padding:10px 14px;">
+                                    <div class="form-header blue" style="font-size:11px;">触发标记</div>
                                     <div style="display:flex;gap:8px;align-items:center;margin:6px 0;">
                                         <input id="scx_trigger" class="text_input" value="nsfwh" style="flex:0 0 140px;" />
+                                        <span class="tip" style="margin:0;">SceneInfo 含此标记时性斗启动</span>
                                     </div>
-                                    <div class="form-header blue" style="font-size:11px;">▶ 等级底账</div>
+                                    <div class="form-header blue" style="font-size:11px;">等级底账</div>
                                     <div style="display:flex;gap:6px;align-items:center;margin:6px 0;">
                                         <input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1;" />
                                         <input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;" />
@@ -729,7 +729,7 @@ function buildShellHtml() {
                                         <button id="scx_lv_add" class="menu_button">增加</button>
                                     </div>
                                     <div id="scx_lv_list" style="max-height:200px;overflow-y:auto;"></div>
-                                    <div class="form-header blue" style="font-size:11px;margin-top:10px;">▶ 注入位置</div>
+                                    <div class="form-header blue" style="font-size:11px;margin-top:10px;">注入位置</div>
                                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                                         <div style="flex:1;"><div class="tip" style="margin:0 0 2px;">战况</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" style="flex:1;" /><input id="scx_o_rp" class="text_input" type="number" style="flex:1;" /></div></div>
                                         <div style="flex:1;"><div class="tip" style="margin:0 0 2px;">开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" style="flex:1;" /><input id="scx_o_op" class="text_input" type="number" style="flex:1;" /></div></div>
@@ -737,12 +737,18 @@ function buildShellHtml() {
                                     </div>
                                 </div>
                             </div>
-                            <div style="display:flex;gap:8px;align-items:center;margin:10px 0 6px;">
-                                <span style="font-weight:700;font-size:12px;">创作者脚本</span>
-                                <button id="scx_import_btn" class="menu_button" style="margin-left:auto;white-space:nowrap;">📂 导入</button>
-                                <input id="scx_import_file" type="file" accept=".js,.json" style="display:none;" />
+                            <div id="scx_creator" class="inline-drawer">
+                                <div class="inline-drawer-toggle inline-drawer-header">
+                                    <b>创作者脚本</b>
+                                    <button id="scx_import_btn" class="menu_button" style="margin-left:auto;white-space:nowrap;">导入</button>
+                                    <input id="scx_import_file" type="file" accept=".js,.json" style="display:none;" />
+                                    <div class="inline-drawer-icon fa-solid fa-chevron-down"></div>
+                                </div>
+                                <div class="inline-drawer-content" style="padding:10px 14px;">
+                                    <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
+                                </div>
                             </div>
-                            <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
+<div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
                         </div>
                     </div>
                 </div>
