@@ -1,4 +1,4 @@
-import { ctx, log, warn, st } from './env.js';
+﻿import { ctx, log, warn, st, q } from './env.js';
 import * as config from './config.js';
 
 const K = { state:'通用性斗_当局', report:'通用性斗_战况', rule:'通用性斗_场景判断', open:'通用性斗_开局', stage:'通用性斗_阶段状态', exp:'通用性斗_经验总档', lp:'通用性斗_等级_' };
@@ -19,7 +19,8 @@ function cfg() {
   s.scripts = s.scripts || {};
   s.scripts.sexcombat = s.scripts.sexcombat || { enabled:false, trigger:'nsfwh', defaultLevel:10, userName:'user', initialLevels:{}, positions:{} };
   const c = s.scripts.sexcombat;
-  if (!c.trigger) c.trigger = 'nsfwh';
+  // 触发词允许清空（'' = 不启用性斗触发），只在从未设置时给默认值
+  c.trigger = (c.trigger === undefined || c.trigger === null) ? 'nsfwh' : String(c.trigger);
   if (!c.userName) c.userName = 'user';
   if (c.defaultLevel === undefined) c.defaultLevel = 10;
   c.initialLevels = c.initialLevels || {};
@@ -43,49 +44,88 @@ function lvI(n) {
 const lvD = i => L[Math.max(0, Math.min(4, i))];
 
 // ── 斜杠 ══
-async function run(cmd) {
-  const c = ctx();
-  if (c?.executeSlashCommands) { const r = await c.executeSlashCommands(cmd); return r ?? '' ? String(r) : ''; }
-  return String(await st(cmd) ?? '');
-}
+async function run(cmd) { return String(await st(cmd) ?? ''); }
 async function readE(key, book) {
-  const raw = await run('/ruby "RPC~read~key=' + key + '~json=true~book=' + (book || 'chat') + '"');
+  const raw = await run('/ruby read key=' + q(key) + ' json=true book=' + (book || 'chat'));
   try { return JSON.parse(raw); } catch { return null; }
 }
 async function writeE(key, content, o = {}) {
   const v = '_sx_' + Date.now().toString(36) + Math.floor(Math.random() * 999);
-  await run('/setvar key=' + v + ' "' + String(content ?? '').replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\|/g,'｜') + '"');
-  let cmd = '/ruby RPC~write~key=' + key + '~var=' + v + '~book=' + (o.book || 'chat') + '~position=' + (o.pos ?? 1) + '~order=' + (o.ord ?? 210) + (o.constant !== undefined ? '~constant=' + (o.constant ? 'true' : 'false') : '') + (o.depth !== undefined ? '~depth=' + o.depth : '');
+  await run('/setvar key=' + v + ' ' + q(content));
+  const pos = o.pos ?? o.position ?? 1;
+  const ord = o.ord ?? o.order ?? 210;
+  let cmd = '/ruby RPC~write~key=' + key + '~var=' + v + '~book=' + (o.book || 'chat') + '~position=' + pos + '~order=' + ord + (o.constant !== undefined ? '~constant=' + (o.constant ? 'true' : 'false') : '') + (o.depth !== undefined ? '~depth=' + o.depth : '');
   if (o.comment) cmd += '~comment=' + o.comment;
   await run(cmd);
 }
 
 // ── 隐藏正则 ──
+function uid() { return (crypto?.randomUUID?.() || 'sx-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)); }
 function ensureRe() {
   const c = ctx(); if (!c) return;
   const es = c.extensionSettings || window.extension_settings; if (!es) return;
   es.regex = Array.isArray(es.regex) ? es.regex : [];
+  // placement 必须是数组（ST 引擎按 script.placement.includes(placement) 判定）；
+  // 2 = AI_OUTPUT——正情潮 XML / report 只出现在 AI 输出里。写成数字会被正则扩展的
+  // migrateSettings 清空 placement，导致注入正则完全失效。
   const want = [
-    {scriptName:'通用性斗·隐藏情潮XML',findRegex:'<情潮[^>]*>[\\s\\S]*?<\\/情潮[^>]*>',replaceString:'',placement:1,markdownOnly:true,promptOnly:false,runOnEdit:true,minDepth:null,maxDepth:null,disabled:false},
-    {scriptName:'通用性斗·隐藏report',findRegex:'<report>([\\s\\S]*?)<\\/report>',replaceString:'',placement:1,markdownOnly:true,promptOnly:true,runOnEdit:true,minDepth:null,maxDepth:null,disabled:false},
+    {scriptName:'通用性斗·隐藏情潮XML',findRegex:'<情潮[^>]*>[\\s\\S]*?<\\/情潮[^>]*>',replaceString:'',placement:[2],markdownOnly:true,promptOnly:true,runOnEdit:true,minDepth:null,maxDepth:null,disabled:false},
+    {scriptName:'通用性斗·隐藏report',findRegex:'<report>([\\s\\S]*?)<\\/report>',replaceString:'',placement:[2],markdownOnly:true,promptOnly:true,runOnEdit:true,minDepth:null,maxDepth:null,disabled:false},
   ];
   let a = 0;
-  for (const w of want) { if (!es.regex.some(x => x.scriptName === w.scriptName)) { es.regex.push({trimStrings:[],substituteRegex:0,...w}); a++; } }
+  for (const w of want) {
+    const have = es.regex.find(x => x.scriptName === w.scriptName);
+    if (!have) { es.regex.push({ id: uid(), trimStrings: [], substituteRegex: 0, ...w }); a++; }
+    else {
+      // 修正旧版遗留的数字 placement（已被迁移清空的也一并补回）
+      if (!Array.isArray(have.placement) || !have.placement.includes(2)) { have.placement = [2]; a++; }
+      if (!have.id) { have.id = uid(); a++; }
+    }
+  }
   if (a) { if (typeof c.saveSettingsDebounced === 'function') c.saveSettingsDebounced(); log('[性斗] 隐藏正则 ×' + a); }
 }
 
-// ── 场景判断条目（纯格式，照 08_插图规则） ──
+// ── 场景判断条目（纯格式注入；触发词从配置读，清空=不启用性斗触发） ──
+function trigRe() {
+  const t = String(cfg().trigger || '').trim();
+  return t ? new RegExp(t, 'i') : null;
+}
 function ruleT() {
-  return [
+  const t = String(cfg().trigger || '').trim();
+  const T = t.toUpperCase();
+  const lines = [
     '<SceneInfo>',
     '地点：具体地点',
     '时间：YYYY年MM月DD日 周X 时段 HH:MM',
-    '场景类型：SFW / NSFW / NSFWH',
+    '场景类型：SFW / NSFW' + (T ? ' / ' + T : ''),
     '在场角色：',
     '- 角色名|状态',
     '</SceneInfo>',
-    'NSFWH=真正发生性行为（性器相接即算）。NSFWH 楼正文尾部附 <report>。',
-  ].join('\n');
+    '每层回复末尾必须输出上述 <SceneInfo> 块（放正文最后）。',
+  ];
+  if (T) {
+    lines.push(
+      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <SceneInfo> 之后附 <report>。',
+      '<report> 协议（' + T + ' 楼必附，其余楼层禁止输出）：',
+      '<report>',
+      '角色名:',
+      '  单向: 0-3（次数）',
+      '  双向: 0-2（次数）',
+      '</report>',
+    );
+  }
+  lines.push(
+    '数值权威：进展与结果以战况通报为准，照数值写，不粉饰不翻转。',
+    '不应期纪律：已到顶角色进入不应期——敏感度大幅钝化，性刺激不引发反应；禁止继续主动性行为。',
+  );
+  return lines.join('\n');
+}
+
+// 注入位置配置：positions = { reportPos/reportOrder, openPos/openOrder, stagePos/stageOrder }
+function posCfg(k, def) {
+  const p = cfg().positions || {};
+  const v = parseInt(p[k], 10);
+  return Number.isFinite(v) ? v : def;
 }
 
 // ── 状态 ──
@@ -131,8 +171,8 @@ function pRep(mes) {
 function pScene(mes) {
   const m = String(mes || '').match(/<SceneInfo>([\s\S]*?)<\/SceneInfo>/i);
   if (!m) return { hard:false, chars:[] };
-  const blk = m[1]; const trig = cfg().trigger || 'nsfwh';
-  const hard = new RegExp(trig, 'i').test(blk);
+  const blk = m[1];
+  const hard = !!trigRe()?.test(blk);
   const cm = blk.match(/在场角色[：:]\s*([\s\S]*?)(?=\n\n|\n<\/SceneInfo>|$)/);
   const chars = [];
   if (cm) cm[1].split(/\r?\n/).forEach(l => {
@@ -251,20 +291,26 @@ function persist() {
   s.opps.forEach(o => writeE(K.lp + o.name, '等级: ' + L[lvI(o.name)].n + '\n经验: ' + expOf(o.name), { constant: false, comment: '等级' }));
   writeE(K.lp + uName(), '等级: ' + L[lvI(uName())].n + '\n经验: ' + expOf(uName()), { constant: false, comment: '等级' });
   if (s.cleared) {
-    [K.report, K.rule, K.open, K.stage].forEach((k, i) => writeE(k, '', { constant: false, pos: i === 0 ? 4 : 1, ord: i === 0 ? 989 : [210, 900, 898][i - 1] || 210 }));
+    // 场景判断条目保留（下一局开局判定仍依赖 SceneInfo），只清战况/开局/阶段与收场
+    writeE(K.report, '', { constant: false, pos: posCfg('reportPos', 1), ord: posCfg('reportOrder', 210) });
+    writeE(K.open, '', { constant: false, pos: posCfg('openPos', 1), ord: posCfg('openOrder', 900) });
+    writeE(K.stage, '', { constant: false, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
     s.endEntries.forEach(e => writeE(e.key, '', { constant: false, ord: e.ord }));
   } else {
-    writeE(K.report, s.ended ? (s.endEntries || []).filter(e => e.key.includes('user高潮')).map(e => e.text).join('\n') || battleT() : battleT(), { constant: true });
+    writeE(K.report, s.ended ? (s.endEntries || []).filter(e => e.key.includes('user高潮')).map(e => e.text).join('\n') || battleT() : battleT(), { constant: true, pos: posCfg('reportPos', 1), ord: posCfg('reportOrder', 210) });
     if (!s.ended) {
-      writeE(K.open, openT(), { constant: true, ord: 900 });
-      writeE(K.stage, stageTAll(), { constant: true, ord: 898 });
+      writeE(K.open, openT(), { constant: true, pos: posCfg('openPos', 1), ord: posCfg('openOrder', 900) });
+      writeE(K.stage, stageTAll(), { constant: true, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
       s.endEntries.forEach(e => writeE(e.key, '', { constant: false, ord: e.ord }));
     } else {
-      writeE(K.stage, '', { constant: false, ord: 898 });
+      writeE(K.stage, '', { constant: false, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
       s.endEntries.forEach(e => writeE(e.key, e.text, { constant: true, ord: e.ord }));
     }
   }
 }
+
+// ── 场景判断条目落笔（@D0 蓝灯常驻——每层回复都靠 SceneInfo 驱动判定） ──
+async function writeRule() { await writeE(K.rule, ruleT(), { constant: true, pos: 4, depth: 0, ord: 999, comment: '场景判断' }); }
 
 // ── tick ──
 async function tick() {
@@ -278,6 +324,7 @@ async function tick() {
       log('[性斗] 清场 @楼' + last); SC.state.cleared = true; await persist(); SC.state = null; render(); return;
     }
     let scan = SC.state?.active ? Math.max(SC.state.scanFloor || SC.state.startFloor, SC.state.startFloor, SC.state.lastSettledFloor + 1) : last;
+    const TRr = trigRe();
     for (let f = Math.min(scan, last); f <= last; f++) {
       const msg = c.chat[f]; if (!msg || msg.is_user) continue;
       const m = msg.mes || '';
@@ -287,10 +334,10 @@ async function tick() {
         const inR = scF.chars.some(n => SC.state.opps.some(o => o.name === n && !o.exited)) || Object.keys(rep).some(n => n !== uName() && SC.state.opps.some(o => o.name === n && !o.exited));
         if (scF.chars.length && !inR) restart(f, scF.chars); else syncR(scF.chars);
         log('[性斗] 结算 @楼' + f); settle(rep, f, c); if (SC.state.ended) break;
-      } else if (!SC.state?.active && new RegExp(cfg().trigger || 'nsfwh', 'i').test(m)) {
+      } else if (!SC.state?.active && TRr && TRr.test(m)) {
         const sc = pScene(m);
         if (sc.hard && sc.chars.length) { log('[性斗] 开局 @楼' + f); newB(f, sc.chars); const r0 = pRep(m); if (r0) settle(r0, f, c); if (SC.state.ended) break; }
-      } else if (SC.state?.active && !SC.state.ended && new RegExp(cfg().trigger || 'nsfwh', 'i').test(m)) {
+      } else if (SC.state?.active && !SC.state.ended && TRr && TRr.test(m)) {
         const scF = pScene(m);
         if (scF.chars.length && !scF.chars.some(n => SC.state.opps.some(o => o.name === n && !o.exited))) restart(f, scF.chars); else syncR(scF.chars);
       }
@@ -333,7 +380,7 @@ function render() {
 function ensureP() {
   if (SC.panel) return;
   const el = document.createElement('div'); el.id = 'ruby_sc_panel'; el.className = 'scx-panel scx-absent';
-  el.innerHTML = '<style>' + SCX_CSS + '</style><div class="scx-head"><div class="scx-title">' + H + ' 情潮</div><span class="scx-sub"></span><span class="scx-chev">▾</span></div><div class="scx-body"><div class="scx-inner"></div></div>';
+  el.innerHTML = '<div class="scx-head"><div class="scx-title">' + H + ' 情潮</div><span class="scx-sub"></span><span class="scx-chev">▾</span></div><div class="scx-body"><div class="scx-inner"></div></div>';
   document.body.appendChild(el);
   el.querySelector('.scx-head').addEventListener('click', () => el.classList.toggle('scx-folded'));
   SC.panel = el;
@@ -351,6 +398,7 @@ function bindEvents() {
 async function start() {
   if (SC.booted) return; SC.booted = true;
   ensureP(); ensureRe(); bindEvents();
+  await writeRule();
   const rec = await readE(K.state);
   const body = rec?.content ? String(rec.content) : '';
   const jm = body.match(/\{[\s\S]*\}/);
@@ -375,9 +423,16 @@ export function setInitLevel(n, e) { const c = cfg(); c.initialLevels = c.initia
 export function removeInitLevel(n) { delete cfg().initialLevels[n]; delete SC.exp[n]; (async () => { await writeE(K.lp + n, '', { constant: false }); })(); config.persist(); }
 export function entryWrite(key, content, opts) { return writeE(key, content, opts); }
 export async function entryRead(key, book) { return readE(key, book); }
+export function getScriptCfg() { return cfg(); }
+export function saveScriptCfg() { config.persist(); if (SC.booted) writeRule(); }
 export function getStatus() { const k = cardKey(); return { supported: !!k, enabled: isEnabled(), cardName: k ? (config.getCharacterIdentity()?.name || '') : '' }; }
-export async function toggle() { const v = !isEnabled(); setEnabled(v); if (v) await start(); else await stop(); return isEnabled(); }
-export function init() { if (isEnabled()) start(); else if (SC.booted) stop(); }
+async function safe(fn) { try { await fn(); } catch (e) { warn('[性斗] 失败:', e?.message || e); } }
+export async function toggle() { const v = !isEnabled(); setEnabled(v); if (v) await safe(start); else await safe(stop); return isEnabled(); }
 
-// ── CSS ──
-const SCX_CSS = '.scx-panel{position:fixed;left:12px;bottom:12px;z-index:9000;width:min(520px,92vw);border:1px solid #f6cfda;border-radius:14px;background:linear-gradient(165deg,#fff8fa,#ffe4ec);box-shadow:0 14px 34px rgba(180,60,110,.25);font-family:system-ui,sans-serif;color:#6d3549;overflow:hidden}.scx-panel.scx-absent{display:none}.scx-head{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;border-bottom:1px solid #f6cfda;background:rgba(255,255,255,.5)}.scx-title{display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px}.scx-title svg{width:13px;height:13px}.scx-sub{flex:1;font-size:10px;color:#bd8fa0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.scx-inner{padding:10px 14px;display:flex;flex-direction:column;gap:9px}.scx-opprow.gone{opacity:.38;filter:grayscale(.6)}.scx-oppname{font-size:10.5px;font-weight:700;margin-bottom:2px}.scx-climax{position:relative;padding:16px 2px 6px}.scx-track{position:relative;height:18px;border-radius:99px;background:#ffe1ea;box-shadow:inset 0 2px 5px rgba(190,80,125,.28)}.scx-trail{position:absolute;top:0;bottom:0}.scx-trail.user{left:0;border-radius:99px 0 0 99px;background:linear-gradient(90deg,#ffd3e0,#f291b0)}.scx-trail.opp{right:0;border-radius:0 99px 99px 0;background:linear-gradient(270deg,#e2cef5,#a97fd8)}.scx-pline{position:absolute;top:-4px;bottom:-4px;border-left:2px dashed rgba(255,79,121,.55);z-index:2}.scx-pheart{position:absolute;top:-16px;width:17px;height:17px;transform:translateX(-50%);color:#ff4f79;z-index:3}.scx-pheart svg{width:100%;height:100%}.scx-ptr{position:absolute;top:50%;width:22px;height:22px;border-radius:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(150,50,95,.35);z-index:3}.scx-ptr svg{width:11px;height:11px;color:#fff}.scx-ptr.user{background:linear-gradient(140deg,#f291b0,#e06a94)}.scx-ptr.opp{background:linear-gradient(140deg,#a97fd8,#8d5cc4)}.scx-namerow{display:flex;justify-content:space-between;gap:8px}.scx-chip{display:flex;align-items:center;gap:5px;padding:2px 10px 2px 4px;background:rgba(255,255,255,.8);border:1px solid #f6cfda;border-radius:99px;font-size:11px;font-weight:600}.scx-av{width:19px;height:19px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff}.scx-av.user{background:linear-gradient(140deg,#f291b0,#e06a94)}.scx-av.opp{background:linear-gradient(140deg,#a97fd8,#8d5cc4)}.scx-lv{display:inline-block;padding:0 6px;border-radius:99px;font-size:9px;color:#fff;background:#e06a94;margin-left:4px}.scx-fatigue{display:flex;align-items:center;gap:7px}.scx-ftag{font-size:10px;font-weight:700;color:#bd8fa0;flex:none}.scx-ftrack{flex:1;height:5px;border-radius:99px;background:rgba(255,255,255,.65);overflow:hidden}.scx-ffill{height:100%;background:#f291b0}.scx-fnum{font-size:10px;font-weight:700;color:#6d3549}.scx-grow{display:flex;align-items:center;gap:7px}.scx-glabel{flex:none;font-size:10px;font-weight:700;color:#8a4a60}.scx-gdot{width:5px;height:5px;border-radius:50%;background:#e06a94}.scx-gdot.opp{background:#8d5cc4}.scx-gsegs{flex:1;display:flex;gap:2px;height:9px}.scx-gseg{flex:1;border-radius:99px;background:rgba(255,255,255,.75)}.scx-gseg.s1{background:#f9c3d2}.scx-gseg.s2{background:#f59db6}.scx-gseg.s3{background:#ef7099}.scx-gseg.s4{background:#d94b7d}.scx-gseg.s5{background:#b82e5e}.scx-gpill{flex:none;padding:1px 7px;border-radius:99px;border:1px solid #f6cfda;background:rgba(255,255,255,.75);font-size:9.5px}.scx-end{padding:12px;border:1px solid #f6cfda;border-top:3px solid #ff4f79;border-radius:10px;background:rgba(255,255,255,.55);font-size:12.5px;line-height:1.8;text-align:center}.scx-chev{margin-left:auto;font-size:11px;color:#bd8fa0}';
+// 换卡/重进自动恢复：CHAT_CHANGED 后按当前卡配置重新武装
+function refresh() { if (isEnabled()) { if (!SC.booted) safe(start); } else if (SC.booted) safe(stop); }
+export function init() {
+  const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(init, 1000); return; }
+  c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
+  refresh();
+}

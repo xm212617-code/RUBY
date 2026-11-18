@@ -702,62 +702,42 @@ function buildShellHtml() {
                         <div class="form-body">
 
                             <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
-                                <span style="font-weight:700;font-size:13px;flex:none;">📥 下载脚本文档</span>
+                                <span class="scx-label">📥 下载脚本文档</span>
                                 <button id="scx_doc_dl" class="menu_button" style="flex:none;">下载</button>
                             </div>
 
-                            <div style="border:1px solid #c6d6c4;border-radius:10px;padding:14px;margin-bottom:14px;background:rgba(255,255,255,.5);">
+                            <div class="scx-box">
                                 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                                    <span style="font-weight:700;font-size:13px;flex:none;">通用性斗</span>
-                                    <span id="scx_bz_state" style="font-size:11px;color:#8b8f86;flex:none;"></span>
-                                    <button id="scx_bz_toggle" class="menu_button" style="flex:none;margin-left:auto;">启用</button>
-                                    <button id="scx_bz_settings_btn" class="menu_button" style="flex:none;">⚙ 设置</button>
+                                    <span class="scx-label">📦 内置脚本库</span>
+                                    <span style="flex:1;"></span>
+                                    <button id="scx_lib_btn" class="menu_button" style="flex:none;">打开</button>
                                 </div>
-                                <div id="scx_settings" style="display:none;margin-top:12px;">
-                                    <div style="margin-bottom:10px;">
-                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">触发标记</div>
-                                        <div style="display:flex;gap:6px;align-items:center;">
-                                            <input id="scx_trigger" class="text_input" value="nsfwh" style="flex:0 0 140px;padding:4px 8px;" />
-                                            <span style="font-size:11px;color:#8b8f86;">SceneInfo 含此标记时性斗启动</span>
+                                <div id="scx_lib" style="display:none;margin-top:12px;">
+                                    <div class="scx-libitem">
+                                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                                            <span class="scx-name">通用性斗</span>
+                                            <span id="scx_bz_state" class="scx-state"></span>
+                                            <span style="flex:1;"></span>
+                                            <button id="scx_bz_install" class="menu_button" style="flex:none;">安装</button>
                                         </div>
-                                    </div>
-                                    <div style="margin-bottom:10px;">
-                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">等级底账</div>
-                                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
-                                            <input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1 1 100px;padding:4px 8px;" />
-                                            <input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;padding:4px 8px;" />
-                                            <span id="scx_lv_hint" style="font-size:11px;color:#2f5f4a;">—</span>
-                                            <button id="scx_lv_add" class="menu_button" style="flex:none;">增加</button>
-                                        </div>
-                                        <div id="scx_lv_list" style="max-height:200px;overflow-y:auto;"></div>
-                                    </div>
-                                    <div style="margin-bottom:10px;">
-                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">注入位置</div>
-                                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">战况通报</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_rp" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
-                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">情潮开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_op" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
-                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">阶段状态</div><div style="display:flex;gap:4px;"><input id="scx_p_st" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_st" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
+                                        <div class="tip" style="margin-top:8px;">
+                                            高潮条双指针、性等级、行动骰、战况通报与情潮面板——随卡内置的性斗脚本。
+                                            安装后进入下方「脚本列表」，与创作者脚本同等管理：启停 / UI 窗口 / 卸载；
+                                            触发标记、等级底账、注入位置都在脚本的 UI 窗口里配置。
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
-                            <div style="border:1px solid #c6d6c4;border-radius:10px;padding:14px;background:rgba(255,255,255,.5);">
+                            <div class="scx-box" style="margin-top:14px;">
                                 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-                                    <span style="font-weight:700;font-size:13px;flex:none;">创作者脚本</span>
+                                    <span class="scx-label">脚本列表</span>
                                     <button id="scx_import_btn" class="menu_button" style="flex:none;margin-left:auto;">📂 导入</button>
                                     <input id="scx_import_file" type="file" accept=".js,.json" style="display:none;" />
                                 </div>
-                                <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
+                                <div id="scx_installed" class="scx-list"></div>
                             </div>
 
-                        </div>
-                    </div>
-                </div>
-
- </div>
-                            </div>
-<div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
                         </div>
                     </div>
                 </div>
@@ -1017,22 +997,6 @@ function wireTabs(root) {
 
   /* ═══ 随卡脚本 ═══ */
   const scxRunning = {};
-  const SCX_TAB_CSS = [
-    '#scx_installed .scx-row, #scx_builtin { display:flex; align-items:center; gap:12px; flex-wrap:nowrap; padding:12px 14px; border:1px solid #dfe6df; border-radius:10px; background:rgba(255,255,255,.6); margin-bottom:10px; }',
-    '#scx_builtin > div:first-child, #scx_installed .scx-row > div:first-child { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0; flex-wrap:nowrap; }',
-    '#scx_doc_dl, #scx_import, .scx-row button, #scx_bz_ui, #scx_bz_toggle, #scx_bz_add { white-space:nowrap; min-width:76px; padding:6px 14px; border-radius:8px; border:1px solid #c6d6c4; background:#f4f7f2; color:#26332c; cursor:pointer; font-size:12px; flex:0 0 auto; }',
-    '#scx_doc_dl:hover, #scx_import:hover, .scx-row button:hover, #scx_bz_ui:hover, #scx_bz_toggle:hover, #scx_bz_add:hover { background:#eaf3e8; }',
-    '#scx_bz_panel { border:1px dashed #c6d6c4; border-radius:8px; padding:10px 12px; background:#fbfdf9; margin-top:8px; }',
-    '#scx_bz_list > div { border-bottom:1px dashed #e2e8de; padding:5px 0; }',
-    '#scx_bz_name, #scx_bz_exp { padding:5px 8px; border:1px solid #c6d6c4; border-radius:6px; background:#fff; color:#26332c; }',
-    '#scx_installed .scx-row > div:first-child > span:first-child { font-size:13px; }',
-    '#scx_bz_state, #scx_st_ { white-space:nowrap; }',
-  ].join('\n');
-  const stEl = document.createElement('style');
-  stEl.id = 'ruby_scx_tab_css';
-  stEl.textContent = SCX_TAB_CSS;
-  document.head.appendChild(stEl);
-
   function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function scxData() {
     const r = config.resolveConfig();
@@ -1041,17 +1005,12 @@ function wireTabs(root) {
     return r;
   }
   function scxSave(r) { config.saveConfigData(r.data); }
-  function scxDrops() {
-    const ids = [];
-    const r = scxData();
-    Object.keys(r.data.scripts.installed).forEach((id) => ids.push([r.data.scripts.installed[id].key || ('随卡脚本_' + id), { constant: false, position: 1, order: 700 }]));
-    return ids;
-  }
   function scxApi(id, handles) {
     return {
       read: async (key, book) => { const rec = await sexcombat.entryRead(key, book || 'chat'); return rec && rec.content ? rec.content : ''; },
       write: async (key, content, opts) => sexcombat.entryWrite(key, content, opts || {}),
       getChat: () => (ctx() || {}).chat || [],
+      getChatLength: () => ((ctx() || {}).chat || []).length,
       getCharName: () => (ctx() || {}).name2 || '',
       log: (...a) => log('[脚本:' + id + ']', ...a),
       getLevels: () => sexcombat.getLevels(),
@@ -1084,52 +1043,82 @@ function wireTabs(root) {
     const run = scxRunning[id]; if (!run || !run.handles.ui) return;
     let w = document.getElementById('scx_window_' + id);
     if (!w) {
+      const host = document.getElementById('scx_uihost_' + id);
+      if (!host) return;
       w = document.createElement('div');
       w.id = 'scx_window_' + id;
-      w.style.cssText = 'margin-top:8px;padding:10px;border:1px solid #c6d6c4;border-radius:8px;background:#fdfcf4;';
-      document.getElementById('scx_installed').appendChild(w);
+      w.className = 'scx-uiwin';
+      host.appendChild(w);
     }
     w.innerHTML = '';
     try { run.handles.ui(w); } catch (e) { log('[脚本:' + id + '] UI 渲染失败:', e?.message || e); }
   }
+  const BUILTIN_SCX = { id: 'builtin_sexcombat', name: '通用性斗' };
+
   function scxRefresh() {
     const r = scxData();
-    const bz = document.getElementById('scx_bz_state');
-    const bzBtn = document.getElementById('scx_bz_toggle');
-    if (bz) {
-      const on = !!r.data.scripts.sexcombat.enabled;
-      bz.textContent = on ? '已启用' : '未启用';
-      bzBtn.textContent = on ? '停用' : '启用';
+    const installed = !!r.data.scripts.installed[BUILTIN_SCX.id];
+    const libState = document.getElementById('scx_bz_state');
+    const libBtn = document.getElementById('scx_bz_install');
+    if (libState) libState.textContent = installed ? (sexcombat.getStatus().enabled ? '已安装 · 启用中' : '已安装 · 未启用') : '未安装';
+    if (libBtn) {
+      libBtn.textContent = installed ? '已安装' : '安装';
+      libBtn.disabled = installed;
     }
     const box = document.getElementById('scx_installed');
     if (!box) return;
     const rows = Object.keys(r.data.scripts.installed).map((id) => {
       const s = r.data.scripts.installed[id];
-      const on = !!s.enabled;
-      return '<div class="scx-row" style="margin-bottom:8px;">' +
-        '<div style="display:flex;gap:8px;align-items:center;">' +
-        '<span style="font-weight:700;">' + escH(s.name || id) + '</span>' +
-        '<span id="scx_st_' + id + '" style="font-size:11px;color:' + (on ? '#2f5f4a' : '#8b8f86') + ';">' + (on ? '已启用' : '未启用') + '</span>' +
-        (s.ui ? '<button class="menu_button" id="scx_ui_' + id + '">UI 窗口</button>' : '') +
-        '<button class="menu_button" id="scx_tg_' + id + '">' + (on ? '停用' : '启用') + '</button>' +
-        '<button class="menu_button" id="scx_del_' + id + '">删除</button>' +
-        '</div><div id="scx_uihost_' + id + '"></div></div>';
+      const builtin = !!s.builtin;
+      const on = builtin ? sexcombat.getStatus().enabled : !!s.enabled;
+      return '<div class="scx-row">' +
+        '<div class="scx-rowmain">' +
+        '<span class="scx-name">' + escH(s.name || id) + '</span>' +
+        (builtin ? '<span class="scx-badge">内置</span>' : '') +
+        '<span class="scx-state">' + (on ? '已启用' : '未启用') + '</span>' +
+        '</div>' +
+        '<div class="scx-rowbtns">' +
+        (s.ui ? '<button class="menu_button" id="scx_ui_' + escH(id) + '">UI 窗口</button>' : '') +
+        (!builtin ? '<button class="menu_button" id="scx_exp_' + escH(id) + '">导出</button>' : '') +
+        '<button class="menu_button" id="scx_tg_' + escH(id) + '">' + (on ? '停用' : '启用') + '</button>' +
+        '<button class="menu_button" id="scx_del_' + escH(id) + '">' + (builtin ? '卸载' : '删除') + '</button>' +
+        '</div>' +
+        '<div class="scx-uihost" id="scx_uihost_' + escH(id) + '"></div></div>';
     });
-    box.innerHTML = rows.join('') || '<div class="tip">暂无导入的创作者脚本——用上方「导入脚本」选择 .js 文件（或含 name/code/ui 的 .json）</div>';
+    box.innerHTML = rows.join('') || '<div class="tip">暂无脚本——从上方「内置脚本库」安装，或用「📂 导入」选择 .js 文件（或含 name/code/ui 的 .json）</div>';
     Object.keys(r.data.scripts.installed).forEach((id) => {
       const s = r.data.scripts.installed[id];
+      const builtin = !!s.builtin;
       const tg = document.getElementById('scx_tg_' + id);
       const del = document.getElementById('scx_del_' + id);
       const uib = document.getElementById('scx_ui_' + id);
-      if (tg) tg.addEventListener('click', () => {
-        const rr = scxData();
-        const rec = rr.data.scripts.installed[id];
-        rec.enabled = !rec.enabled;
-        scxSave(rr);
-        if (rec.enabled) scxActivate(id, rec); else scxDeactivate(id);
+      const exp = document.getElementById('scx_exp_' + id);
+      if (tg) tg.addEventListener('click', async () => {
+        const wasOpen = builtin && !!document.getElementById('scx_window_' + id);
+        if (builtin) {
+          tg.disabled = true;
+          try { await sexcombat.toggle(); } finally { tg.disabled = false; }
+        } else {
+          const rr = scxData();
+          const rec = rr.data.scripts.installed[id];
+          rec.enabled = !rec.enabled;
+          scxSave(rr);
+          if (rec.enabled) scxActivate(id, rec); else scxDeactivate(id);
+        }
         scxRefresh();
+        if (wasOpen) {
+          const host = document.getElementById('scx_uihost_' + id);
+          if (host) {
+            const win = document.createElement('div');
+            win.id = 'scx_window_' + id;
+            win.className = 'scx-uiwin';
+            host.appendChild(win);
+            renderBuiltinSettings(win);
+          }
+        }
       });
-      if (del) del.addEventListener('click', () => {
+      if (del) del.addEventListener('click', async () => {
+        if (builtin && sexcombat.getStatus().enabled) await sexcombat.toggle();
         scxDeactivate(id);
         const rr = scxData();
         delete rr.data.scripts.installed[id];
@@ -1137,87 +1126,138 @@ function wireTabs(root) {
         scxRefresh();
       });
       if (uib) uib.addEventListener('click', () => {
+        if (builtin) { scxToggleBuiltinWin(id); return; }
         if (!scxRunning[id]) scxActivate(id, s);
         renderScxUiWindow(id);
       });
-      if (s.enabled && !scxRunning[id]) scxActivate(id, s);
+      if (exp) exp.addEventListener('click', () => {
+        const rec = scxData().data.scripts.installed[id] || {};
+        const payload = { _meta: { type: 'RUBY_CARD_SCRIPT', version: 1 }, name: rec.name || id, code: rec.code || '', ui: rec.ui || '' };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (rec.name || id) + '.script.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+      if (!builtin && s.enabled && !scxRunning[id]) scxActivate(id, s);
     });
-    /* 内置通用性斗 */
-    const bzOn = !!r.data.scripts.sexcombat.enabled;
-    if (bzBtn) bzBtn.textContent = bzOn ? '停用' : '启用';
-    if (bz) bz.textContent = bzOn ? '已启用' : '未启用';
   }
-  const SCX_DOCS = "# RUBY 随卡脚本 · 函数参考\n\n随卡脚本保存在角色卡内（data.extensions.RubyAnalyzer.scripts.installed），启用时以 new Function(\"api\", code) 执行——代码里直接使用 api 对象。\n\n## 生命周期\n- api.onEnable(fn)：启用/面板载入时执行\n- api.onDisable(fn)：停用时执行（清理条目、解绑）\n- api.registerUI(fn)：注册 UI 渲染函数 fn(container)，「UI 窗口」按钮打开时调用\n\n## 世界书读写（persistBook 安全通道）\n- api.read(key, book=\"chat\") → 条目内容文本\n- api.write(key, content, opts) → 写条目；opts = { constant, position, order, depth, comment, book }\n  蓝灯注入：opts.constant = true；@D 深度：opts.position = 4 且 opts.depth = N\n\n## 聊天与角色\n- api.getChat() → 聊天数组\n- api.getChatLength() → 楼层数\n- api.getCharName() → 角色名\n\n## 等级底账（与通用性斗共用）\n- api.getLevels() → { 角色名: 经验 }\n- api.setLevel(name, exp) → 设置角色初始经验\n- api.levelNameFor(exp) → 等级名（处子/新手/经验/老手/魅魔）\n\n## 通用性斗固定条目（引擎保留，请勿覆写）\n通用性斗_战况 / _当局 / _场景判断 / _开局 / _阶段状态 / _收场_* / _经验总档 / _等级_<角色名> / _report协议\n\n## 注意\n- 永远不要在脚本里调用 saveChat 改写消息文本（会杀掉结算队列——装甲叛客血泪 #1）\n- 条目写入走 persistBook（saveWorldInfo），安全\n- 脚本出错只影响自身，RUBY 主引擎不受影响";
 
-  function scxWire() {
-    const bzToggle = document.getElementById('scx_bz_toggle');
-    if (bzToggle) bzToggle.addEventListener('click', async () => {
-      bzToggle.disabled = true;
-      await sexcombat.toggle();
-      const r = scxData();
-      r.data.scripts.sexcombat.enabled = sexcombat.getStatus().enabled;
-      scxSave(r);
-      scxRefresh();
-      bzToggle.disabled = false;
+  /* 内置脚本（通用性斗）的 UI 窗口 = 设置面板：触发标记 / 等级底账 / 注入位置 */
+  function scxToggleBuiltinWin(id) {
+    const host = document.getElementById('scx_uihost_' + id);
+    if (!host) return;
+    const w = document.getElementById('scx_window_' + id);
+    if (w) { w.remove(); return; }
+    const win = document.createElement('div');
+    win.id = 'scx_window_' + id;
+    win.className = 'scx-uiwin';
+    host.appendChild(win);
+    renderBuiltinSettings(win);
+  }
+  function renderBuiltinSettings(w) {
+    const c = sexcombat.getScriptCfg();
+    w.innerHTML =
+      '<div class="scx-setting">' +
+      '<div class="scx-setting-label">触发标记</div>' +
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
+      '<input id="scx_trigger" class="text_input" value="' + escH(c.trigger || 'nsfwh') + '" style="flex:0 0 140px;" />' +
+      '<span class="scx-hint">SceneInfo 含此标记时性斗启动；清空 = 不启用性斗触发</span>' +
+      '</div></div>' +
+      '<div class="scx-setting">' +
+      '<div class="scx-setting-label">等级底账</div>' +
+      '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">' +
+      '<input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1 1 100px;" />' +
+      '<input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;" />' +
+      '<span id="scx_lv_hint" class="scx-hint">—</span>' +
+      '<button id="scx_lv_add" class="menu_button" style="flex:none;">增加</button>' +
+      '</div>' +
+      '<div id="scx_lv_list"></div>' +
+      '</div>' +
+      '<div class="scx-setting">' +
+      '<div class="scx-setting-label">注入位置（战况 / 开局 / 阶段）</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<div style="flex:1;min-width:130px;"><div class="scx-hint">战况通报</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_rp" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
+      '<div style="flex:1;min-width:130px;"><div class="scx-hint">情潮开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_op" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
+      '<div style="flex:1;min-width:130px;"><div class="scx-hint">阶段状态</div><div style="display:flex;gap:4px;"><input id="scx_p_st" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_st" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
+      '</div></div>';
+    wireBuiltinSettings(w);
+  }
+  function renderBuiltinLvList(w) {
+    const list = w.querySelector('#scx_lv_list'); if (!list) return;
+    const levels = sexcombat.getLevels();
+    list.innerHTML = Object.keys(levels).map((n) =>
+      '<div class="scx-lvrow"><span class="scx-lvname">' + escH(n) + '</span>' +
+      '<span class="scx-hint">经验 ' + levels[n] + '</span>' +
+      '<span class="scx-lvtag">' + escH(sexcombat.levelNameFor(levels[n])) + '</span>' +
+      '<button class="menu_button scx-lvdel" data-n="' + escH(n) + '">移除</button></div>'
+    ).join('') || '<div class="scx-hint">暂无底账——未登记角色默认按经验 10（新手）计算</div>';
+    list.querySelectorAll('.scx-lvdel').forEach((b) => b.addEventListener('click', () => {
+      sexcombat.removeInitLevel(b.dataset.n);
+      renderBuiltinLvList(w);
+    }));
+  }
+  function wireBuiltinSettings(w) {
+    const trig = w.querySelector('#scx_trigger');
+    if (trig) trig.addEventListener('change', () => {
+      sexcombat.getScriptCfg().trigger = trig.value.trim();
+      sexcombat.saveScriptCfg();
     });
-    const bzUi = document.getElementById('scx_bz_ui');
-    const bzPanel = document.getElementById('scx_bz_panel');
-    if (bzUi && bzPanel) bzUi.addEventListener('click', () => { bzPanel.style.display = bzPanel.style.display === 'none' ? 'block' : 'none'; });
-    const bzName = document.getElementById('scx_bz_name');
-    const bzExp = document.getElementById('scx_bz_exp');
-    const bzHint = document.getElementById('scx_bz_hint');
-    if (bzExp) bzExp.addEventListener('input', () => { bzHint.textContent = sexcombat.levelNameFor(parseInt(bzExp.value, 10) || 0); });
-    const bzAdd = document.getElementById('scx_bz_add');
-    if (bzAdd) bzAdd.addEventListener('click', () => {
-      const n = (bzName.value || '').trim();
-      const e = parseInt(bzExp.value, 10);
-      if (!n) { bzHint.textContent = '请输入角色名字'; return; }
-      if (isNaN(e) || e < 0 || e > 100) { bzHint.textContent = '经验需为 0-100 的数值'; return; }
+    const lvName = w.querySelector('#scx_lv_name');
+    const lvExp = w.querySelector('#scx_lv_exp');
+    const lvHint = w.querySelector('#scx_lv_hint');
+    if (lvExp) lvExp.addEventListener('input', () => { lvHint.textContent = sexcombat.levelNameFor(parseInt(lvExp.value, 10) || 0); });
+    const lvAdd = w.querySelector('#scx_lv_add');
+    if (lvAdd) lvAdd.addEventListener('click', () => {
+      const n = (lvName.value || '').trim();
+      const e = parseInt(lvExp.value, 10);
+      if (!n) { lvHint.textContent = '请输入角色名字'; return; }
+      if (isNaN(e) || e < 0 || e > 100) { lvHint.textContent = '经验需为 0-100 的数值'; return; }
       sexcombat.setInitLevel(n, e);
-      bzName.value = ''; bzExp.value = ''; bzHint.textContent = '已登记';
-      scxRenderBzList();
+      lvName.value = ''; lvExp.value = ''; lvHint.textContent = '已登记';
+      renderBuiltinLvList(w);
     });
-    function scxRenderBzList() {
-      const list = document.getElementById('scx_bz_list'); if (!list) return;
-      const levels = sexcombat.getLevels();
-      const rows = Object.keys(levels).map((n) => {
-        const nm = sexcombat.levelNameFor(levels[n]);
-        return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px dashed #dfe6df;">' +
-          '<span style="font-weight:600;flex:1;">' + escH(n) + '</span>' +
-          '<span style="color:#8b8f86;flex:none;">经验 ' + levels[n] + '</span>' +
-          '<span style="font-weight:700;color:#2f5f4a;flex:none;margin-left:8px;">' + nm + '</span></div>';
-      });
-      list.innerHTML = rows.join('') || '<div style="font-size:11px;color:#8b8f86;padding:4px 0;">暂无底账——未登记角色默认新手（经验 10）</div>';
-    }
-    scxRenderBzList();
-    /* 触发词/注入位置：从 sexcombat 读，改了就存 */
-    const scxGetCfg = () => sexcombat.getScriptCfg();
-    const scxSaveCfg = () => sexcombat.saveScriptCfg();
-    const triggerInput = document.getElementById('scx_bz_trigger');
-    if (triggerInput) {
-      triggerInput.value = scxGetCfg().trigger || 'nsfwh';
-      triggerInput.addEventListener('change', () => {
-        scxGetCfg().trigger = triggerInput.value.trim() || 'nsfwh';
-        scxSaveCfg();
-      });
-    }
-    const posIds = [['scx_pos_rp', 'scx_ord_rp', 'reportPos', 'reportOrder'], ['scx_pos_op', 'scx_ord_op', 'openPos', 'openOrder'], ['scx_pos_st', 'scx_ord_st', 'stagePos', 'stageOrder']];
-    posIds.forEach(([pid, oid, pk, ok]) => {
-      const pi = document.getElementById(pid); const oi = document.getElementById(oid);
+    const defOrd = { reportPos: 210, openPos: 900, stagePos: 898 };
+    [['scx_p_rp', 'scx_o_rp', 'reportPos', 'reportOrder'], ['scx_p_op', 'scx_o_op', 'openPos', 'openOrder'], ['scx_p_st', 'scx_o_st', 'stagePos', 'stageOrder']].forEach(([pid, oid, pk, ok]) => {
+      const pi = w.querySelector('#' + pid); const oi = w.querySelector('#' + oid);
       if (!pi || !oi) return;
-      const cfg = scxGetCfg();
-      pi.value = cfg.positions ? (cfg.positions[pk] || 1) : 1;
-      oi.value = cfg.positions ? (cfg.positions[ok] || 0) : 0;
+      const cc = sexcombat.getScriptCfg();
+      cc.positions = cc.positions || {};
+      pi.value = cc.positions[pk] ?? 1;
+      oi.value = cc.positions[ok] ?? defOrd[pk];
       const save = () => {
-        const cc = scxGetCfg();
-        cc.positions = cc.positions || {};
-        cc.positions[pk] = parseInt(pi.value, 10) || 1;
-        cc.positions[ok] = parseInt(oi.value, 10) || 0;
-        scxSaveCfg();
+        const c2 = sexcombat.getScriptCfg();
+        c2.positions = c2.positions || {};
+        c2.positions[pk] = parseInt(pi.value, 10) || 1;
+        c2.positions[ok] = parseInt(oi.value, 10) || 0;
+        sexcombat.saveScriptCfg();
       };
       pi.addEventListener('change', save);
       oi.addEventListener('change', save);
     });
+  }
+  const SCX_DOCS = "# RUBY 随卡脚本 · 函数参考\n\n随卡脚本保存在角色卡内（data.extensions.RubyAnalyzer.scripts.installed），启用时以 new Function(\"api\", code) 执行——代码里直接使用 api 对象。\n\n## 生命周期\n- api.onEnable(fn)：启用/面板载入时执行\n- api.onDisable(fn)：停用时执行（清理条目、解绑）\n- api.registerUI(fn)：注册 UI 渲染函数 fn(container)，「UI 窗口」按钮打开时调用\n\n## 世界书读写（persistBook 安全通道）\n- api.read(key, book=\"chat\") → 条目内容文本\n- api.write(key, content, opts) → 写条目；opts = { constant, position, order, depth, comment, book }\n  蓝灯注入：opts.constant = true；@D 深度：opts.position = 4 且 opts.depth = N\n\n## 聊天与角色\n- api.getChat() → 聊天数组\n- api.getChatLength() → 楼层数\n- api.getCharName() → 角色名\n\n## 等级底账（与通用性斗共用）\n- api.getLevels() → { 角色名: 经验 }\n- api.setLevel(name, exp) → 设置角色初始经验\n- api.levelNameFor(exp) → 等级名（处子/新手/经验/老手/魅魔）\n\n## 通用性斗固定条目（引擎保留，请勿覆写）\n通用性斗_战况 / _当局 / _场景判断 / _开局 / _阶段状态 / _收场_* / _经验总档 / _等级_<角色名> / _report协议\n\n## 注意\n- 永远不要在脚本里调用 saveChat 改写消息文本（会杀掉结算队列——装甲叛客血泪 #1）\n- 条目写入走 persistBook（saveWorldInfo），安全\n- 脚本出错只影响自身，RUBY 主引擎不受影响";
+
+  function scxWire() {
+    /* 内置脚本库：展开/收起 + 安装（安装后进入脚本列表，与其他脚本同等管理） */
+    const libBtn = document.getElementById('scx_lib_btn');
+    const libBox = document.getElementById('scx_lib');
+    if (libBtn && libBox) libBtn.addEventListener('click', () => {
+      const open = libBox.style.display === 'none';
+      libBox.style.display = open ? 'block' : 'none';
+      libBtn.textContent = open ? '收起' : '打开';
+    });
+    const bzInstall = document.getElementById('scx_bz_install');
+    if (bzInstall) bzInstall.addEventListener('click', () => {
+      const r = scxData();
+      if (r.data.scripts.installed[BUILTIN_SCX.id]) return;
+      r.data.scripts.installed[BUILTIN_SCX.id] = { name: BUILTIN_SCX.name, builtin: true, code: '', ui: 'builtin', enabled: false };
+      scxSave(r);
+      scxRefresh();
+      log('[随卡脚本] 已安装内置脚本：' + BUILTIN_SCX.name);
+    });
+    /* 下载脚本文档 */
     const dl = document.getElementById('scx_doc_dl');
     if (dl) dl.addEventListener('click', () => {
       const blob = new Blob([SCX_DOCS], { type: 'text/markdown;charset=utf-8' });
@@ -1227,7 +1267,8 @@ function wireTabs(root) {
       a.click();
       URL.revokeObjectURL(a.href);
     });
-    const imp = document.getElementById('scx_import');
+    /* 导入创作者脚本（唯一导入入口） */
+    const imp = document.getElementById('scx_import_btn');
     const file = document.getElementById('scx_import_file');
     if (imp && file) imp.addEventListener('click', () => file.click());
     if (file) file.addEventListener('change', () => {
@@ -1250,10 +1291,11 @@ function wireTabs(root) {
       reader.readAsText(f0);
       file.value = '';
     });
-    /* 启用中的创作者脚本随面板初始化恢复 */
+    /* 启用中的创作者脚本随面板初始化恢复（内置脚本启停由 sexcombat.init 自恢复） */
     const r0 = scxData();
     Object.keys(r0.data.scripts.installed).forEach((id) => {
       const s = r0.data.scripts.installed[id];
+      if (s.builtin) return;
       if (s.enabled && !scxRunning[id]) scxActivate(id, s);
     });
     scxRefresh();

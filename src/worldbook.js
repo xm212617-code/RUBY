@@ -411,9 +411,10 @@ export async function writeEntryByKey(bookName, options) {
         const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
-        // 新建条目：角色后注入（position 1），递归双禁
+        // 新建条目：position（4=@D 深度注入）/ order / depth（指定时）/ 递归双禁
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
+        if (Number.isFinite(Number(depth))) await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${Number(depth)}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
         log(`write: entry created: ${primaryKey}`);

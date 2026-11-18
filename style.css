@@ -14,7 +14,9 @@
    ================================================================== */
 
 /* ---------- 设计令牌（白昼：暖纸 × 墨石 × 红宝石） ---------- */
-#ra_panel {
+/* #ruby_sc_panel（情潮悬浮面板，挂在 body 下）与 #ra_panel 共用同一套令牌 */
+#ra_panel,
+#ruby_sc_panel {
     --ra-surface: #F6F4EF;        /* 卡片底（暖纸） */
     --ra-panel: #FFFFFF;          /* 区块底 */
     --ra-panel-2: #FBFAF7;        /* 区块底（次） */
@@ -1296,7 +1298,8 @@
    黑夜模式（body.ruby-dark）—— 由 settings.js 的 initTheme() 驱动
    仅覆盖令牌与少数硬编码色，其余规则随白昼版本自动生效
    ================================================================== */
-body.ruby-dark #ra_panel {
+body.ruby-dark #ra_panel,
+body.ruby-dark #ruby_sc_panel {
     --ra-surface: #15171C;
     --ra-panel: #1D2027;
     --ra-panel-2: #22262E;
@@ -1704,3 +1707,162 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
     transition: opacity .15s ease;
 }
 #ruby_analyzer_ext_settings .ra-cb-remove:hover { opacity: 1; }
+
+
+/* ==================================================================
+   随卡脚本页（创作者版面 · 🧩 随卡脚本）
+   零自定义色值：全部走 --ra-* 令牌，暗色主题自动生效
+   ================================================================== */
+#ra_panel .scx-label { font-weight: 700; font-size: 13px; flex: none; }
+#ra_panel .scx-box {
+    border: 1px solid var(--ra-border);
+    border-radius: var(--ra-radius-m);
+    padding: 14px;
+    background: var(--ra-panel-2);
+}
+#ra_panel .scx-libitem {
+    border: 1px solid var(--ra-line);
+    border-radius: var(--ra-radius-s);
+    padding: 10px 12px;
+    background: var(--ra-panel);
+}
+#ra_panel .scx-list { display: flex; flex-direction: column; gap: 8px; }
+#ra_panel .scx-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 12px;
+    border: 1px solid var(--ra-border);
+    border-radius: var(--ra-radius-m);
+    background: var(--ra-panel);
+}
+#ra_panel .scx-rowmain { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
+#ra_panel .scx-rowbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#ra_panel .scx-name { font-weight: 700; font-size: 13px; }
+#ra_panel .scx-badge {
+    flex: none; padding: 1px 8px; border-radius: 99px;
+    font-size: 10px; font-weight: 700;
+    color: var(--ra-ink-text); background: var(--ra-ink-3);
+}
+#ra_panel .scx-state { font-size: 11px; color: var(--ra-text-2); white-space: nowrap; }
+#ra_panel .scx-uihost { flex-basis: 100%; }
+#ra_panel .scx-uiwin {
+    border: 1px dashed var(--ra-border);
+    border-radius: var(--ra-radius-s);
+    padding: 10px 12px;
+    background: var(--ra-surface-2);
+    display: flex; flex-direction: column; gap: 10px;
+}
+#ra_panel .scx-setting-label { font-size: 11px; font-weight: 700; color: var(--ra-text); margin-bottom: 4px; }
+#ra_panel .scx-hint { font-size: 11px; color: var(--ra-text-2); }
+#ra_panel .scx-lvrow {
+    display: flex; gap: 8px; align-items: center; font-size: 12px;
+    padding: 5px 0; border-bottom: 1px dashed var(--ra-line);
+}
+#ra_panel .scx-lvname { font-weight: 600; flex: 1; }
+#ra_panel .scx-lvtag { font-weight: 700; color: var(--ra-green); flex: none; }
+#ra_panel .scx-lvdel { flex: none; padding: 2px 8px; font-size: 11px; }
+
+/* ---------- 情潮面板（悬浮，挂在 body 下；令牌随暗色主题切换） ---------- */
+#ruby_sc_panel {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    z-index: 9000;
+    width: min(520px, 92vw);
+    border: 1px solid var(--ra-border-strong);
+    border-radius: var(--ra-radius-l);
+    background: var(--ra-panel);
+    box-shadow: var(--ra-shadow-3);
+    color: var(--ra-text);
+    font-family: inherit;
+    overflow: hidden;
+}
+#ruby_sc_panel.scx-absent { display: none; }
+#ruby_sc_panel .scx-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--ra-line);
+    background: var(--ra-panel-2);
+}
+#ruby_sc_panel .scx-title { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+#ruby_sc_panel .scx-title svg { width: 13px; height: 13px; color: var(--ra-brand); }
+#ruby_sc_panel .scx-sub { flex: 1; font-size: 10px; color: var(--ra-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ruby_sc_panel .scx-chev { margin-left: auto; font-size: 11px; color: var(--ra-text-3); }
+#ruby_sc_panel.scx-folded .scx-body { display: none; }
+#ruby_sc_panel .scx-inner { padding: 10px 14px; display: flex; flex-direction: column; gap: 9px; }
+#ruby_sc_panel .scx-namerow { display: flex; justify-content: space-between; gap: 8px; }
+#ruby_sc_panel .scx-chip {
+    display: flex; align-items: center; gap: 5px;
+    padding: 2px 10px 2px 4px;
+    background: var(--ra-panel-2);
+    border: 1px solid var(--ra-border);
+    border-radius: 99px;
+    font-size: 11px; font-weight: 600;
+}
+#ruby_sc_panel .scx-av {
+    width: 19px; height: 19px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--ra-ink-text);
+}
+#ruby_sc_panel .scx-av.user { background: var(--ra-brand); }
+#ruby_sc_panel .scx-av.opp { background: var(--ra-blue); }
+#ruby_sc_panel .scx-lv {
+    display: inline-block; padding: 0 6px; border-radius: 99px;
+    font-size: 9px; color: var(--ra-ink-text); background: var(--ra-brand); margin-left: 4px;
+}
+#ruby_sc_panel .scx-opprow.gone { opacity: .38; filter: grayscale(.6); }
+#ruby_sc_panel .scx-oppname { font-size: 10.5px; font-weight: 700; margin-bottom: 2px; }
+#ruby_sc_panel .scx-climax { position: relative; padding: 16px 2px 6px; }
+#ruby_sc_panel .scx-track {
+    position: relative; height: 18px; border-radius: 99px;
+    background: var(--ra-surface-3);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, .15);
+}
+#ruby_sc_panel .scx-trail { position: absolute; top: 0; bottom: 0; }
+#ruby_sc_panel .scx-trail.user { left: 0; border-radius: 99px 0 0 99px; background: var(--ra-brand); }
+#ruby_sc_panel .scx-trail.opp { right: 0; border-radius: 0 99px 99px 0; background: var(--ra-blue); }
+#ruby_sc_panel .scx-pline { position: absolute; top: -4px; bottom: -4px; border-left: 2px dashed var(--ra-brand); z-index: 2; }
+#ruby_sc_panel .scx-pheart {
+    position: absolute; top: -16px; width: 17px; height: 17px;
+    transform: translateX(-50%); color: var(--ra-brand); z-index: 3;
+}
+#ruby_sc_panel .scx-pheart svg { width: 100%; height: 100%; }
+#ruby_sc_panel .scx-ptr {
+    position: absolute; top: 50%; width: 22px; height: 22px; border-radius: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--ra-panel);
+    box-shadow: var(--ra-shadow-1); z-index: 3;
+}
+#ruby_sc_panel .scx-ptr svg { width: 11px; height: 11px; color: var(--ra-ink-text); }
+#ruby_sc_panel .scx-ptr.user { background: var(--ra-brand); }
+#ruby_sc_panel .scx-ptr.opp { background: var(--ra-blue); }
+#ruby_sc_panel .scx-grow { display: flex; align-items: center; gap: 7px; }
+#ruby_sc_panel .scx-glabel { flex: none; font-size: 10px; font-weight: 700; color: var(--ra-text-2); }
+#ruby_sc_panel .scx-gdot { width: 5px; height: 5px; border-radius: 50%; background: var(--ra-brand); }
+#ruby_sc_panel .scx-gdot.opp { background: var(--ra-blue); }
+#ruby_sc_panel .scx-gsegs { flex: 1; display: flex; gap: 2px; height: 9px; }
+#ruby_sc_panel .scx-gseg { flex: 1; border-radius: 99px; background: var(--ra-surface-3); }
+#ruby_sc_panel .scx-gseg.s1 { background: var(--ra-brand-soft); }
+#ruby_sc_panel .scx-gseg.s2 { background: var(--ra-brand); opacity: .35; }
+#ruby_sc_panel .scx-gseg.s3 { background: var(--ra-brand); opacity: .55; }
+#ruby_sc_panel .scx-gseg.s4 { background: var(--ra-brand); opacity: .75; }
+#ruby_sc_panel .scx-gseg.s5 { background: var(--ra-brand); opacity: 1; }
+#ruby_sc_panel .scx-gpill {
+    flex: none; padding: 1px 7px; border-radius: 99px;
+    border: 1px solid var(--ra-border);
+    background: var(--ra-panel-2);
+    font-size: 9.5px;
+}
+#ruby_sc_panel .scx-fatigue { display: flex; align-items: center; gap: 7px; }
+#ruby_sc_panel .scx-ftag { font-size: 10px; font-weight: 700; color: var(--ra-text-3); flex: none; }
+#ruby_sc_panel .scx-ftrack { flex: 1; height: 5px; border-radius: 99px; background: var(--ra-surface-2); overflow: hidden; }
+#ruby_sc_panel .scx-ffill { height: 100%; background: var(--ra-brand); }
+#ruby_sc_panel .scx-fnum { font-size: 10px; font-weight: 700; color: var(--ra-text); }
+#ruby_sc_panel .scx-end {
+    padding: 12px;
+    border: 1px solid var(--ra-border);
+    border-top: 3px solid var(--ra-brand);
+    border-radius: var(--ra-radius-m);
+    background: var(--ra-panel-2);
+    font-size: 12.5px; line-height: 1.8; text-align: center;
+}

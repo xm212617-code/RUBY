@@ -170,15 +170,20 @@ async function rubyCommandCallback(args, text) {
                     content = String(args?.content ?? '');
                 }
 
+                // 数值参数显式解析：0 是合法值（如 @D0 场景判断条目），不得被 || 默认值吞掉
+                const numArg = (raw, def) => {
+                    const n = parseInt(String(raw ?? ''), 10);
+                    return Number.isFinite(n) ? n : def;
+                };
                 const result = await worldbook.writeEntryByKey(bookName, {
                     key,
                     content,
                     keys: String(args?.keys || ''),
                     comment: String(args?.comment || ''),
                     constant: flag(args?.constant),
-                    order: parseInt(String(args?.order || '100'), 10) || 100,
-                    depth: parseInt(String(args?.depth || '4'), 10) || 4,
-                    position: parseInt(String(args?.position || '4'), 10) || 4,
+                    order: numArg(args?.order, 100),
+                    depth: numArg(args?.depth, 4),
+                    position: numArg(args?.position, 4),
                 });
 
                 // 与分析管线同款：写完即广播，前端状态栏/敌情面板即时重读
