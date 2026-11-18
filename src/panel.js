@@ -657,43 +657,7 @@ function buildShellHtml() {
                         </div>
                     </div>
                     </div>
-                    <div id="ra_director_view" style="d                <div class="sub-content" data-subcontent="scripts" style="padding:16px;display:none;">
-                    <div class="form-section">
-                        <div class="form-header blue">■ 随卡脚本</div>
-                        <div class="form-body">
-                            <div class="tip" style="margin-top:0;margin-bottom:10px;">
-                                脚本随当前角色卡保存（卡内 data.extensions），启用即接管对应功能。内置脚本「通用性斗」负责性斗结算与情潮面板；创作者脚本以 <code>api</code> 沙箱运行。
-                            </div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                                <button id="scx_doc_dl" class="menu_button">📥 下载脚本文档</button>
-                                <button id="scx_import" class="menu_button">📂 导入脚本</button>
-                                <input id="scx_import_file" type="file" accept=".js,.txt" style="display:none;" />
-                            </div>
-                            <div id="scx_builtin" class="scx-row">
-                                <div style="display:flex;gap:8px;align-items:center;">
-                                    <span style="font-weight:700;">通用性斗</span>
-                                    <span class="tip" style="margin:0;">内置 · 性斗结算 + 情潮面板</span>
-                                    <span id="scx_bz_state" style="font-size:11px;color:#1a1a1a;margin-left:auto;"></span>
-                                    <button id="scx_bz_ui" class="menu_button">等级底账</button>
-                                    <button id="scx_bz_toggle" class="menu_button">启用</button>
-                                </div>
-                                <div id="scx_bz_panel" style="display:none;margin-top:8px;">
-                                    <div class="tip" style="margin-bottom:6px;">指定角色等级：输入角色名字与经验数值（0-100），旁边显示对应等级；战斗结束按楼数入账、跨场累计。</div>
-                                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-                                        <input id="scx_bz_name" class="text_input" placeholder="角色名字" style="flex:1 1 110px;" />
-                                        <input id="scx_bz_exp" class="text_input" type="number" min="0" max="100" placeholder="经验数值" style="flex:0 0 90px;" />
-                                        <span id="scx_bz_hint" style="font-size:11px;color:#1a1a1a;">—</span>
-                                        <button id="scx_bz_add" class="menu_button">增加</button>
-                                    </div>
-                                    <div id="scx_bz_list"></div>
-                                </div>
-                            </div>
-                            <div id="scx_installed"></div>
-                        </div>
-                    </div>
-                </div>
-
-isplay:none;padding:16px;"></div>
+                    <div id="ra_director_view" style="display:none;padding:16px;"></div>
                 </div>
 
                 <div class="sub-content" data-subcontent="marks" style="padding:16px;display:none;">
@@ -727,6 +691,42 @@ isplay:none;padding:16px;"></div>
                             <div class="tip" style="margin-top:6px;">
                                 💡 v3：填了<strong>锚定标签</strong>的锚点不再走头/尾包裹，而是插到正文中首个命中 <code>&lt;锚标签&gt;</code> 行的<strong>锚行前/后</strong>（多个候选取首个命中；全部未命中回退到注入位置）——用于把开/闭标签精确插到 SceneInfo 上方、report/ledger 上方等场景。<code>{{var:变量名}}</code> 在写入时按聊天变量实时替换（如 <code>GamePhase type="{{var:_ruby_phase}}"</code>）。
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sub-content" data-subcontent="scripts" style="padding:16px;display:none;">
+                    <div class="form-section">
+                        <div class="form-header blue">■ 随卡脚本</div>
+                        <div class="form-body">
+                            <div class="tip" style="margin-top:0;margin-bottom:10px;">
+                                脚本随当前角色卡保存（卡内 data.extensions），启用即接管对应功能。内置脚本「通用性斗」负责性斗结算与情潮面板；创作者脚本以 <code>api</code> 沙箱运行。
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                                <button id="scx_doc_dl" class="menu_button">📥 下载脚本文档</button>
+                                <button id="scx_import" class="menu_button">📂 导入脚本</button>
+                                <input id="scx_import_file" type="file" accept=".js,.txt" style="display:none;" />
+                            </div>
+                            <div id="scx_builtin" class="scx-row">
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <span style="font-weight:700;">通用性斗</span>
+                                    <span class="tip" style="margin:0;">内置 · 性斗结算 + 情潮面板</span>
+                                    <span id="scx_bz_state" style="font-size:11px;color:#1a1a1a;margin-left:auto;"></span>
+                                    <button id="scx_bz_ui" class="menu_button">等级底账</button>
+                                    <button id="scx_bz_toggle" class="menu_button">启用</button>
+                                </div>
+                                <div id="scx_bz_panel" style="display:none;margin-top:8px;">
+                                    <div class="tip" style="margin-bottom:6px;">指定角色等级：输入角色名字与经验数值（0-100），旁边显示对应等级；战斗结束按楼数入账、跨场累计。</div>
+                                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                                        <input id="scx_bz_name" class="text_input" placeholder="角色名字" style="flex:1 1 110px;" />
+                                        <input id="scx_bz_exp" class="text_input" type="number" min="0" max="100" placeholder="经验数值" style="flex:0 0 90px;" />
+                                        <span id="scx_bz_hint" style="font-size:11px;color:#1a1a1a;">—</span>
+                                        <button id="scx_bz_add" class="menu_button">增加</button>
+                                    </div>
+                                    <div id="scx_bz_list"></div>
+                                </div>
+                            </div>
+                            <div id="scx_installed"></div>
                         </div>
                     </div>
                 </div>
