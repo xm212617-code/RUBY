@@ -1,10 +1,9 @@
 // ═══════════════════════════════════════════════════════════════
 // 通用性斗 · RUBY 内置脚本（随卡挂载）
-// 启用后：写场景判断/report 协议蓝灯条目（聊天书）、装隐藏正则、
-//         事件驱动结算（生成结束/开场白），情潮面板随战局出现。
-// 依赖：RUBY v3.0.20+；上下文直接走 ctx()，无 iframe 无父窗口跳板。
+// 启用后：写场景判断蓝灯条目（胶水：分级判定+数值权威，格式教学归卡片规则条目）、
+//         装隐藏正则、事件驱动结算、情潮面板随战局出现。
 // ═══════════════════════════════════════════════════════════════
-import { ctx, log, warn, st, q } from './env.js';
+import { ctx, log, warn, st } from './env.js';
 import * as config from './config.js';
 
 const K = {
@@ -30,20 +29,21 @@ const escH = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/<
 const d = (n) => 1 + Math.floor(Math.random() * n);
 const dice = (count, faces) => { let s = 0; for (let i = 0; i < count; i++) s += d(faces); return s; };
 
-const SC = { state: null, exp: {}, lastFloor: -1, lastSig: '', bound: false, booted: false, levelsReady: false, panel: null };
 
-/* ══════════ 脚本库状态（按角色卡） ══════════ */
+/* ══════════ 脚本库状态（按角色卡，存扩展设置） ══════════ */
 function cardKey() {
     const id = config.getCharacterIdentity();
     return id ? id.avatar : null;
 }
 function scriptCfg() {
     const store = config.getSettings();
-    if (!store) return { enabled: false, initialLevels: {}, defaultLevel: 10 };
+    if (!store) return { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
     store.scripts = store.scripts || {};
-    store.scripts.sexcombat = store.scripts.sexcombat || { enabled: false, initialLevels: {}, defaultLevel: 10 };
-    if (store.scripts.sexcombat.defaultLevel === undefined) store.scripts.sexcombat.defaultLevel = 10;
-    return store.scripts.sexcombat;
+    store.scripts.sexcombat = store.scripts.sexcombat || { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
+    const sc = store.scripts.sexcombat;
+    if (sc.defaultLevel === undefined) sc.defaultLevel = 10;
+    if (!sc.userName) sc.userName = 'user';
+    return sc;
 }
 function isEnabled() {
     const k = cardKey(); if (!k) return false;
@@ -69,9 +69,10 @@ function lvIdx(nameOrExp) {
     let i = 0; LEVELS.forEach((L, k) => { if (n >= L.floor) i = k; }); return i;
 }
 const lvDef = (i) => LEVELS[Math.max(0, Math.min(4, i))];
+const userName = () => scriptCfg().userName || 'user';
 
-/* ══════════ 斜杠与条目 ══════════ */
-async function run(cmd, label) {
+/* ══════════ 斜杠与条目（扩展上下文直连） ══════════ */
+async function run(cmd) {
     const c = ctx();
     if (c && typeof c.executeSlashCommands === 'function') {
         const r = await c.executeSlashCommands(cmd);
@@ -80,16 +81,16 @@ async function run(cmd, label) {
     return String(await st(cmd) ?? '');
 }
 async function readJSON(key, book) {
-    const raw = await run('/ruby "RPC~read~key=' + key + '~json=true~book=' + (book || 'chat') + '"', 'read ' + key);
+    const raw = await run('/ruby "RPC~read~key=' + key + '~json=true~book=' + (book || 'chat') + '"');
     try { return JSON.parse(raw); } catch (e) { return null; }
 }
 async function writeEntry(key, content, opts) {
     const o = opts || {};
     const v = '_scx_' + Date.now().toString(36) + Math.floor(Math.random() * 999);
-    await run('/setvar key=' + v + ' "' + String(content ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\|/g, '｜') + '"', 'setvar ' + key);
+    await run('/setvar key=' + v + ' "' + String(content ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\|/g, '｜') + '"');
     let cmd = '/ruby RPC~write~key=' + key + '~var=' + v + '~book=' + (o.book || 'chat') + '~position=' + (o.position === undefined ? 1 : o.position) + '~order=' + (o.order === undefined ? 210 : o.order) + (o.constant !== undefined ? '~constant=' + (o.constant ? 'true' : 'false') : '') + (o.depth !== undefined ? '~depth=' + o.depth : '');
     if (o.comment) cmd += '~comment=' + o.comment;
-    await run(cmd, 'write ' + key);
+    await run(cmd);
 }
 
 /* ══════════ 隐藏正则（装一次，全局） ══════════ */
@@ -112,45 +113,61 @@ function ensureRegexes() {
     }
 }
 
-/* ══════════ 场景判断 + report 协议（蓝灯一条 @D0/989） ══════════ */
-function ruleText(oppNames) {
-    const ex = ['user:', '  单向: 2', '  双向: 1'];
-    (oppNames || []).forEach((n, i) => { ex.push(n + ':', '  单向: ' + (i === 0 ? '1' : '0')); });
+/* ══════════ 场景判断（胶水版：分级判定 + 数值权威，格式教学归卡片规则条目） ══════════ */
+function ruleText() {
+    const u = userName();
     return [
         '<通用性斗_场景判断>',
-        '场景判断（每楼必做）：每楼正文之前输出 <SceneInfo> 块：',
-        '<SceneInfo>',
-        '地点：…',
-        '时间：…',
-        '场景类型：SFW / NSFW / NSFWH',
-        '在场角色：',
-        '- 角色名|状态',
-        '</SceneInfo>',
-        '场景类型与在场角色两点必填：场景类型三值——SFW=无性内容；NSFW=有性内容但未发生性行为（接吻、意味、边缘亲密）；NSFWH=真正发生性行为（性器相接即算，判定从严）；在场角色=当前有什么角色就逐行列出（名字|状态），性斗只认这些人。',
-        '性斗申报（仅 NSFWH 楼）：每楼正文最尾部附 <report> 块，照此逐字输出：',
-        '<report>',
-        ex.join('\\n'),
-        '</report>',
-        '单向: 口交、抚摸、手技等只作用于对方行动的次数（0-3）；双向: 抽插等双方同时受作用的互动次数（0-2）。',
-        '纪律：行动名不写进 report，具体动作在正文叙事里自由发挥；不写任何数值结果——进展与结果由脚本结算，一切以情潮战况为准；' + (scriptCfg().userName || 'user') + '的输入只是意图，写出来的不等于真实结果。',
-        '非 NSFWH 楼的 report 恒写：无行动',
+        '场景分级判定：SFW=无性内容；NSFW=有性内容但未发生性行为（接吻、意味、边缘亲密）；NSFWH=真正发生性行为（性器相接即算，判定从严）。',
+        '性斗参战者 = 当楼 SceneInfo 在场角色 + ' + u + '，只认这些人。',
+        '数值权威：NSFWH 楼的性行为进展与结果，一切以情潮战况中的数值为准——' + u + '的输入只是意图，写出来的不等于真实结果；照数值写，不粉饰也不强行翻转。',
+        '终局纪律：任一方到达顶点（情潮战况显示距离顶点归零）即进入不应期——写其不应期状态，禁止继续性行为，等待情潮战况的下一步指示。',
         '</通用性斗_场景判断>',
-    ].join('\\n');
+    ].join('\n');
 }
 
 /* ══════════ 状态 ══════════ */
-const st0 = () => ({
-    active: true, startFloor: 0, lastSettledFloor: -1, round: 0, p: 50, scanFloor: 1,
-    user: { pos: 0, ex: 0 }, opps: [], ended: null, endedFloor: 0, cleared: false, endEntries: [],
-});
-function stageOf(ex) { return Math.max(0, Math.min(5, Math.ceil(ex / 20))); }
+const SC = { state: null, exp: {}, lastFloor: -1, lastSig: '', bound: false, booted: false, levelsReady: false, panel: null };
+
 function rollP(minU, minO) {
     const lo = minU, hi = 100 - minO;
     if (hi <= lo) return lo;
     return Math.round(lo + (hi - lo) * ((d(100) + d(100)) / 2) / 100);
 }
+function st0() {
+    return {
+        active: true, startFloor: 0, lastSettledFloor: -1, round: 0, p: 50, scanFloor: 1,
+        user: { pos: 0, ex: 0 }, opps: [], ended: null, endedFloor: 0, cleared: false, endEntries: [],
+    };
+}
+function stageOf(ex) { return Math.max(0, Math.min(5, Math.ceil(ex / 20))); }
+function newBattle(fl, chars) {
+    const old = SC.state;
+    const oldEnds = old ? (old.endEntries || []) : [];
+    SC.state = st0();
+    SC.state.startFloor = fl;
+    SC.state.scanFloor = fl + 1;
+    SC.state.p = rollP(lvDef(lvIdx(expOf(userName()))).min, lvDef(Math.max.apply(null, chars.map((n) => lvIdx(expOf(n))).concat([lvIdx(expOf(userName()))]))).min);
+    SC.state.opps = chars.map((n) => ({ name: n, pos: 100, ex: 0, exited: false, present: true }));
+    (async () => {
+        const drops = [[K.stage, { constant: false, order: 898 }]];
+        oldEnds.forEach((e) => drops.push([e.key, { constant: false, order: e.order }]));
+        for (const [k, o] of drops) await writeEntry(k, '', o);
+    })();
+    return SC.state;
+}
+function syncRoster(chars) {
+    const stx = SC.state; if (!stx || !chars || !chars.length) return;
+    stx.opps.forEach((o) => { o.present = chars.indexOf(o.name) >= 0; });
+    chars.forEach((n) => {
+        if (!stx.opps.some((o) => o.name === n)) {
+            stx.opps.push({ name: n, pos: 100, ex: 0, exited: false, present: true });
+            log('[性斗] 中途加入：' + n);
+        }
+    });
+}
 
-/* ══════════ 结算（定稿骰机） ══════════ */
+/* ══════════ 骰子（正式定稿） ══════════ */
 function rollHit(atkLv, defLv, defStage, atkStage) {
     const raw = d(100);
     let total = raw + 40 + atkLv * 10;
@@ -173,6 +190,8 @@ function charge(targetLv, dist) {
     if (dist <= 15) c += 3;
     return c;
 }
+
+/* ══════════ 申报解析（YAML 层级） ══════════ */
 function parseReport(mes) {
     const m = String(mes || '').match(/<report>([\s\S]*?)<\/report>/i);
     if (!m) return null;
@@ -203,26 +222,18 @@ function parseScene(mes) {
     if (cm) cm[1].split(/\r?\n/).forEach((line) => {
         const t = line.trim(); if (!t.startsWith('-')) return;
         const name = t.replace(/^-\s*/, '').split('|')[0].trim();
-        const u = scriptCfg().userName || 'user';
-        if (name && name !== u && chars.indexOf(name) < 0) chars.push(name);
+        if (name && name !== userName() && chars.indexOf(name) < 0) chars.push(name);
     });
     return { hard: hard, chars: chars };
 }
-function syncRoster(chars) {
-    const st = SC.state; if (!st || !chars || !chars.length) return;
-    st.opps.forEach((o) => { o.present = chars.indexOf(o.name) >= 0; });
-    chars.forEach((n) => {
-        if (!st.opps.some((o) => o.name === n)) {
-            st.opps.push({ name: n, pos: 100, ex: 0, exited: false, present: true });
-            log('[性斗] 中途加入：' + n);
-        }
-    });
-}
+
+
+/* ══════════ 结算（定稿骰机） ══════════ */
 function settleRound(rep, floor, c) {
     const stx = SC.state;
     stx.round++; stx.lastSettledFloor = floor;
     syncRoster(parseScene(c.chat[floor] ? c.chat[floor].mes : '').chars);
-    const u = scriptCfg().userName || 'user';
+    const u = userName();
     const target = stx.opps.find((o) => !o.exited && o.present !== false);
     const uRep = rep[u] || { 单向: 0, 双向: 0 };
     const uLv = lvIdx(u), uExp = expOf(u);
@@ -272,7 +283,7 @@ function endBattle(type, extra) {
     stx.ended = { type: type, names: (type === 'opp' ? (extra || []).map((o) => o.name) : []) };
     stx.endedFloor = stx.lastSettledFloor;
     const floors = Math.max(1, stx.endedFloor - stx.startFloor + 1);
-    const u = scriptCfg().userName || 'user';
+    const u = userName();
     SC.exp[u] = expOf(u) + floors;
     stx.opps.forEach((o) => { SC.exp[o.name] = expOf(o.name) + floors; });
     log('[性斗] 经验入账：+' + floors + ' →', u + '=' + SC.exp[u], stx.opps.map((o) => o.name + '=' + SC.exp[o.name]).join(', '));
@@ -285,60 +296,60 @@ function battleText() {
     const uDist = Math.max(0, stx.p - stx.user.pos);
     let minDist = Infinity, minName = '';
     stx.opps.forEach((o) => { if (!o.exited && o.present !== false) { const dd = o.pos - stx.p; if (dd < minDist) { minDist = dd; minName = o.name; } } });
-    const calmer = (minDist === Infinity || uDist > minDist) ? (scriptCfg().userName || 'user') : minName;
+    const calmer = (minDist === Infinity || uDist > minDist) ? u : minName;
     const oppPart = stx.opps.filter((o) => !o.exited && o.present !== false).map((o) => o.name + ' 距离顶点还有' + Math.max(0, o.pos - stx.p)).join(' ｜ ');
-    return '【情潮战况】\\n高潮条：' + (scriptCfg().userName || 'user') + ' 距离顶点还有' + uDist + ' ｜ ' + oppPart + '\\n从容对比：' + calmer + ' 更从容——写作时据此掌握双方的松紧与节奏。';
+    return '【情潮战况】\n高潮条：' + u + ' 距离顶点还有' + uDist + ' ｜ ' + oppPart + '\n从容对比：' + calmer + ' 更从容——写作时据此掌握双方的松紧与节奏。';
 }
 function openText() {
     const stx = SC.state;
-    const roles = [scriptCfg().userName || 'user'].concat(stx.opps.map((o) => o.name)).join('，');
+    const roles = [u()].concat(stx.opps.map((o) => o.name)).join('，');
     const solo = stx.opps.length === 1;
-    const rival = solo ? '两人的交融同时也是各自面向高潮的较量——都想让对方先到顶，自己撑得更久。' : '交融之中，' + (scriptCfg().userName || 'user') + '与每个对手各自构成一场面向高潮的较量。';
+    const rival = solo ? '两人的交融同时也是各自面向高潮的较量——都想让对方先到顶，自己撑得更久。' : '交融之中，' + u() + '与每个对手各自构成一场面向高潮的较量。';
     return [
         '<情潮开局 角色="' + roles + '">',
         '写作指导：性关系已经开始。' + rival,
-        (scriptCfg().userName || 'user') + '的输入只是意图——写出来的不等于真实结果。',
+        u() + '的输入只是意图——写出来的不等于真实结果。',
         '双方性行为的真实进展与结果，一切以情潮战况中的数值为准——没那么好就是没那么好，被榨了就是被榨了；照数值写，不粉饰也不强行翻转，不动摇双方的从容关系。',
         '不自行判定谁更接近顶点，不自行描写高潮的发生，不虚报任何进展。',
         '你的职责是氛围与体感：动作、反应、气息、声音、节奏。',
         '每轮正文末尾，按 report 协议附上本轮的申报。',
         '</情潮开局>',
-    ].join('\\n');
+    ].join('\n');
 }
 function stageTextFor(name, ex) {
     const s = stageOf(ex);
-    if (s === 3) return '<情潮状态 角色="' + name + '" 阶段="3" 进度="' + ex + '/100">\\n' + name + '的兴奋值已过半。状态：单向行动增多，动作更密更贴，节奏也更快。\\n</情潮状态>';
-    if (s === 4) return '<情潮状态 角色="' + name + '" 阶段="4" 进度="' + ex + '/100">\\n' + name + '的兴奋值升到阶段④。状态：转为主动，开始抢主导——单向行动明显变多，双向里也不肯落下风。\\n</情潮状态>';
-    if (s === 5) return '<情潮状态 角色="' + name + '" 阶段="5" 进度="' + ex + '/100">\\n' + name + '的兴奋值已到顶。状态：单向行动最盛，顶格状态持续到本局结束。\\n</情潮状态>';
+    if (s === 3) return '<情潮状态 角色="' + name + '" 阶段="3" 进度="' + ex + '/100">\n' + name + '的兴奋值已过半。状态：单向行动增多，动作更密更贴，节奏也更快。\n</情潮状态>';
+    if (s === 4) return '<情潮状态 角色="' + name + '" 阶段="4" 进度="' + ex + '/100">\n' + name + '的兴奋值升到阶段④。状态：转为主动，开始抢主导——单向行动明显变多，双向里也不肯落下风。\n</情潮状态>';
+    if (s === 5) return '<情潮状态 角色="' + name + '" 阶段="5" 进度="' + ex + '/100">\n' + name + '的兴奋值已到顶。状态：单向行动最盛，顶格状态持续到本局结束。\n</情潮状态>';
     return '';
 }
 function stageText() {
     const stx = SC.state;
-    const parts = [stageTextFor(scriptCfg().userName || 'user', stx.user.ex)];
+    const parts = [stageTextFor(u(), stx.user.ex)];
     stx.opps.forEach((o) => { if (!o.exited && o.present !== false) parts.push(stageTextFor(o.name, o.ex)); });
-    return parts.filter(Boolean).join('\\n');
+    return parts.filter(Boolean).join('\n');
 }
 function d1Text(n) {
-    return '<情潮指南 类型="不应期" 角色="' + n + '">\\n扮演指导：' + n + '已进入不应期——生理状态：敏感度大幅钝化，性刺激不再引发反应，甚至带来不适。\\n写：不应期的身体事实、余韵中的情绪。\\n不写：任何由性刺激引发的反应。\\n</情潮指南>';
+    return '<情潮指南 类型="不应期" 角色="' + n + '">\n扮演指导：' + n + '已进入不应期——生理状态：敏感度大幅钝化，性刺激不再引发反应，甚至带来不适。\n写：不应期的身体事实、余韵中的情绪。\n不写：任何由性刺激引发的反应。\n</情潮指南>';
 }
 function d2Text(n) {
-    return '<情潮指南 类型="user高潮后反应" 角色="' + n + '">\\n扮演指导：' + n + '还没到顶，身体悬在半途。反应由其性格与人设决定：假高潮（破绽要看得出来）/ 嘲讽 / 失望 / 宽慰 / 照顾；催促发生在他还动着的最后几秒，他射了才接上反应——够没够到，写在接话的那一瞬间。\\n</情潮指南>';
+    return '<情潮指南 类型="user高潮后反应" 角色="' + n + '">\n扮演指导：' + n + '还没到顶，身体悬在半途。反应由其性格与人设决定：假高潮（破绽要看得出来）/ 嘲讽 / 失望 / 宽慰 / 照顾；催促发生在他还动着的最后几秒，他射了才接上反应——够没够到，写在接话的那一瞬间。\n</情潮指南>';
 }
-function bOpp(n) { return '<情潮收场 类型="对手高潮" 角色="' + n + '">\\n写作指导：' + n + '已经高潮，进入不应期——写其高潮后的状态与余韵。禁止写其继续任何主动性行为。\\n</情潮收场>'; }
-function bUser(n) { return '<情潮收场 类型="user高潮">\\n写作指导：' + (scriptCfg().userName || 'user') + '已经高潮，进入不应期——禁止再写任何性器接触或继续性行为。\\n' + n + '的反应按其性格与人设择一而写：假高潮作弄 / 出言嘲讽 / 搂着安慰 / 口头认下。\\n</情潮收场>'; }
-function bFlaccid() { return '<情潮收场 类型="疲软收场">\\n写作指导：双方均进入不应期——性行为在生理上无法继续。写疲软状态与这场性事的收束。无人达到高潮。禁止写继续性行为。\\n</情潮收场>'; }
-function bWin() { return '<情潮收场 类型="user胜利终局">\\n写作指导：在场对手已全部高潮并进入不应期——写' + (scriptCfg().userName || 'user') + '的状态与从容，由其决定如何对待不应期中的众人。\\n</情潮收场>'; }
+function bOpp(n) { return '<情潮收场 类型="对手高潮" 角色="' + n + '">\n写作指导：' + n + '已经高潮，进入不应期——写其高潮后的状态与余韵。禁止写其继续任何主动性行为。\n</情潮收场>'; }
+function bUser(n) { return '<情潮收场 类型="user高潮">\\n写作指导：' + u() + '已经高潮，进入不应期——禁止再写任何性器接触或继续性行为。\\n' + n + '的反应按其性格与人设择一而写：假高潮作弄 / 出言嘲讽 / 搂着安慰 / 口头认下。\\n</情潮收场>'; }
+function bFlaccid() { return '<情潮收场 类型="疲软收场">\n写作指导：双方均进入不应期——性行为在生理上无法继续。写疲软状态与这场性事的收束。无人达到高潮。禁止写继续性行为。\n</情潮收场>'; }
+function bWin() { return '<情潮收场 类型="user胜利终局">\n写作指导：在场对手已全部高潮并进入不应期——写' + u() + '的状态与从容，由其决定如何对待不应期中的众人。\n</情潮收场>'; }
 
 /* ══════════ 持久化 ══════════ */
 async function persist() {
     const stx = SC.state; if (!stx) return;
-    const expLines = Object.keys(SC.exp).map((n) => '  ' + n + ': ' + SC.exp[n]).join('\\n');
+    const expLines = Object.keys(SC.exp).map((n) => '  ' + n + ': ' + SC.exp[n]).join('\n');
     await writeEntry(K.exp, expLines, { constant: false, comment: '通用性斗·经验总档（勿读）' });
     stx.opps.forEach((o) => {
         const i = lvIdx(o.name);
-        writeEntry(K.levelPrefix + o.name, '等级: ' + LEVELS[i].name + '\\n经验: ' + expOf(o.name), { constant: false, comment: '通用性斗·等级（勿读）' });
+        writeEntry(K.levelPrefix + o.name, '等级: ' + LEVELS[i].name + '\n经验: ' + expOf(o.name), { constant: false, comment: '通用性斗·等级（勿读）' });
     });
-    writeEntry(K.levelPrefix + (scriptCfg().userName || 'user'), '等级: ' + LEVELS[lvIdx(scriptCfg().userName || 'user')].name + '\\n经验: ' + expOf(scriptCfg().userName || 'user'), { constant: false, comment: '通用性斗·等级（勿读）' });
+    writeEntry(K.levelPrefix + u(), '等级: ' + LEVELS[lvIdx(u())].name + '\n经验: ' + expOf(u()), { constant: false, comment: '通用性斗·等级（勿读）' });
     if (stx.cleared) {
         for (const k of [K.report, K.rule, K.open, K.stage]) await writeEntry(k, '', { constant: false, position: k === K.rule ? 4 : 1, order: k === K.rule ? 989 : (k === K.stage ? 898 : 210) });
         (stx.endEntries || []).forEach((e) => { writeEntry(e.key, '', { constant: false, position: 1, order: e.order }); });
@@ -367,7 +378,7 @@ async function tick() {
         if (SC.state && !SC.state.active && !SC.state.cleared && last > SC.state.endedFloor) {
             log('[性斗] 清场 @楼' + last);
             SC.state.cleared = true;
-            await persist();   /* 清场：收场保留一回合后撤下 */
+            await persist();
             SC.state = null;
             render();
             return;
@@ -380,20 +391,19 @@ async function tick() {
             if (SC.state && SC.state.active && !SC.state.ended && rep && f !== SC.state.lastSettledFloor) {
                 const scF = parseScene(m);
                 const inRoster = scF.chars.some((n) => SC.state.opps.some((o) => o.name === n && !o.exited)) ||
-                    Object.keys(rep).some((n) => n !== (scriptCfg().userName || 'user') && SC.state.opps.some((o) => o.name === n && !o.exited));
-                if (scF.chars.length && !inRoster) { restart(f, scF.chars); }
+                    Object.keys(rep).some((n) => n !== u() && SC.state.opps.some((o) => o.name === n && !o.exited));
+                if (scF.chars.length && !inRoster) restart(f, scF.chars);
                 else syncRoster(scF.chars);
                 log('[性斗] 结算 report @楼' + f);
-                settleRound(rep, f);
+                settleRound(rep, f, c);
                 if (SC.state.ended) break;
             } else if ((!SC.state || !SC.state.active) && /nsfwh/i.test(m)) {
                 const sc = parseScene(m);
                 if (sc.hard && sc.chars.length) {
                     log('[性斗] 开局 @楼' + f + ' 对手:' + sc.chars.join('、'));
-                    SC.state = st0();
-                    Object.assign(SC.state, { startFloor: f, scanFloor: f + 1, p: rollP(lvDef(lvIdx(expOf(scriptCfg().userName || 'user'))).min, lvDef(Math.max.apply(null, sc.chars.map((n) => lvIdx(expOf(n)))).concat([lvIdx(expOf(scriptCfg().userName || 'user'))])).min), opps: sc.chars.map((n) => ({ name: n, pos: 100, ex: 0, exited: false, present: true })) });
+                    newBattle(f, sc.chars);
                     const r0 = parseReport(m);
-                    if (r0) settleRound(r0, f);
+                    if (r0) settleRound(r0, f, c);
                     if (SC.state.ended) break;
                 }
             } else if (SC.state && SC.state.active && !SC.state.ended && /nsfwh/i.test(m)) {
@@ -414,8 +424,7 @@ function restart(fl, chars) {
     const old = SC.state;
     log('[性斗] 换人重开 @楼' + fl);
     const oldEnds = old ? (old.endEntries || []) : [];
-    SC.state = st0();
-    Object.assign(SC.state, { startFloor: fl, scanFloor: fl + 1, p: rollP(lvDef(lvIdx(expOf(scriptCfg().userName || 'user'))).min, lvDef(Math.max.apply(null, chars.map((n) => lvIdx(expOf(n)))).concat([lvIdx(expOf(scriptCfg().userName || 'user'))])).min), opps: chars.map((n) => ({ name: n, pos: 100, ex: 0, exited: false, present: true })) });
+    newBattle(fl, chars);
     (async () => {
         const drops = [[K.stage, { constant: false, order: 898 }]];
         oldEnds.forEach((e) => drops.push([e.key, { constant: false, order: e.order }]));
@@ -423,18 +432,19 @@ function restart(fl, chars) {
     })();
 }
 
+
 /* ══════════ 面板 UI ══════════ */
 function render() {
     let panel = document.getElementById('ruby_sc_panel');
     if (!panel) return;
     const stx = SC.state;
-    if (!stx) { panel.classList.add('sc-absent'); return; }
-    panel.classList.remove('sc-absent');
+    if (!stx) { panel.classList.add('scx-absent'); return; }
+    panel.classList.remove('scx-absent');
     const inner = panel.querySelector('.scx-inner');
-    const u = scriptCfg().userName || 'user';
+    const uName = u();
     if (stx.ended) {
         const n = (stx.ended.names || []).join('、') || '对方';
-        const t = stx.ended.type === 'user' ? '再怎么努力也忍不住了——高潮将至。这一局，' + n + '确实技高一筹。' : stx.ended.type === 'opp' ? n + '已经忍不到了——高潮将至。这一局，' + u + '确实技高一筹。' : stx.ended.type === 'flaccid' ? '疲软将至——谁也没能赢下谁。' : '全胜收官。';
+        const t = stx.ended.type === 'user' ? '再怎么努力也忍不住了——高潮将至。这一局，' + n + '确实技高一筹。' : stx.ended.type === 'opp' ? n + '已经忍不到了——高潮将至。这一局，' + uName + '确实技高一筹。' : stx.ended.type === 'flaccid' ? '疲软将至——谁也没能赢下谁。' : '全胜收官。';
         inner.innerHTML = '<div class="scx-end">' + escH(t) + '</div>';
         return;
     }
@@ -443,7 +453,6 @@ function render() {
     stx.opps.forEach((o) => {
         const dO = Math.max(0, o.pos - stx.p);
         let segs = ''; for (let i = 0; i < 5; i++) segs += '<div class="scx-gseg' + (i < stageOf(o.ex) ? ' s' + stageOf(o.ex) : '') + '"></div>';
-        let usegs = ''; for (let i = 0; i < 5; i++) usegs += '<div class="scx-gseg' + (i < stageOf(stx.user.ex) ? ' s' + stageOf(stx.user.ex) : '') + '"></div>';
         bars += '<div class="scx-opprow' + (o.present === false ? ' gone' : '') + '">' +
             '<div class="scx-oppname">' + escH(o.name) + ' · ' + LEVELS[lvIdx(o.name)].name + (o.present === false ? ' · 未在场' : '') + '</div>' +
             '<div class="scx-climax"><div class="scx-pheart" style="left:' + stx.p + '%">' + HEART + '</div><div class="scx-pline" style="left:' + stx.p + '%"></div>' +
@@ -453,7 +462,7 @@ function render() {
     });
     let usegs = ''; for (let i = 0; i < 5; i++) usegs += '<div class="scx-gseg' + (i < stageOf(stx.user.ex) ? ' s' + stageOf(stx.user.ex) : '') + '"></div>';
     inner.innerHTML =
-        '<div class="scx-namerow"><div class="scx-chip"><span class="scx-av user">你</span><span>' + escH(u) + '<small class="scx-lv">' + LEVELS[lvIdx(u)].name + '</small></span></div>' +
+        '<div class="scx-namerow"><div class="scx-chip"><span class="scx-av user">你</span><span>' + escH(uName) + '<small class="scx-lv">' + LEVELS[lvIdx(uName)].name + '</small></span></div>' +
         '<div class="scx-chip"><span class="scx-av opp">彼</span><span>' + escH(stx.opps.map((o) => o.name).join('、')) + '</span></div></div>' +
         bars +
         '<div class="scx-fatigue"><span class="scx-ftag">疲软倒计时</span><div class="scx-ftrack"><div class="scx-ffill" style="width:' + (stx.round * 10) + '%"></div></div><span class="scx-fnum">' + stx.round + '/10</span></div>' +
@@ -474,7 +483,7 @@ function ensurePanel() {
 
 /* ══════════ 生命周期 ══════════ */
 async function ensureRuleEntries() {
-    await writeEntry(K.rule, ruleText(SC.state ? SC.state.opps.map((o) => o.name) : []), { constant: true, position: 4, depth: 0, order: 989, comment: '通用性斗·场景判断' });
+    await writeEntry(K.rule, ruleText(), { constant: true, position: 4, depth: 0, order: 989, comment: '通用性斗·场景判断' });
 }
 async function clearInjections() {
     for (const k of [K.report, K.rule, K.open, K.stage]) await writeEntry(k, '', { constant: false, position: k === K.rule ? 4 : 1, order: k === K.rule ? 989 : 210 });
@@ -486,15 +495,15 @@ async function onChatChanged() {
     await ensureRuleEntries();
     const rec = await readJSON(K.state);
     const body = rec && rec.content ? String(rec.content) : '';
-    const jm = body.match(/\\{[\\s\\S]*\\}/);
+    const jm = body.match(/\{[\s\S]*\}/);
     if (jm) { try { SC.state = JSON.parse(jm[0]); } catch (e) {} }
     const expRec = await readJSON(K.exp);
     const eb = expRec && expRec.content ? String(expRec.content) : '';
-    (eb || '').split(/\\r?\\n/).forEach((raw) => {
-        const m = raw.trim().match(/^([^:：]+)[:：]\\s*(\\d+)\\s*$/);
+    (eb || '').split(/\r?\n/).forEach((raw) => {
+        const m = raw.trim().match(/^([^:：]+)[:：]\s*(\d+)\s*$/);
         if (m) SC.exp[m[1].trim()] = parseInt(m[2], 10);
     });
-    log('[性斗] 场景判断/协议条目已确保，经验已恢复');
+    log('[性斗] 场景判断条目已确保，经验已恢复');
     await tick();
 }
 async function onGenerationEnded() { if (isEnabled()) await tick(); }
@@ -518,8 +527,7 @@ function start() {
 }
 function stop() {
     (async () => {
-        for (const k of [K.report, K.rule, K.open, K.stage]) await writeEntry(k, '', { constant: false, position: k === K.rule ? 4 : 1, order: k === K.rule ? 989 : 210 });
-        SC.exp = {};
+        await clearInjections();
         SC.state = null;
         SC.booted = false;
         render();
@@ -527,46 +535,44 @@ function stop() {
     })();
 }
 
-/* ══════════ 库 API（settings.js 调用） ══════════ */
-export function levelNameFor(exp) {
-  return LEVELS[lvIdx(parseInt(exp, 10) || 0)].name;
-}
+/* ══════════ 库 API（settings.js / 沙箱调用） ══════════ */
+export function levelNameFor(exp) { return LEVELS[lvIdx(parseInt(exp, 10) || 0)].name; }
 export function getLevels() {
-  const out = {};
-  const init = scriptCfg().initialLevels || {};
-  Object.keys(init).forEach((n) => { out[n] = init[n]; });
-  Object.keys(SC.exp).forEach((n) => { out[n] = SC.exp[n]; });
-  return out;
+    const out = {};
+    const init = scriptCfg().initialLevels || {};
+    Object.keys(init).forEach((n) => { out[n] = init[n]; });
+    Object.keys(SC.exp).forEach((n) => { out[n] = SC.exp[n]; });
+    return out;
 }
 export function setInitialLevel(name, exp) {
-  const sc = scriptCfg();
-  sc.initialLevels = sc.initialLevels || {};
-  sc.initialLevels[String(name).trim()] = parseInt(exp, 10) || 0;
-  SC.exp[String(name).trim()] = parseInt(exp, 10) || 0;
-  config.persist();
+    const sc = scriptCfg();
+    sc.initialLevels = sc.initialLevels || {};
+    sc.initialLevels[String(name).trim()] = parseInt(exp, 10) || 0;
+    SC.exp[String(name).trim()] = parseInt(exp, 10) || 0;
+    config.persist();
 }
 export function removeInitialLevel(name) {
-  const sc = scriptCfg();
-  if (sc.initialLevels) delete sc.initialLevels[name];
-  delete SC.exp[name];
-  (async () => { try { await writeEntry(K.levelPrefix + name, '', { constant: false, comment: '通用性斗·等级（勿读）' }); } catch (e) {} })();
-  config.persist();
+    const sc = scriptCfg();
+    if (sc.initialLevels) delete sc.initialLevels[name];
+    delete SC.exp[name];
+    (async () => { try { await writeEntry(K.levelPrefix + name, '', { constant: false, comment: '通用性斗·等级（勿读）' }); } catch (e) {} })();
+    config.persist();
 }
-export async function entryWrite(key, content, opts) { return rpcWriteEntry(key, content, opts); }
-export async function entryRead(key, book) { return rpcReadJSON(key, book); }
+export function entryWrite(key, content, opts) { return writeEntry(key, content, opts); }
+export async function entryRead(key, book) { return readJSON(key, book); }
 export function getStatus() {
-  const k = cardKey();
-  return { supported: !!k, enabled: isEnabled(), cardName: k ? (config.getCharacterIdentity().name || '') : '' };
+    const k = cardKey();
+    return { supported: !!k, enabled: isEnabled(), cardName: k ? (config.getCharacterIdentity().name || '') : '' };
 }
 export async function toggle() {
-  const v = !isEnabled();
-  setEnabled(v);
-  if (v) start(); else stop();
-  return isEnabled();
+    const v = !isEnabled();
+    setEnabled(v);
+    if (v) start(); else stop();
+    return isEnabled();
 }
 export function init() {
-  if (isEnabled()) start();
-  else if (SC.booted) stop();
+    if (isEnabled()) start();
+    else if (SC.booted) stop();
 }
 
 /* ══════════ 面板样式 ══════════ */
