@@ -21,9 +21,13 @@ function cfg() {
   s.scripts = s.scripts || {};
   s.scripts.sexcombat = s.scripts.sexcombat || { enabled:false, trigger:'nsfwh', sceneTag:'SceneInfo', defaultLevel:10, userName:'user', initialLevels:{}, positions:{} };
   const c = s.scripts.sexcombat;
-  // 触发词不在 UI 暴露（内部默认），允许为空（''=不启用性斗触发）
+  // 触发词允许清空（''=不启用性斗触发），只在从未设置时给默认值
   c.trigger = (c.trigger === undefined || c.trigger === null) ? 'nsfwh' : String(c.trigger);
   c.sceneTag = String(c.sceneTag || '').replace(/[<>\s]/g, '') || 'SceneInfo';
+  if (c.ruleEnabled === undefined) c.ruleEnabled = true;
+  if (!c.rulePos) c.rulePos = 'after';
+  if (c.ruleDepth === undefined) c.ruleDepth = 0;
+  if (c.ruleOrder === undefined) c.ruleOrder = 999;
   if (!c.userName) c.userName = 'user';
   if (c.defaultLevel === undefined) c.defaultLevel = 10;
   c.initialLevels = c.initialLevels || {};
@@ -36,24 +40,37 @@ function cardCfg() {
     return (r?.data?.scripts?.sexcombat && typeof r.data.scripts.sexcombat === 'object') ? r.data.scripts.sexcombat : null;
   } catch { return null; }
 }
-// 从角色卡水合创作者配置（sceneTag / chars 底账，卡为准）
+// 从角色卡水合创作者配置（触发词 / sceneTag / 场景判断注入设置 / chars 底账，卡为准）
 function hydrateCfg() {
   const cc = cardCfg(); if (!cc) return false;
   const c = cfg();
   let touched = false;
   const tag = String(cc.sceneTag || '').replace(/[<>\s]/g, '');
   if (tag && tag !== c.sceneTag) { c.sceneTag = tag; touched = true; }
+  if (cc.trigger !== undefined && cc.trigger !== null) {
+    const t = String(cc.trigger);
+    if (t !== c.trigger) { c.trigger = t; touched = true; }
+  }
+  if (cc.ruleEnabled !== undefined && !!cc.ruleEnabled !== !!c.ruleEnabled) { c.ruleEnabled = !!cc.ruleEnabled; touched = true; }
+  if (cc.rulePos && cc.rulePos !== c.rulePos) { c.rulePos = String(cc.rulePos); touched = true; }
+  if (cc.ruleDepth !== undefined && parseInt(cc.ruleDepth, 10) !== c.ruleDepth) { c.ruleDepth = parseInt(cc.ruleDepth, 10) || 0; touched = true; }
+  if (cc.ruleOrder !== undefined && parseInt(cc.ruleOrder, 10) !== c.ruleOrder) { c.ruleOrder = parseInt(cc.ruleOrder, 10) || 999; touched = true; }
   if (cc.chars && typeof cc.chars === 'object') {
     c.initialLevels = { ...cc.chars }; touched = true;
     Object.keys(cc.chars).forEach((n) => { if (SC.exp[n] === undefined) SC.exp[n] = parseInt(cc.chars[n], 10) || 0; });
   }
   return touched;
 }
-// 💾 保存：把 UI 配置（sceneTag / chars）写入角色卡 + 本机层
+// 💾 保存：把 UI 配置（触发词 / sceneTag / 场景判断注入 / chars）写入角色卡 + 本机层
 export function saveToCard(patch = {}) {
   const c = cfg();
   const tag = String(patch.sceneTag ?? c.sceneTag ?? '').replace(/[<>\s]/g, '');
   if (tag) c.sceneTag = tag;
+  if (patch.trigger !== undefined) c.trigger = String(patch.trigger);
+  if (patch.ruleEnabled !== undefined) c.ruleEnabled = !!patch.ruleEnabled;
+  if (patch.rulePos !== undefined) c.rulePos = ['before', 'after', 'depth'].includes(patch.rulePos) ? patch.rulePos : 'after';
+  if (patch.ruleDepth !== undefined) c.ruleDepth = parseInt(patch.ruleDepth, 10) || 0;
+  if (patch.ruleOrder !== undefined) c.ruleOrder = parseInt(patch.ruleOrder, 10) || 999;
   if (patch.chars && typeof patch.chars === 'object') {
     c.initialLevels = {};
     Object.keys(patch.chars).forEach((n) => {
@@ -69,7 +86,12 @@ export function saveToCard(patch = {}) {
       r.data.scripts.sexcombat = {
         ...(r.data.scripts.sexcombat || {}),
         enabled: !!isEnabled(),
+        trigger: c.trigger,
         sceneTag: c.sceneTag,
+        ruleEnabled: !!c.ruleEnabled,
+        rulePos: c.rulePos,
+        ruleDepth: parseInt(c.ruleDepth, 10) || 0,
+        ruleOrder: parseInt(c.ruleOrder, 10) || 999,
         chars: { ...c.initialLevels },
       };
       config.saveConfigData(r.data);
@@ -143,6 +165,8 @@ function trigRe() {
   const t = String(cfg().trigger || '').trim();
   return t ? new RegExp(t, 'i') : null;
 }
+// 场景判断条目——只做纯格式：场景块 + 触发词定义。
+// report 协议/数值权威/不应期纪律属战斗期内容，由情潮开局/收场等动态注入承担，不在此常驻条目里。
 function ruleT() {
   const tag = scTag();
   const t = String(cfg().trigger || '').trim();
@@ -159,20 +183,17 @@ function ruleT() {
   ];
   if (T) {
     lines.push(
-      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <' + tag + '> 之后附 <report>。',
-      '<report> 协议（' + T + ' 楼必附，其余楼层禁止输出）：',
-      '<report>',
-      '角色名:',
-      '  单向: 0-3（次数）',
-      '  双向: 0-2（次数）',
-      '</report>',
+      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入）。',
     );
   }
-  lines.push(
-    '数值权威：进展与结果以战况通报为准，照数值写，不粉饰不翻转。',
-    '不应期纪律：已到顶角色进入不应期——敏感度大幅钝化，性刺激不引发反应；禁止继续主动性行为。',
-  );
   return lines.join('\n');
+}
+// 场景判断条目的注入位置：'before'→0（角色前）| 'after'→1（角色后）| 'depth'→4（@D 指定深度）
+function rulePosNum() {
+  const p = String(cfg().rulePos || 'after');
+  if (p === 'before') return 0;
+  if (p === 'depth') return 4;
+  return 1;
 }
 
 // 注入位置配置：positions = { reportPos/reportOrder, openPos/openOrder, stagePos/stageOrder }
@@ -316,7 +337,8 @@ function openT() {
   const roles = [u].concat(s.opps.map(o => o.name)).join('，');
   const solo = s.opps.length === 1;
   const rv = solo ? '两人的交融也是面向高潮的较量——都想让对方先到顶。' : '交融中，' + u + '与每个对手各自较量。';
-  return ['<情潮开局 角色="' + roles + '">', '写作指导：性关系开始。' + rv, u + '的输入只是意图——写出来的不等于真实结果。', '进展与结果以情潮战况为准——照数值写，不粉饰不翻转。', '不自行判顶点，不自行写高潮，不虚报。', '职责=氛围与体感。', '每轮末尾按 report 协议申报。', '</情潮开局>'].join('\n');
+  const T = String(cfg().trigger || 'nsfwh').toUpperCase();
+  return ['<情潮开局 角色="' + roles + '">', '写作指导：性关系开始。' + rv, u + '的输入只是意图——写出来的不等于真实结果。', '进展与结果以情潮战况为准——照数值写，不粉饰不翻转。', '不自行判顶点，不自行写高潮，不虚报。', '职责=氛围与体感。', '每轮末尾按 report 协议申报：', '<report> 协议（' + T + ' 楼必附，其余楼层禁止输出）：', '<report>', '角色名:', '  单向: 0-3（次数）', '  双向: 0-2（次数）', '</report>', '</情潮开局>'].join('\n');
 }
 function stageT(n, e) {
   const s = stageOf(e);
@@ -364,8 +386,21 @@ function persist() {
   }
 }
 
-// ── 场景判断条目落笔（@D0 蓝灯常驻——每层回复都靠 SceneInfo 驱动判定） ──
-async function writeRule() { await writeE(K.rule, ruleT(), { constant: true, pos: 4, depth: 0, ord: 999, comment: '场景判断' }); }
+// ── 场景判断条目落笔（开关+位置玩家自选；@D 模式才带 depth） ──
+async function writeRule() {
+  if (cfg().ruleEnabled === false) {
+    await writeE(K.rule, '', { constant: false, comment: '场景判断' });
+    return;
+  }
+  const pos = rulePosNum();
+  await writeE(K.rule, ruleT(), {
+    constant: true,
+    pos,
+    depth: pos === 4 ? (parseInt(cfg().ruleDepth, 10) || 0) : undefined,
+    ord: parseInt(cfg().ruleOrder, 10) || 999,
+    comment: '场景判断',
+  });
+}
 
 // ── tick ──
 async function tick() {
