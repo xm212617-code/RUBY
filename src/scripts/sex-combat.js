@@ -175,7 +175,6 @@ function rosterNames(value, format) {
             }
         } else {
             const rows = raw.split(/\r?\n/).map((row) => row.trim()).filter((row) => row && !row.startsWith('#'));
-            if (rows.some((row) => !/^-\s+/.test(row))) return null;
             values = rows.map((row) => scalar(row.replace(/^-\s+/, '')));
         }
     } else values = String(value ?? '').split(/[,，;；\r\n]+/);

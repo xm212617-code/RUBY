@@ -126,6 +126,9 @@ test('YAML roster field spans lines and extracts only configured field', () => {
     assert.equal(parsed.report, '无行动');
     assert.equal(parse(scene.replace('NSFWH', 'SFW'), config).active, false);
     assert.equal(parse(scene, normalize()).active, false);
+    const unbulleted = scene.replace('  - Alice|coat\n  - Bob', 'Alice|coat\nBob');
+    assert.equal(parse(unbulleted, config).valid, true, 'YAML newline roster accepts names without dash bullets');
+    assert.deepEqual(parse(unbulleted, config).roster, ['Alice', 'Bob']);
     assert.deepEqual(parse(scene.replace('  - Alice|coat\n  - Bob', "  - 'Alice'\n  - Bob\n其它: Eve"), config).characters, ['Alice', 'Bob']);
     assert.deepEqual(parse(scene.replace('  - Alice|coat\n  - Bob', "['Alice', 'Bob']"), config).roster, ['Alice', 'Bob']);
 });
@@ -146,7 +149,7 @@ test('ambiguous, incomplete and example XML do not trigger', () => {
     }
     assert.equal(parse(`\`\`\`xml\n${scene}\n\`\`\`\n${scene}`, config).active, true);
     assert.equal(parse('<SceneInfo>{"场景类型":"SFW","场景类型":"NSFWH","在场角色":[]}</SceneInfo>', config).active, false);
-    assert.equal(parse(scene.replace('  - Alice|coat\n  - Bob', 'not a YAML list'), config).valid, false);
+    assert.deepEqual(parse(scene.replace('  - Alice|coat\n  - Bob', 'Plain Name'), config).roster, ['Plain Name']);
     assert.equal(parse('<SceneInfo>\n<!--\n场景类型: NSFWH\n在场角色:\n- Alice\nother: value\n-->\n</SceneInfo>', config).active, false);
 });
 
