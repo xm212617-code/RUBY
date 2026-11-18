@@ -1151,14 +1151,42 @@ function wireTabs(root) {
       const levels = sexcombat.getLevels();
       const rows = Object.keys(levels).map((n) => {
         const nm = sexcombat.levelNameFor(levels[n]);
-        return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;">' +
-          '<span style="font-weight:600;">' + escH(n) + '</span>' +
-          '<span style="color:#8b8f86;">经验 ' + levels[n] + '</span>' +
-          '<span style="font-weight:700;color:#2f5f4a;">' + nm + '</span></div>';
+        return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px dashed #dfe6df;">' +
+          '<span style="font-weight:600;flex:1;">' + escH(n) + '</span>' +
+          '<span style="color:#8b8f86;flex:none;">经验 ' + levels[n] + '</span>' +
+          '<span style="font-weight:700;color:#2f5f4a;flex:none;margin-left:8px;">' + nm + '</span></div>';
       });
-      list.innerHTML = rows.join('') || '<div style="font-size:11px;color:#8b8f86;">暂无底账——未登记角色默认新手（经验 10）</div>';
+      list.innerHTML = rows.join('') || '<div style="font-size:11px;color:#8b8f86;padding:4px 0;">暂无底账——未登记角色默认新手（经验 10）</div>';
     }
     scxRenderBzList();
+    /* 触发词/注入位置：从 sexcombat 读，改了就存 */
+    const scxGetCfg = () => sexcombat.getScriptCfg();
+    const scxSaveCfg = () => sexcombat.saveScriptCfg();
+    const triggerInput = document.getElementById('scx_bz_trigger');
+    if (triggerInput) {
+      triggerInput.value = scxGetCfg().trigger || 'nsfwh';
+      triggerInput.addEventListener('change', () => {
+        scxGetCfg().trigger = triggerInput.value.trim() || 'nsfwh';
+        scxSaveCfg();
+      });
+    }
+    const posIds = [['scx_pos_rp', 'scx_ord_rp', 'reportPos', 'reportOrder'], ['scx_pos_op', 'scx_ord_op', 'openPos', 'openOrder'], ['scx_pos_st', 'scx_ord_st', 'stagePos', 'stageOrder']];
+    posIds.forEach(([pid, oid, pk, ok]) => {
+      const pi = document.getElementById(pid); const oi = document.getElementById(oid);
+      if (!pi || !oi) return;
+      const cfg = scxGetCfg();
+      pi.value = cfg.positions ? (cfg.positions[pk] || 1) : 1;
+      oi.value = cfg.positions ? (cfg.positions[ok] || 0) : 0;
+      const save = () => {
+        const cc = scxGetCfg();
+        cc.positions = cc.positions || {};
+        cc.positions[pk] = parseInt(pi.value, 10) || 1;
+        cc.positions[ok] = parseInt(oi.value, 10) || 0;
+        scxSaveCfg();
+      };
+      pi.addEventListener('change', save);
+      oi.addEventListener('change', save);
+    });
     const dl = document.getElementById('scx_doc_dl');
     if (dl) dl.addEventListener('click', () => {
       const blob = new Blob([SCX_DOCS], { type: 'text/markdown;charset=utf-8' });

@@ -43,6 +43,8 @@ function scriptCfg() {
     const sc = store.scripts.sexcombat;
     if (sc.defaultLevel === undefined) sc.defaultLevel = 10;
     if (!sc.userName) sc.userName = 'user';
+    if (!sc.trigger) sc.trigger = 'nsfwh';
+    sc.positions = sc.positions || { reportPos: 1, reportOrder: 210, openPos: 1, openOrder: 900, stagePos: 1, stageOrder: 898, rulePos: 4, ruleOrder: 989 };
     return sc;
 }
 function isEnabled() {
@@ -118,7 +120,7 @@ function ruleText() {
     const u = userName();
     return [
         '<通用性斗_场景判断>',
-        '场景分级判定：SFW=无性内容；NSFW=有性内容但未发生性行为（接吻、意味、边缘亲密）；NSFWH=真正发生性行为（性器相接即算，判定从严）。',
+        '场景分级判定：本脚本的触发标记为「' + (scriptCfg().trigger || 'nsfwh') + '」——SceneInfo 场景类型含此标记时性斗启动。',
         '性斗参战者 = 当楼 SceneInfo 在场角色 + ' + u + '，只认这些人。',
         '数值权威：NSFWH 楼的性行为进展与结果，一切以情潮战况中的数值为准——' + u + '的输入只是意图，写出来的不等于真实结果；照数值写，不粉饰也不强行翻转。',
         '终局纪律：任一方到达顶点（情潮战况显示距离顶点归零）即进入不应期——写其不应期状态，禁止继续性行为，等待情潮战况的下一步指示。',
@@ -350,14 +352,15 @@ async function persist() {
         writeEntry(K.levelPrefix + o.name, '等级: ' + LEVELS[i].name + '\n经验: ' + expOf(o.name), { constant: false, comment: '通用性斗·等级（勿读）' });
     });
     writeEntry(K.levelPrefix + u(), '等级: ' + LEVELS[lvIdx(u())].name + '\n经验: ' + expOf(u()), { constant: false, comment: '通用性斗·等级（勿读）' });
+    const posCfg = scriptCfg().positions || {};
     if (stx.cleared) {
-        for (const k of [K.report, K.rule, K.open, K.stage]) await writeEntry(k, '', { constant: false, position: k === K.rule ? 4 : 1, order: k === K.rule ? 989 : (k === K.stage ? 898 : 210) });
+        for (const k of [K.report, K.rule, K.open, K.stage]) await writeEntry(k, '', { constant: false, position: k === K.rule ? (posCfg.rulePos || 4) : 1, order: k === K.rule ? (posCfg.ruleOrder || 989) : (k === K.stage ? (posCfg.stageOrder || 898) : (posCfg.reportOrder || 210)) });
         (stx.endEntries || []).forEach((e) => { writeEntry(e.key, '', { constant: false, position: 1, order: e.order }); });
     } else {
-        await writeEntry(K.report, battleText(), { constant: true, comment: '情潮战况' });
+        await writeEntry(K.report, battleText(), { constant: true, position: posCfg.reportPos || 1, order: posCfg.reportOrder || 210, comment: '情潮战况' });
         if (!stx.ended) {
-            await writeEntry(K.open, openText(), { constant: true, order: 900, comment: '情潮开局' });
-            await writeEntry(K.stage, stageText(), { constant: true, order: 898, comment: '情潮状态' });
+            await writeEntry(K.open, openText(), { constant: true, position: posCfg.openPos || 1, order: posCfg.openOrder || 900, comment: '情潮开局' });
+            await writeEntry(K.stage, stageText(), { constant: true, position: posCfg.stagePos || 1, order: posCfg.stageOrder || 898, comment: '情潮状态' });
             (stx.endEntries || []).forEach((e) => { writeEntry(e.key, '', { constant: false, position: 1, order: e.order }); });
         } else {
             await writeEntry(K.stage, '', { constant: false, order: 898 });
@@ -397,7 +400,7 @@ async function tick() {
                 log('[性斗] 结算 report @楼' + f);
                 settleRound(rep, f, c);
                 if (SC.state.ended) break;
-            } else if ((!SC.state || !SC.state.active) && /nsfwh/i.test(m)) {
+            } else if ((!SC.state || !SC.state.active) && new RegExp(scriptCfg().trigger || 'nsfwh', 'i').test(m)) {
                 const sc = parseScene(m);
                 if (sc.hard && sc.chars.length) {
                     log('[性斗] 开局 @楼' + f + ' 对手:' + sc.chars.join('、'));
@@ -406,7 +409,7 @@ async function tick() {
                     if (r0) settleRound(r0, f, c);
                     if (SC.state.ended) break;
                 }
-            } else if (SC.state && SC.state.active && !SC.state.ended && /nsfwh/i.test(m)) {
+            } else if (SC.state && SC.state.active && !SC.state.ended && new RegExp(scriptCfg().trigger || 'nsfwh', 'i').test(m)) {
                 const scF = parseScene(m);
                 if (scF.chars.length && !scF.chars.some((n) => SC.state.opps.some((o) => o.name === n && !o.exited))) restart(f, scF.chars);
                 else syncRoster(scF.chars);
@@ -536,6 +539,8 @@ function stop() {
 }
 
 /* ══════════ 库 API（settings.js / 沙箱调用） ══════════ */
+export function getScriptCfg() { return scriptCfg(); }
+export function saveScriptCfg() { config.persist(); }
 export function levelNameFor(exp) { return LEVELS[lvIdx(parseInt(exp, 10) || 0)].name; }
 export function getLevels() {
     const out = {};
