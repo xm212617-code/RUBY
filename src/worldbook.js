@@ -114,6 +114,9 @@ async function readEntriesFromBook(book, key, { all = false } = {}) {
         content: String(entry?.content ?? ''),
         disabled: !!entry?.disable,
         constant: !!entry?.constant,
+        position: parseInt(entry?.position, 10) || 0,
+        order: parseInt(entry?.order, 10) || 0,
+        depth: parseInt(entry?.depth, 10) || 0,
     });
 
     const exact = [];

@@ -445,7 +445,8 @@ function bFl() { return '<情潮收场 类型="疲软收场">写作指导：双�
 function bWin() { return '<情潮收场 类型="user胜利终局">写作指导：在场对手全部高潮进入不应期——写' + uName() + '的从容，由其决定如何对待众人。\n</情潮收场>'; }
 
 // ── 持久化 ──
-// 世界书只存数据条目（当局状态/经验/等级）；战局指导内容走正文注入（syncBlocks 三位置）。
+// 世界书双通道：类型判断指令（蓝灯 @D0，ensureRule 自愈）+ 战局内容（蓝灯常驻，随战斗每层刷新）；
+// 数据条目（当局/经验/等级）为绿灯存储。正文只承载情潮面板渲染（refreshInline）。
 function persist() {
   const s = SC.state; if (!s) return;
   writeE(K.state, JSON.stringify(s), { constant: false, comment: '当局' });
@@ -454,10 +455,26 @@ function persist() {
   s.opps.forEach(o => writeE(K.lp + o.name, '等级: ' + L[lvI(o.name)].n + '\n经验: ' + expOf(o.name), { constant: false, comment: '等级' }));
   writeE(K.lp + uName(), '等级: ' + L[lvI(uName())].n + '\n经验: ' + expOf(uName()), { constant: false, comment: '等级' });
   if (s.cleared) {
-    // 清场：旧版世界书战局条目清空（内容已迁至正文注入）
+    // 清场：战局条目全部清空（场景判断指令条目保留——下一局开局判定仍靠它）
     writeE(K.report, '', { constant: false });
     writeE(K.open, '', { constant: false });
     writeE(K.stage, '', { constant: false });
+    clearEndEntries(s);
+  } else if (!s.ended) {
+    writeE(K.report, battleT(), { constant: true, comment: '战况通报' });
+    writeE(K.open, openT(), { constant: true, ord: 900, comment: '情潮开局' });
+    const st = stageTAll();
+    if (st) writeE(K.stage, st, { constant: true, ord: 898, comment: '阶段状态' });
+  } else {
+    // 收场：战况/开局/阶段清空，按终局类型写收场指导
+    writeE(K.report, '', { constant: false });
+    writeE(K.open, '', { constant: false });
+    writeE(K.stage, '', { constant: false });
+    const e = s.ended;
+    if (e.type === 'opp') (e.names || []).forEach((n, i) => writeE('通用性斗_收场_' + (n || i), bOpp(n), { constant: true, ord: 890, comment: '收场' }));
+    else if (e.type === 'user') writeE('通用性斗_收场_user', bUser((s.opps.find(o => o.present !== false) || {}).name || '对手'), { constant: true, ord: 890, comment: '收场' });
+    else if (e.type === 'flaccid') writeE('通用性斗_收场_疲软', bFl(), { constant: true, ord: 890, comment: '收场' });
+    else writeE('通用性斗_收场_胜利', bWin(), { constant: true, ord: 890, comment: '收场' });
   }
 }
 
@@ -473,6 +490,7 @@ function clearEndEntries(s) {
 // ── 类型判断蓝灯条目（常驻指令，自愈：消失/被清/内容过期/被禁用 → 立即注回） ──
 async function ensureRule() {
   const c = ctx();
+  const wantPos = cfg().ruleWhere === 'head' ? 1 : 4;
   if (cfg().ruleEnabled === false) {
     const rec = await readE(K.rule);
     if (rec && String(rec.content || '').trim()) await writeE(K.rule, '', { constant: false, comment: '场景判断' });
@@ -483,13 +501,24 @@ async function ensureRule() {
   const cur = rec && rec.content !== undefined ? String(rec.content) : '';
   if (!cur.trim() || cur.trim() !== want.trim()) {
     // 位置映射：正文前=角色后（对话前）；正文后/自定义XML之后=@D0（正文之后）
-    const pos = cfg().ruleWhere === 'head' ? 1 : 4;
-    await writeE(K.rule, want, { constant: true, pos, depth: pos === 4 ? 0 : undefined, ord: 999, comment: '场景判断' });
+    await writeE(K.rule, want, { constant: true, pos: wantPos, depth: wantPos === 4 ? 0 : undefined, ord: 999, comment: '场景判断' });
     return;
   }
+  if (!rec) return;
+  // 字段级自愈：内容正确但位置/深度/order/蓝灯/禁用是错误时代残留 → 逐项修正
+  const file = q(rec.book || 'chat');
+  const fixes = [];
+  if (rec.constant !== true) fixes.push(['constant', 1]);
+  if (parseInt(rec.position, 10) !== wantPos) fixes.push(['position', wantPos]);
+  if (wantPos === 4 && parseInt(rec.depth, 10) !== 0) fixes.push(['depth', 0]);
+  if (parseInt(rec.order, 10) !== 999) fixes.push(['order', 999]);
+  for (const [field, value] of fixes) {
+    try { await st(`/setentryfield file=${file} uid=${rec.uid} field=${field} ${value}`); } catch { /* 修正失败下次再试 */ }
+  }
+  if (fixes.length) log('[性斗] 场景判断条目字段自愈 ×' + fixes.length);
   // 条目在但被手动禁用 → 重新点亮
-  if (rec?.disabled && rec.uid !== undefined && c) {
-    try { await st('/setentryfield file=' + q(rec.book || 'chat') + ' uid=' + rec.uid + ' field=disable 0'); } catch { /* 点亮失败下次再试 */ }
+  if (rec.disabled && rec.uid !== undefined && c) {
+    try { await st('/setentryfield file=' + file + ' uid=' + rec.uid + ' field=disable 0'); } catch { /* 点亮失败下次再试 */ }
   }
 }
 // ── 正文注入（三位置，随格式保护机制）：战局标签（战况/开局/阶段/收场）写进最新一层 AI 消息正文 ──
@@ -535,26 +564,9 @@ function applyScxBlocks(mes, blocks) {
   return out.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '');
 }
 function buildScxBlocks() {
-  const blocks = [];
-  const s = SC.state;
-  if (s && !s.cleared) {
-    const ruleOn = cfg().ruleEnabled !== false;
-    const where = cfg().scWhere || 'anchor';
-    // 类型判断启用 → 锚=类型判断块（AI 输出的 <sceneTag> 块）；禁用 → 玩家自填锚名（空则回退类型判断块、再回退正文后）
-    const anchorTags = ruleOn ? [scTag()] : (cfg().scAnchor ? [cfg().scAnchor, scTag()] : [scTag()]);
-    if (!s.ended) {
-      blocks.push({ where, anchorTags, text: openT() });
-      const st = stageTAll(); if (st) blocks.push({ where, anchorTags, text: st });
-      blocks.push({ where, anchorTags, text: battleT() });
-    } else {
-      const e = s.ended;
-      if (e.type === 'opp') (e.names || []).forEach(n => blocks.push({ where, anchorTags, text: bOpp(n) }));
-      else if (e.type === 'user') blocks.push({ where, anchorTags, text: bUser((s.opps.find(o => o.present !== false) || {}).name || '对手') });
-      else if (e.type === 'flaccid') blocks.push({ where, anchorTags, text: bFl() });
-      else blocks.push({ where, anchorTags, text: bWin() });
-    }
-  }
-  return blocks;
+  // 战局内容已回归世界书蓝灯条目（persist），正文不再注入 XML 块——返回空，
+  // syncBlocks 仅据此剥除旧版本行注入的残留块。
+  return [];
 }
 // 同步到最新一层 AI 消息：先剥本插件此前注入的旧块（按记录文本），再按当前状态重插——幂等
 async function syncBlocks() {
@@ -704,8 +716,6 @@ async function start() {
   if (SC.booted) return; SC.booted = true;
   ensureRe(); ensureDomHide(); ensurePromptHide(); bindEvents();
   hydrateCfg();
-  // 旧版世界书战局条目清理（内容已迁至正文注入）；蓝灯类型判断条目自愈注入
-  for (const k of [K.report, K.open, K.stage]) writeE(k, '', { constant: false });
   await ensureRule();
   const rec = await readE(K.state);
   const body = rec?.content ? String(rec.content) : '';

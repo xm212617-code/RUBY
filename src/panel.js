@@ -1181,19 +1181,8 @@ function wireTabs(root) {
       '<select id="scx_rule_where" class="text_input" style="flex:0 0 150px;">' +
       '<option value="head"' + (c.ruleWhere === 'head' ? ' selected' : '') + '>正文前</option>' +
       '<option value="tail"' + ((c.ruleWhere || 'tail') === 'tail' ? ' selected' : '') + '>正文后</option>' +
-      '<option value="anchor"' + (c.ruleWhere === 'anchor' ? ' selected' : '') + '>自定义XML之后</option>' +
       '</select>' +
-      '<input id="scx_rule_anchor" class="text_input" value="' + escH(c.ruleAnchor || '') + '" placeholder="锚标签名" style="flex:0 0 120px;' + (c.ruleWhere === 'anchor' ? '' : 'display:none;') + '" />' +
-      '</div>' +
-      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
-      '<span class="scx-hint" style="flex:none;">战局标签位置</span>' +
-      '<select id="scx_sc_where" class="text_input" style="flex:0 0 150px;">' +
-      '<option value="head"' + (c.scWhere === 'head' ? ' selected' : '') + '>正文前</option>' +
-      '<option value="tail"' + (c.scWhere === 'tail' ? ' selected' : '') + '>正文后</option>' +
-      '<option value="anchor"' + ((c.scWhere || 'anchor') === 'anchor' ? ' selected' : '') + '>' + (c.ruleEnabled === false ? '自定义XML之后' : '类型判断块之后') + '</option>' +
-      '</select>' +
-      '<input id="scx_sc_anchor" class="text_input" value="' + escH(c.scAnchor || '') + '" placeholder="锚标签名" style="flex:0 0 120px;' + (c.scWhere === 'anchor' && c.ruleEnabled === false ? '' : 'display:none;') + '" />' +
-      '<span class="scx-hint">战况/开局/阶段/收场写进最新一层正文</span>' +
+      '<span class="scx-hint">战况/开局/阶段/收场为世界书蓝灯条目，随战斗每层刷新；情潮面板渲染在最新一层正文末尾</span>' +
       '</div>' +
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
       '<span class="scx-hint" style="flex:none;">识别关键词</span>' +
@@ -1237,25 +1226,7 @@ function wireTabs(root) {
       const hint = w.querySelector('#scx_save_hint');
       if (hint) hint.textContent = '有未保存的改动——点「💾 保存」写入角色卡';
     };
-    const ruleWhere = w.querySelector('#scx_rule_where');
-    const ruleAnchor = w.querySelector('#scx_rule_anchor');
-    if (ruleWhere && ruleAnchor) ruleWhere.addEventListener('change', () => {
-      ruleAnchor.style.display = ruleWhere.value === 'anchor' ? '' : 'none';
-      markDirty();
-    });
-    const scWhere = w.querySelector('#scx_sc_where');
-    const scAnchor = w.querySelector('#scx_sc_anchor');
-    const scAnchorSync = () => {
-      if (!scWhere || !scAnchor) return;
-      const ruleOn = !!w.querySelector('#scx_rule_on')?.checked;
-      scAnchor.style.display = scWhere.value === 'anchor' && !ruleOn ? '' : 'none';
-      const opt = scWhere.querySelector('option[value="anchor"]');
-      if (opt) opt.textContent = ruleOn ? '类型判断块之后' : '自定义XML之后';
-    };
-    if (scWhere) scWhere.addEventListener('change', () => { scAnchorSync(); markDirty(); });
-    const ruleOn = w.querySelector('#scx_rule_on');
-    if (ruleOn) ruleOn.addEventListener('change', () => { scAnchorSync(); markDirty(); });
-    ['#scx_tag', '#scx_trigger', '#scx_rule_anchor', '#scx_sc_anchor'].forEach((sel) => {
+    ['#scx_rule_on', '#scx_rule_where', '#scx_tag', '#scx_trigger'].forEach((sel) => {
       const el = w.querySelector(sel);
       if (el) el.addEventListener('change', markDirty);
     });
@@ -1280,10 +1251,7 @@ function wireTabs(root) {
         sceneTag: (w.querySelector('#scx_tag')?.value || '').trim(),
         trigger: (w.querySelector('#scx_trigger')?.value || '').trim(),
         ruleEnabled: !!w.querySelector('#scx_rule_on')?.checked,
-        ruleWhere: w.querySelector('#scx_rule_where')?.value || 'tail',
-        ruleAnchor: (w.querySelector('#scx_rule_anchor')?.value || '').trim(),
-        scWhere: w.querySelector('#scx_sc_where')?.value || 'anchor',
-        scAnchor: (w.querySelector('#scx_sc_anchor')?.value || '').trim(),
+        ruleWhere: (w.querySelector('#scx_rule_where')?.value || 'tail') === 'head' ? 'head' : 'tail',
         chars: (() => { const o = {}; const lvs = sexcombat.getBaseLevels(); Object.keys(lvs).forEach((n) => { o[n] = parseInt(lvs[n], 10) || 0; }); return o; })(),
       };
       sexcombat.saveToCard(patch);
