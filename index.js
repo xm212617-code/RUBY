@@ -10,6 +10,22 @@ import * as worldbook from './src/worldbook.js';
 
 let commandRegistered = false;
 
+function captureWriteReadSession(encodedChatId, requireChat) {
+    const expectedChat = encodedChatId === undefined ? undefined : decodeURIComponent(encodedChatId);
+    const origin = ctx();
+    const chatId = String(origin?.chatId ?? '');
+    const guard = () => {
+        if (!requireChat && expectedChat === undefined) return;
+        const current = ctx();
+        if (!chatId || chatId !== (expectedChat ?? chatId)
+            || String(current?.chatId ?? '') !== chatId
+            || current?.characterId !== origin?.characterId || current?.groupId !== origin?.groupId
+            || current?.chatMetadata !== origin?.chatMetadata) throw new Error('chat changed');
+    };
+    guard();
+    return { origin, guard };
+}
+
 async function rubyCommandCallback(args, text) {
     const rawText = String(text || args?.subcommand || '').trim();
         // RPC 通道：/ruby "RPC~<sub>~k=v~k=v"——单个无名参，不依赖命名参数解析
@@ -103,15 +119,22 @@ async function rubyCommandCallback(args, text) {
             // book=char 读角色（主）世界书；raw=true 保留 {{user}} 等宏原文；json=true 返回结构化记录。
             const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
             const positional = rawText.split(/\s+/).slice(1).join(' ').trim();
-            const key = String(args?.key ?? positional).trim();
             const asJson = flag(args?.json);
             const asAll = flag(args?.all);
             const raw = flag(args?.raw);
             const bookRaw = String(args?.book || 'chat').trim();
             const book = bookRaw.toLowerCase();
             try {
+                const encodedKey = args?.key64 !== undefined;
+                const key = encodedKey ? decodeURIComponent(args.key64) : String(args?.key ?? positional).trim();
+                const primaryOnly = (flag(args?.strict) || encodedKey) && Boolean(key);
                 let records;
-                if (book === 'char') {
+                if (flag(args?.strict) || primaryOnly || args?.chatId !== undefined) {
+                    const session = captureWriteReadSession(args?.chatId, book === 'chat');
+                    records = await worldbook.readVerifiedEntries(book === 'chat' || book === 'char' ? book : bookRaw,
+                        key, { all: asAll, primaryOnly }, session);
+                    session.guard();
+                } else if (book === 'char') {
                     records = await worldbook.readCharBookEntries(key, { all: asAll });
                 } else if (book === 'chat') {
                     records = await worldbook.readChatBookEntries(key, { all: asAll });
@@ -140,54 +163,72 @@ async function rubyCommandCallback(args, text) {
             // 典型用途：装甲叛客战斗结算——前端掷完骰子后把新敌情 YAML 整体覆写，
             // 完整度归零的敌机从内容里删掉即完成「删除」。写完派发 ruby:chatbooks-changed 通知前端重读。
             const flag = (v) => String(v ?? '').toLowerCase() === 'true' || v === true;
-            const key = String(args?.key ?? '').trim();
-            if (!key) {
-                return 'usage: /ruby write key=<关键词> [book=chat] [var=<变量名>] [content=...] [keys=逗号附加] [comment=...] [constant=true|false] [order=N] [depth=N]';
-            }
             const bookRaw = String(args?.book || 'chat').trim();
             const book = bookRaw.toLowerCase();
             try {
-                let bookName;
-                if (book === 'chat') {
-                    // 优先用已绑定的聊天书；未绑定则按 RUBY 输出书命名规则创建
-                    bookName = (await worldbook.getExistingChatBookName()) || (await worldbook.getChatBookName());
-                } else if (book === 'char') {
-                    bookName = await worldbook.getCharBookName();
-                } else {
-                    bookName = bookRaw;
+                const key = String(args?.key64 === undefined ? (args?.key ?? '') : decodeURIComponent(args.key64));
+                if (!key.trim()) {
+                    return 'usage: /ruby write key=<关键词> [book=chat] [var=<变量名>] [content=...] [keys=逗号附加] [comment=...] [constant=true|false] [order=N] [depth=N]';
                 }
-                if (!bookName) return 'write failed: no world book available';
+                const strict = flag(args?.strict);
+                const encodedKey = args?.key64 !== undefined;
+                const direct = strict || encodedKey || args?.data !== undefined || args?.chatId !== undefined;
+                const { origin, guard } = captureWriteReadSession(args?.chatId, direct && book === 'chat');
+                let bookName;
+                if (!direct) {
+                    bookName = book === 'chat' ? await worldbook.getChatBookName()
+                        : book === 'char' ? await worldbook.getCharBookName() : bookRaw;
+                    if (!bookName) return 'write failed: no world book available';
+                }
 
-                // 内容来源：var= 临时变量（推荐，支持多行 YAML）> content= 内联单行
+                // data= 百分号编码正文 > var= 临时变量 > content= 内联正文
                 let content = '';
                 const varName = String(args?.var || '').trim();
-                if (varName) {
+                if (args?.data !== undefined) {
+                    content = decodeURIComponent(args.data);
+                } else if (varName) {
                     content = String(await st(`/getvar ${varName}`) ?? '').trim();
+                    guard();
                     // 用完即清，防变量残留
                     try { await st(`/setvar key=${varName} ""`); } catch { /* 清理失败不影响写入 */ }
                 } else {
                     content = String(args?.content ?? '');
                 }
 
-                const result = await worldbook.writeEntryByKey(bookName, {
-                    key,
+                guard();
+                const order = parseInt(String(args?.order ?? ''), 10);
+                const options = {
+                    key: encodedKey ? key : key.trim(),
                     content,
                     keys: String(args?.keys || ''),
                     comment: String(args?.comment || ''),
                     constant: flag(args?.constant),
-                    order: parseInt(String(args?.order || '100'), 10) || 100,
-                    depth: parseInt(String(args?.depth || '4'), 10) || 4,
-                    position: parseInt(String(args?.position || '4'), 10) || 4,
-                });
+                    order: Number.isFinite(order) ? order : 100,
+                    depth: /^\d+$/.test(String(args?.depth ?? '')) ? Number(args.depth) : 4,
+                    position: /^\d+$/.test(String(args?.position ?? '')) ? Number(args.position) : 4,
+                    syncPlacement: flag(args?.placement),
+                    primaryOnly: strict && Boolean(key),
+                    normalizeActivation: strict && flag(args?.placement),
+                    disable: args?.disable === undefined ? undefined : flag(args.disable),
+                };
+                let result;
+                if (direct) {
+                    result = await worldbook.writeVerifiedEntry(book === 'chat' || book === 'char' ? book : bookRaw,
+                        options, { origin, guard });
+                    bookName = result.book;
+                } else {
+                    result = await worldbook.writeEntryByKey(bookName, options);
+                }
+                guard();
 
                 // 与分析管线同款：写完即广播，前端状态栏/敌情面板即时重读
                 try {
                     window.dispatchEvent(new CustomEvent('ruby:chatbooks-changed', {
-                        detail: { key, keys: [key], source: 'write', book: bookName, uid: result.uid, created: result.created },
+                        detail: { key: options.key, keys: [options.key], source: 'write', book: bookName, uid: result.uid, created: result.created },
                     }));
                 } catch { /* 事件失败不影响写入 */ }
 
-                return JSON.stringify({ ok: true, book: bookName, uid: result.uid, created: result.created, key });
+                return JSON.stringify({ ok: true, book: bookName, uid: result.uid, created: result.created, key: options.key });
             } catch (e) {
                 return `write failed: ${e?.message || e}`;
             }

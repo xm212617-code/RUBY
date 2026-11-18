@@ -136,7 +136,7 @@ export async function readChatBookEntries(key, { all = false } = {}) {
     const wanted = String(key || '').trim();
 
     let book = '';
-    try { book = String(await st('/getchatbook')).trim(); } catch { /* 无聊天书 */ }
+    try { book = String(await st('/getchatbook create=false')).trim(); } catch { /* 无聊天书 */ }
     if (!book) {
         let charName = c?.name2 || c?.characters?.[c?.characterId]?.name || '';
         if (!charName) {
@@ -394,6 +394,7 @@ export async function writeEntryByKey(bookName, options) {
     const {
         key, content = '', comment = '', keys = [],
         constant = false, order = 100, depth = 4, position = 4,
+        syncPlacement = false, disable,
     } = options;
     if (!bookName || !key) throw new Error('writeEntryByKey: book or key missing');
 
@@ -411,12 +412,17 @@ export async function writeEntryByKey(bookName, options) {
         const uidRaw = await st(`/createentry file=${q(bookName)} key=${q(allKeys.join(', '))} ""`);
         uid = parseInt(uidRaw, 10);
         if (isNaN(uid)) throw new Error(`create entry failed: ${primaryKey}`);
-        // 新建条目：角色后注入（position 1），递归双禁
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
-        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=excludeRecursion 1`);
         await st(`/setentryfield file=${q(bookName)} uid=${uid} field=preventRecursion 1`);
         log(`write: entry created: ${primaryKey}`);
+    }
+    if (!found || syncPlacement) {
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=position ${position}`);
+        await st(`/setentryfield file=${q(bookName)} uid=${uid} field=order ${order}`);
+        if (position === 4) {
+            await st(`/setentryfield file=${q(bookName)} uid=${uid} field=depth ${depth}`);
+            if (syncPlacement) await st(`/setentryfield file=${q(bookName)} uid=${uid} field=role 0`);
+        }
     }
 
     if (comment) {
@@ -435,8 +441,269 @@ export async function writeEntryByKey(bookName, options) {
     await st(`/getvar ${contentVar} | /setentryfield file=${q(bookName)} uid=${uid} field=content`);
 
     await st(`/setentryfield file=${q(bookName)} uid=${uid} field=constant ${constant ? 1 : 0}`);
+    if (disable !== undefined) await st(`/setentryfield file=${q(bookName)} uid=${uid} field=disable ${disable ? 1 : 0}`);
     await persistBook(bookName);
     return { uid, created: !found };
+}
+
+let verifiedWriteQueue = Promise.resolve();
+
+async function fetchWorldBook(name, guard) {
+    guard();
+    const response = await fetch('/api/worldinfo/get', {
+        method: 'POST',
+        headers: ctx()?.getRequestHeaders?.(),
+        body: JSON.stringify({ name }),
+        cache: 'no-store',
+    });
+    guard();
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`worldinfo/get failed (HTTP ${response.status})`);
+    let data;
+    try { data = await response.json(); } catch { throw new Error('worldinfo/get returned invalid JSON'); }
+    guard();
+    if (!data || !data.entries || typeof data.entries !== 'object') throw new Error('worldinfo/get returned invalid data');
+    if (Object.keys(data.entries).length === 0) {
+        const listResponse = await fetch('/api/worldinfo/list', {
+            method: 'POST', headers: ctx()?.getRequestHeaders?.(), body: JSON.stringify({}), cache: 'no-store',
+        });
+        guard();
+        if (!listResponse.ok) throw new Error(`worldinfo/list failed (HTTP ${listResponse.status})`);
+        let books;
+        try { books = await listResponse.json(); } catch { throw new Error('worldinfo/list returned invalid JSON'); }
+        if (!Array.isArray(books)) throw new Error('worldinfo/list returned invalid data');
+        if (!books.some((book) => book?.file_id === name || book?.name === name)) return null;
+    }
+    return data;
+}
+
+export async function readVerifiedEntries(book, key, { all = false, primaryOnly = false } = {}, { origin, guard }) {
+    guard();
+    if (typeof origin?.getRequestHeaders !== 'function') throw new Error('World info read unavailable');
+    const host = await import('/scripts/world-info.js');
+    guard();
+    const name = book === 'chat' ? origin.chatMetadata?.[host.METADATA_KEY]
+        : book === 'char' ? await getCharBookName() : book;
+    guard();
+    if (!name) return [];
+    const data = await fetchWorldBook(name, guard);
+    if (!data) return [];
+    const target = primaryOnly ? String(key ?? '') : String(key ?? '').trim();
+    const records = Object.entries(data.entries).flatMap(([uid, entry]) => {
+        const keys = primaryOnly
+            ? Array.isArray(entry?.key) ? entry.key.map((item) => String(item ?? ''))
+                : entry?.key === undefined || entry?.key === null ? [] : [String(entry.key)]
+            : entryKeys(entry);
+        const match = primaryOnly && target
+            ? String(Array.isArray(entry?.key) ? entry.key[0] ?? '' : entry?.key ?? '') === target
+            : !target || keys.includes(target) || keys.some((item) => item.includes(target));
+        return match ? [{
+            uid: parseInt(uid, 10), book: name, keys, comment: String(entry?.comment || ''),
+            content: String(entry?.content ?? ''), disabled: !!entry?.disable, constant: !!entry?.constant,
+        }] : [];
+    });
+    return all ? records : records.slice(0, 1);
+}
+
+export function writeVerifiedEntry(book, options, session) {
+    // A world-info edit writes the entire book; serialize these read/modify/write calls.
+    const write = verifiedWriteQueue.then(() => writeVerifiedEntryNow(book, options, session));
+    verifiedWriteQueue = write.catch(() => {});
+    return write;
+}
+
+async function writeVerifiedEntryNow(book, options, { origin, guard }) {
+    guard();
+    if (typeof origin?.getRequestHeaders !== 'function') throw new Error('World info persistence unavailable');
+    const host = await import('/scripts/world-info.js');
+    guard();
+
+    const metadata = book === 'chat' ? origin.chatMetadata : null;
+    if (book === 'chat' && !metadata) throw new Error('Chat metadata unavailable');
+    const binding = metadata?.[host.METADATA_KEY];
+    const guardBook = () => {
+        guard();
+        if (metadata && metadata[host.METADATA_KEY] !== binding) throw new Error('chat world book changed');
+    };
+    async function post(path, payload, check = guardBook) {
+        check();
+        const response = await fetch(`/api/${path}`, {
+            method: 'POST',
+            headers: origin.getRequestHeaders(),
+            body: JSON.stringify(payload),
+            cache: 'no-store',
+        });
+        check();
+        if (!response.ok) throw new Error(`${path} failed (HTTP ${response.status})`);
+        const data = await response.json();
+        check();
+        return data;
+    }
+
+    const boundBookData = book === 'chat' && binding ? await fetchWorldBook(binding, guardBook) : undefined;
+    guardBook();
+    const createBook = book === 'chat' && !boundBookData;
+    let name = book;
+    if (createBook) {
+        const sanitize = (s) => Array.from(String(s ?? '').replace(/[\\/:*?"<>|\x00-\x1F]/g, '').trim()).slice(-24).join('');
+        const character = sanitize(origin.name2) || '聊天';
+        const chatId = sanitize(origin.chatId);
+        // Create without /getchatbook create=true: that command binds whichever chat is active after its await.
+        const suffix = Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join('');
+        name = `ruby-${character}·剧情分析·${chatId}·${suffix}`;
+        if (typeof origin.saveMetadata !== 'function' || (!origin.groupId && !origin.characters?.[origin.characterId]?.avatar)) {
+            throw new Error('Chat metadata persistence unavailable');
+        }
+    } else if (book === 'chat') {
+        name = binding;
+    } else if (book === 'char') {
+        name = await getCharBookName();
+        guardBook();
+    }
+    if (!name) throw new Error('no world book available');
+
+    const base = createBook ? { entries: {} } : boundBookData ?? await fetchWorldBook(name, guardBook);
+    guardBook();
+    if (!base?.entries || typeof base.entries !== 'object') throw new Error(`world book not found: ${name}`);
+    const data = structuredClone(base);
+    const { key, content, keys, comment, constant, order, depth, position, syncPlacement, disable,
+        primaryOnly = false, normalizeActivation = false } = options;
+    const entries = Object.values(data.entries);
+    // A comma or whitespace in an encoded key is literal. Prefer it before the legacy comma-separated lookup.
+    const rawKeys = (entry) => Array.isArray(entry?.key) ? entry.key : [entry?.key];
+    const found = entries.find((entry) => primaryOnly
+        ? String(rawKeys(entry)[0] ?? '') === key
+        : rawKeys(entry).includes(key))
+        ?? (primaryOnly ? undefined : entries.find((entry) => entryKeys(entry).includes(key)));
+    const entry = found ?? host.createWorldInfoEntry(name, data);
+    if (!Number.isInteger(entry?.uid)) throw new Error(`invalid entry UID: ${key}`);
+    const extraKeys = String(keys ?? '').split(',').map((k) => k.trim()).filter(Boolean);
+    const fields = { content: String(content ?? ''), constant };
+    if (!found || extraKeys.length || !rawKeys(entry).includes(key)) {
+        const otherKeys = found && !extraKeys.length ? rawKeys(entry).filter((k) => typeof k === 'string') : extraKeys;
+        fields.key = [key, ...otherKeys];
+    }
+    if (!found) Object.assign(fields, { excludeRecursion: true, preventRecursion: true });
+    if (comment) fields.comment = comment.trim();
+    if (disable !== undefined) fields.disable = disable;
+    if (!found || syncPlacement) {
+        Object.assign(fields, { position, order });
+        if (position === 4 || syncPlacement) fields.depth = depth;
+        if (syncPlacement) fields.role = 0;
+    }
+    const clearCharacterFilter = normalizeActivation && constant && syncPlacement;
+    if (clearCharacterFilter) {
+        Object.assign(fields, {
+            keysecondary: [],
+            selective: false,
+            triggers: [],
+            excludeRecursion: false,
+            delayUntilRecursion: 0,
+            probability: 100,
+            useProbability: false,
+            vectorized: false,
+            group: '',
+            groupOverride: false,
+            ignoreBudget: true,
+            matchPersonaDescription: false,
+            matchCharacterDescription: false,
+            matchCharacterPersonality: false,
+            matchCharacterDepthPrompt: false,
+            matchScenario: false,
+            matchCreatorNotes: false,
+            sticky: null,
+            cooldown: null,
+            delay: null,
+        });
+    }
+    Object.assign(entry, fields);
+    if (clearCharacterFilter) delete entry.characterFilter;
+    for (const [field, value] of Object.entries(fields)) {
+        const originalKey = host.originalWIDataKeyMap[field];
+        if (originalKey) host.setWIOriginalDataValue(data, entry.uid, originalKey, value);
+    }
+    if (Object.hasOwn(fields, 'useProbability')) {
+        host.setWIOriginalDataValue(data, entry.uid, 'extensions.useProbability', fields.useProbability);
+    }
+    if (clearCharacterFilter && Array.isArray(data.originalData?.entries)) {
+        const source = data.originalData.entries.find((item) => item.uid === entry.uid);
+        if (source) delete source.character_filter;
+    }
+    if (disable !== undefined) host.setWIOriginalDataValue(data, entry.uid, 'enabled', !disable);
+
+    // Refresh from disk before merge; the endpoint has no compare-and-swap, so external writes
+    // racing between this read and the whole-book PUT can still be lost.
+    // ST's saveWorldInfo updates its cache before saving and does not check the HTTP status.
+    // Read back from the server before updating the cache or announcing success.
+    let saved;
+    try {
+        const result = await post('worldinfo/edit', { name, data });
+        if (result?.ok !== true) throw new Error('worldinfo/edit did not acknowledge save');
+        saved = await post('worldinfo/get', { name });
+        const stored = saved?.entries?.[entry.uid];
+        for (const [field, value] of Object.entries(fields)) {
+            const actual = stored?.[field];
+            const matches = Array.isArray(value)
+                ? Array.isArray(actual) && value.length === actual.length && value.every((item, i) => item === actual[i])
+                : value && typeof value === 'object'
+                    ? JSON.stringify(actual) === JSON.stringify(value)
+                : actual === value;
+            if (!matches) throw new Error(`saved entry verification failed: ${field}`);
+        }
+        if (clearCharacterFilter) {
+            const filter = stored?.characterFilter;
+            const names = Array.isArray(filter?.names) ? filter.names : [];
+            const tags = Array.isArray(filter?.tags) ? filter.tags : [];
+            if (names.length || tags.length || filter?.isExclude === true) {
+                throw new Error('saved entry verification failed: characterFilter');
+            }
+            const source = saved?.originalData?.entries?.find((item) => item.uid === entry.uid);
+            if (source && Object.hasOwn(source, 'character_filter')) {
+                throw new Error('saved entry verification failed: originalData.character_filter');
+            }
+        }
+    } catch (e) {
+        host.worldInfoCache.delete(name);
+        throw e;
+    }
+    host.worldInfoCache.set(name, saved);
+
+    if (createBook) {
+        await origin.updateWorldInfoList();
+        guardBook();
+        if (!host.world_names?.includes(name)) throw new Error('new world book missing from list');
+        const metadataKey = host.METADATA_KEY;
+        const guardBinding = () => {
+            guard();
+            if (metadata[metadataKey] !== name) throw new Error('chat world book changed');
+        };
+        metadata[metadataKey] = name;
+        try {
+            await origin.saveMetadata();
+            const storedChat = origin.groupId
+                ? await post('chats/group/get', { id: origin.chatId }, guardBinding)
+                : await post('chats/get', { avatar_url: origin.characters[origin.characterId].avatar, file_name: origin.chatId }, guardBinding);
+            if (storedChat?.[0]?.chat_metadata?.[metadataKey] !== name) throw new Error('chat world book binding was not saved');
+        } catch (e) {
+            if (metadata[metadataKey] === name) {
+                if (binding === undefined) delete metadata[metadataKey];
+                else metadata[metadataKey] = binding;
+            }
+            throw e;
+        }
+        document.querySelector('.chat_lorebook_button')?.classList.add('world_set');
+    }
+
+    try {
+        await origin.eventSource?.emit(origin.eventTypes.WORLDINFO_UPDATED, name, saved);
+        guard();
+        origin.reloadWorldInfoEditor?.(name);
+    } catch (e) {
+        warn(`world book editor refresh failed: ${e.message}`);
+    }
+    guard();
+    if (metadata && metadata[host.METADATA_KEY] !== name) throw new Error('chat world book changed');
+    return { book: name, uid: entry.uid, created: !found };
 }
 
 /** 只恢复条目内容（快照回滚用）：不动 key/位置/状态等其余字段 */
