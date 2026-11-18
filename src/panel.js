@@ -700,53 +700,62 @@ function buildShellHtml() {
                     <div class="form-section">
                         <div class="form-header blue">■ 随卡脚本</div>
                         <div class="form-body">
-                            <div class="tip" style="margin-top:0;margin-bottom:10px;">
-                                脚本随当前角色卡保存（卡内 data.extensions），启用即接管对应功能。内置脚本「通用性斗」负责性斗结算与情潮面板；创作者脚本以 <code>api</code> 沙箱运行。
+
+                            <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+                                <span style="font-weight:700;font-size:13px;flex:none;">📥 下载脚本文档</span>
+                                <button id="scx_doc_dl" class="menu_button" style="flex:none;">下载</button>
                             </div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                                <button id="scx_doc_dl" class="menu_button">📥 下载脚本文档</button>
-                                <button id="scx_import" class="menu_button">📂 导入脚本</button>
-                                <input id="scx_import_file" type="file" accept=".js,.txt" style="display:none;" />
-                            </div>
-                            <div id="scx_builtin" class="inline-drawer">
-                                <div class="inline-drawer-toggle inline-drawer-header">
-                                    <b>通用性斗</b>
-                                    <span id="scx_bz_state" style="font-size:11px;margin-left:8px;"></span>
-                                    <button id="scx_bz_toggle" class="menu_button" style="margin-left:auto;white-space:nowrap;">启用</button>
-                                    <div class="inline-drawer-icon fa-solid fa-chevron-down"></div>
+
+                            <div style="border:1px solid #c6d6c4;border-radius:10px;padding:14px;margin-bottom:14px;background:rgba(255,255,255,.5);">
+                                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                                    <span style="font-weight:700;font-size:13px;flex:none;">通用性斗</span>
+                                    <span id="scx_bz_state" style="font-size:11px;color:#8b8f86;flex:none;"></span>
+                                    <button id="scx_bz_toggle" class="menu_button" style="flex:none;margin-left:auto;">启用</button>
+                                    <button id="scx_bz_settings_btn" class="menu_button" style="flex:none;">⚙ 设置</button>
                                 </div>
-                                <div class="inline-drawer-content" style="padding:10px 14px;">
-                                    <div class="form-header blue" style="font-size:11px;">触发标记</div>
-                                    <div style="display:flex;gap:8px;align-items:center;margin:6px 0;">
-                                        <input id="scx_trigger" class="text_input" value="nsfwh" style="flex:0 0 140px;" />
-                                        <span class="tip" style="margin:0;">SceneInfo 含此标记时性斗启动</span>
+                                <div id="scx_settings" style="display:none;margin-top:12px;">
+                                    <div style="margin-bottom:10px;">
+                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">触发标记</div>
+                                        <div style="display:flex;gap:6px;align-items:center;">
+                                            <input id="scx_trigger" class="text_input" value="nsfwh" style="flex:0 0 140px;padding:4px 8px;" />
+                                            <span style="font-size:11px;color:#8b8f86;">SceneInfo 含此标记时性斗启动</span>
+                                        </div>
                                     </div>
-                                    <div class="form-header blue" style="font-size:11px;">等级底账</div>
-                                    <div style="display:flex;gap:6px;align-items:center;margin:6px 0;">
-                                        <input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1;" />
-                                        <input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;" />
-                                        <span id="scx_lv_hint" style="font-size:11px;color:#2f5f4a;">—</span>
-                                        <button id="scx_lv_add" class="menu_button">增加</button>
+                                    <div style="margin-bottom:10px;">
+                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">等级底账</div>
+                                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+                                            <input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1 1 100px;padding:4px 8px;" />
+                                            <input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;padding:4px 8px;" />
+                                            <span id="scx_lv_hint" style="font-size:11px;color:#2f5f4a;">—</span>
+                                            <button id="scx_lv_add" class="menu_button" style="flex:none;">增加</button>
+                                        </div>
+                                        <div id="scx_lv_list" style="max-height:200px;overflow-y:auto;"></div>
                                     </div>
-                                    <div id="scx_lv_list" style="max-height:200px;overflow-y:auto;"></div>
-                                    <div class="form-header blue" style="font-size:11px;margin-top:10px;">注入位置</div>
-                                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                        <div style="flex:1;"><div class="tip" style="margin:0 0 2px;">战况</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" style="flex:1;" /><input id="scx_o_rp" class="text_input" type="number" style="flex:1;" /></div></div>
-                                        <div style="flex:1;"><div class="tip" style="margin:0 0 2px;">开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" style="flex:1;" /><input id="scx_o_op" class="text_input" type="number" style="flex:1;" /></div></div>
-                                        <div style="flex:1;"><div class="tip" style="margin:0 0 2px;">阶段</div><div style="display:flex;gap:4px;"><input id="scx_p_st" class="text_input" type="number" style="flex:1;" /><input id="scx_o_st" class="text_input" type="number" style="flex:1;" /></div></div>
+                                    <div style="margin-bottom:10px;">
+                                        <div style="font-size:11px;font-weight:700;color:#2f5f4a;margin-bottom:4px;">注入位置</div>
+                                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">战况通报</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_rp" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
+                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">情潮开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_op" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
+                                            <div style="flex:1;min-width:130px;"><div style="font-size:10px;color:#8b8f86;margin-bottom:2px;">阶段状态</div><div style="display:flex;gap:4px;"><input id="scx_p_st" class="text_input" type="number" placeholder="pos" style="flex:1;padding:3px 6px;" /><input id="scx_o_st" class="text_input" type="number" placeholder="ord" style="flex:1;padding:3px 6px;" /></div></div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                            <div id="scx_creator" class="inline-drawer">
-                                <div class="inline-drawer-toggle inline-drawer-header">
-                                    <b>创作者脚本</b>
-                                    <button id="scx_import_btn" class="menu_button" style="margin-left:auto;white-space:nowrap;">导入</button>
+
+                            <div style="border:1px solid #c6d6c4;border-radius:10px;padding:14px;background:rgba(255,255,255,.5);">
+                                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                                    <span style="font-weight:700;font-size:13px;flex:none;">创作者脚本</span>
+                                    <button id="scx_import_btn" class="menu_button" style="flex:none;margin-left:auto;">📂 导入</button>
                                     <input id="scx_import_file" type="file" accept=".js,.json" style="display:none;" />
-                                    <div class="inline-drawer-icon fa-solid fa-chevron-down"></div>
                                 </div>
-                                <div class="inline-drawer-content" style="padding:10px 14px;">
-                                    <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
-                                </div>
+                                <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+ </div>
                             </div>
 <div id="scx_installed" style="display:flex;flex-direction:column;gap:8px;"></div>
                         </div>
