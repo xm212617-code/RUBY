@@ -1,5 +1,6 @@
 import { registerCardScript } from '../script-registry.js';
 import { ctx, h } from '../env.js';
+import { buildSexCombatDocument } from './sex-combat-view.js';
 
 const SCRIPT_ID = 'sex-combat';
 const PROMPT_REGEX_ID = 'ruby-sex-combat-v1';
@@ -226,7 +227,9 @@ export function syncSexCombatMarkers(text, input = {}) {
     if (!parseSexCombatScene(clean, config).active) return clean;
     const anchor = blocks(clean, config.markerAnchor === 'trigger' ? config.trigger.tag : config.actionTag);
     if (!anchor) return clean;
-    return clean.slice(0, anchor.end) + `</${config.marker}>` + clean.slice(anchor.end);
+    const before = clean.slice(0, anchor.end).replace(/[ \t\r\n]*$/, '');
+    const after = clean.slice(anchor.end).replace(/^[ \t\r\n]*/, '');
+    return before + '\n' + `</${config.marker}>` + (after ? '\n' + after : '');
 }
 
 export function sexCombatLevelName(value) {
@@ -245,12 +248,10 @@ export function buildSexCombatRegexScripts(existing, input = {}) {
         trimStrings: [], placement: [2], disabled: !config.enabled,
         runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null,
     };
-    const levels = config.characters.length ? config.characters.map((entry) => `<li>${h(entry.name)}：${entry.experience} · ${sexCombatLevelName(entry.experience)}</li>`).join('')
-        : `<li>未登记角色：${config.defaultExperience} · ${sexCombatLevelName(config.defaultExperience)}</li>`;
-    const panel = `<details class="ruby-sex-combat-panel" data-ruby-sex-combat="true" open><summary>情潮面板</summary><div class="ruby-sex-combat-content"><p>初始经验底账；当局数据由 RUBY 更新。</p><ul>${levels}</ul></div></details>`;
+    const panel = buildSexCombatDocument(config);
     const owned = new Map([
         [PROMPT_REGEX_ID, { ...common, id: PROMPT_REGEX_ID, scriptName: 'RUBY 性斗标记（prompt 剥除）', replaceString: '', markdownOnly: false, promptOnly: true }],
-        [RENDER_REGEX_ID, { ...common, id: RENDER_REGEX_ID, scriptName: 'RUBY 情潮面板（显示）', replaceString: panel.replace(/\$/g, '$$$$'), markdownOnly: true, promptOnly: false }],
+        [RENDER_REGEX_ID, { ...common, id: RENDER_REGEX_ID, scriptName: 'RUBY 情潮面板（完整 HTML iframe）', replaceString: '```html\n' + panel.replace(/\$/g, '\\$') + '\n```', markdownOnly: true, promptOnly: false }],
     ]);
     const result = [];
     for (const entry of Array.isArray(existing) ? existing : []) {

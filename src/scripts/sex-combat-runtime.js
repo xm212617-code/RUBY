@@ -2,6 +2,7 @@ import { ctx, warn } from '../env.js';
 import { resolveConfig } from '../config.js';
 import { readVerifiedEntries, writeVerifiedEntry } from '../worldbook.js';
 import { isSexCombatRegexMetadataReady, normalizeSexCombatConfig, parseSexCombatScene, syncSexCombatMarkers } from './sex-combat.js';
+import { renderSexCombatContent } from './sex-combat-view.js';
 
 const PREFIX = 'RUBY_UniversalSexCombat_';
 const KEYS = { state: PREFIX + '当局', exp: PREFIX + '经验总档', level: PREFIX + '等级_', judgment: PREFIX + '默认判断', report: PREFIX + '战况', protocol: PREFIX + 'report协议', open: PREFIX + '开局', stage: PREFIX + '阶段状态', end: PREFIX + '收场_' };
@@ -95,12 +96,18 @@ export function createScriptRuntime(dependencies = {}) {
             && prompt.findRegex === pattern && prompt.replaceString === ''
             && prompt.markdownOnly === false && prompt.promptOnly === true
             && JSON.stringify(prompt.placement) === '[2]'
-            && render?.scriptName === 'RUBY 情潮面板（显示）'
+            && render?.id === 'ruby-sex-combat-render-v1'
             && render.findRegex === pattern && render.markdownOnly === true
             && render.promptOnly === false
             && typeof render.replaceString === 'string'
+            && render.replaceString.startsWith('```html\n<!doctype html>')
             && render.replaceString.includes('data-ruby-sex-combat="true"')
-            && render.replaceString.includes('ruby-sex-combat-content')
+            && render.replaceString.includes('sc-board')
+            && render.replaceString.includes('sc-pairs')
+            && render.replaceString.includes('sc-gauges')
+            && render.replaceString.includes('sc-fatigue')
+            && render.replaceString.includes('ruby-sex-combat-view-request')
+            && render.replaceString.includes('</html>\n```')
             && JSON.stringify(render.placement) === '[2]';
     }
     function canRun(c, card = configForCard()) {
@@ -375,6 +382,7 @@ export function createScriptRuntime(dependencies = {}) {
                 const signature = JSON.stringify([floor, message.swipe_id, message.mes]);
                 if (signature === s.failedReply) continue;
                 const scene = parseSexCombatScene(message.mes, config);
+                s.scene = scene;
                 if (!scene.active) { if (s.state) clear(); await publish(new Map()); break; }
                 const names = (scene.characters || scene.roster || []).filter((name) => !nameEq(name, 'user')).slice(0, 6);
                 if (!names.length) { if (s.state) clear(); await publish(new Map()); break; }
@@ -404,11 +412,30 @@ export function createScriptRuntime(dependencies = {}) {
         return Object.assign(s, { guard, tick, persist, clear });
     }
     function render() {
-        if (!host?.document?.querySelectorAll) return;
-        const state = activeSession?.state;
-        const scene = activeSession?.scene;
-        const markup = (activeSession?.error ? '<p>' + esc(activeSession.error) + '</p>' : '') + (state ? `<p>第 ${Number(state.round)} / 10 轮${state.ended ? ' · 已结束' : ''}</p><p>user 距顶 ${Math.max(0, state.p - state.user.pos)} · 兴奋 ${Number(state.user.ex)}</p>` + state.opps.filter((o) => !o.exited && o.present !== false).map((o) => `<p>${esc(o.name)} 距顶 ${Math.max(0, o.pos - o.p)} · 兴奋 ${Number(o.ex)}</p>`).join('') : scene ? '<p>场景: ' + esc(scene.value) + '</p><p>角色: ' + esc((scene.characters || scene.roster || []).join('、')) + '</p>' : '<p>当前无结算中的场景</p>');
-        for (const node of host.document.querySelectorAll('[data-ruby-sex-combat] .ruby-sex-combat-content')) if (node.innerHTML !== markup) node.innerHTML = markup;
+        // The Regex-owned standalone HTML iframe requests state through the message bridge below.
+    }
+    function viewSnapshot() {
+        const c = getContext();
+        const card = configForCard();
+        const key = identity(c);
+        const session = key ? sessions.get(key) : null;
+        if (!card.exists || !session || !canRun(c, card)) return null;
+        return clone({ configured: true, state: session.state, levels: session.levels, scene: session.scene, defaultExperience: session.config?.defaultExperience ?? card.config.defaultExperience ?? 10, error: session.error });
+    }
+    function respondToView(event) {
+        const data = event?.data;
+        if (data?.type !== 'ruby-sex-combat-view-request' || typeof data.nonce !== 'string' || data.nonce.length > 160 || !event.source) return;
+        const frames = host?.document?.querySelectorAll?.('#chat .mes .mes_text iframe') || [];
+        const frame = [...frames].find((candidate) => candidate.isConnected !== false && candidate.contentWindow === event.source);
+        if (!frame) return;
+        let owned = String(frame.getAttribute?.('srcdoc') || '').includes('data-ruby-sex-combat="true"');
+        try { owned ||= Boolean(frame.contentDocument?.querySelector('[data-ruby-sex-combat="true"]')); } catch { /* Isolated documents use their srcdoc marker. */ }
+        if (!owned) return;
+        const c = getContext();
+        const card = configForCard();
+        if (!canRun(c, card) || !identity(c)) return;
+        const snapshot = viewSnapshot() || Object.freeze({ configured: true, state: null, levels: {}, scene: null, error: '' });
+        event.source.postMessage({ type: 'ruby-sex-combat-view-state', nonce: data.nonce, identity: identity(c), html: renderSexCombatContent(snapshot) }, event.origin && event.origin !== 'null' ? event.origin : '*');
     }
     async function tick(preparing = false) {
         const c = getContext(), card = configForCard();
@@ -486,6 +513,10 @@ export function createScriptRuntime(dependencies = {}) {
         initialized = true;
         const events = c.eventSource, types = c.eventTypes;
         const safe = (fn) => (...args) => Promise.resolve(fn(...args)).catch(reportError);
+        if (host?.addEventListener) {
+            host.addEventListener('message', respondToView);
+            bindings.push(() => host.removeEventListener('message', respondToView));
+        }
         listen(events, types.GENERATION_AFTER_COMMANDS, before);
         listen(events, types.GENERATE_AFTER_DATA, (_data, dryRun) => { const session = sessions.get(identity(getContext())); if (!dryRun && session?.generating) session.built = true; });
         listen(events, types.MESSAGE_RECEIVED, safe(received));
@@ -515,7 +546,7 @@ export function createScriptRuntime(dependencies = {}) {
         }
         syncMarkers(); enqueue(() => tick()).catch(reportError);
     }
-    return { init, tick: () => enqueue(() => tick()), syncMarkers, before, received, snapshot: () => activeSession ? clone({ state: activeSession.state, levels: activeSession.levels, error: activeSession.error }) : null, dispose() { for (const unbind of bindings.splice(0)) unbind(); subscribedEvents.clear(); clearInterval(timer); initialized = false; } };
+    return { init, tick: () => enqueue(() => tick()), syncMarkers, before, received, snapshot: () => activeSession ? clone({ state: activeSession.state, levels: activeSession.levels, scene: activeSession.scene, error: activeSession.error }) : null, dispose() { for (const unbind of bindings.splice(0)) unbind(); subscribedEvents.clear(); clearInterval(timer); initialized = false; } };
 }
 
 let runtime;

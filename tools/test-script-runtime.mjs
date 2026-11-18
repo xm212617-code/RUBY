@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { buildSexCombatRegexScripts, normalizeSexCombatConfig } from '../src/scripts/sex-combat.js';
+import { buildSexCombatDocument, renderSexCombatContent } from '../src/scripts/sex-combat-view.js';
 
 const root = new URL('../', import.meta.url);
 const cache = new Map();
@@ -25,16 +27,38 @@ const { createScriptRuntime, parseSexCombatReport } = module.namespace;
 const KEY = 'RUBY_UniversalSexCombat_';
 const scene = (report = '', names = ['A'], grade = 'NSFWH') => `<SceneInfo>\n场景类型: ${grade}\n在场角色:\n${names.map((name) => '- ' + name + '|普通').join('\n')}\n</SceneInfo>\n${report}`;
 const action = '<report>\nuser:\n  单向: 1\n  双向: 0\n</report>';
+
+test('complete standalone panel renders dashboard data and its read-only bridge script', () => {
+    const state = {
+        round: 4, p: 62, user: { pos: 28, ex: 45, lv: 2 },
+        opps: [{ name: 'Opponent <A>', pos: 73, p: 48, ex: 82, lv: 3, exited: false }],
+        ended: null,
+    };
+    const dashboard = renderSexCombatContent({ state, levels: { user: 25, 'Opponent <A>': 50 } });
+    assert.match(dashboard, /高潮战况|情潮战况/);
+    assert.match(dashboard, /Opponent &lt;A&gt;/);
+    assert.match(dashboard, /62/);
+    assert.match(dashboard, /82\/100/);
+    assert.match(dashboard, /4\/10/);
+    assert.match(dashboard, /疲软倒计时/);
+
+    const document = buildSexCombatDocument({ marker: 'xingdou' });
+    assert.match(document, /^<!doctype html>[\s\S]*<style>[\s\S]*sc-board[\s\S]*<\/style>/);
+    assert.match(document, /data-ruby-sex-combat="true"/);
+    assert.match(document, /ruby-sex-combat-view-request/);
+    const script = document.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(script);
+    assert.doesNotThrow(() => new Function(script));
+    assert.doesNotMatch(script, /settle|Math\.random\(\).*roll/i, 'the view bridge only requests and displays host state');
+});
+
 function host(options = {}) {
     const entries = new Map(Object.entries(options.entries || {}));
     const writes = [], reads = [], listeners = new Map(), errors = [];
-    let cfg = { enabled: true, defaultJudgment: true, ...options.config };
+    let cfg = { enabled: true, defaultJudgment: true, trigger: { tag: 'SceneInfo', field: '场景类型', value: 'NSFWH' }, roster: { tag: 'SceneInfo', field: '在场角色' }, actionTag: 'report', markerAnchor: 'report', markerPlacement: 'after-anchor-end', ...options.config };
     const marker = options.config?.marker || 'xingdou';
     const pattern = `/<\\/${marker}\\s*>/gi`;
-    const regexScripts = options.regexScripts === false ? [] : [
-        { id: 'ruby-sex-combat-v1', scriptName: 'RUBY 性斗标记（prompt 剥除）', findRegex: pattern, replaceString: '', markdownOnly: false, promptOnly: true, placement: [2] },
-        { id: 'ruby-sex-combat-render-v1', scriptName: 'RUBY 情潮面板（显示）', findRegex: pattern, replaceString: '<details data-ruby-sex-combat="true"><div class="ruby-sex-combat-content"></div></details>', markdownOnly: true, promptOnly: false, placement: [2] },
-    ];
+    const regexScripts = options.regexScripts === false ? [] : buildSexCombatRegexScripts([], { enabled: true, marker, markerAnchor: 'report' });
     let c = { chatId: 'chat-1', characterId: 0, groupId: null, chatMetadata: {}, extensionSettings: { disabledExtensions: [], character_allowed_regex: ['card.png'] }, characters: [{ avatar: 'card.png', data: { extensions: { regex_scripts: regexScripts } } }], chat: options.chat || [{ mes: scene(action) }] };
     let stopCalls = 0;
     const events = {
@@ -48,7 +72,16 @@ function host(options = {}) {
     c.saveChat = () => {};
     c.updateMessageBlock = () => {};
     let failKey, hook;
-    const page = { addEventListener() {}, removeEventListener() {} };
+    const viewReplies = [], pageListeners = new Map();
+    const trustedFrame = { isConnected: true, getAttribute: () => 'data-ruby-sex-combat="true"', contentWindow: { postMessage: (...args) => viewReplies.push(args) } };
+    const page = {
+        eventSource: events,
+        eventTypes: c.eventTypes,
+        getContext: () => c,
+        document: { querySelectorAll: (selector) => selector === '#chat .mes .mes_text iframe' ? [trustedFrame] : [] },
+        addEventListener(type, listener) { pageListeners.set(type, listener); },
+        removeEventListener(type) { pageListeners.delete(type); },
+    };
     const deps = {
         getContext: () => c,
         getConfig: () => ({ layer: 'character', data: { cardScripts: cfg === null ? {} : { 'sex-combat': cfg } } }),
@@ -69,7 +102,7 @@ function host(options = {}) {
         },
     };
     let runtime = createScriptRuntime(deps);
-    return { get c() { return c; }, set c(value) { c = value; }, get cfg() { return cfg; }, set cfg(value) { cfg = value; }, page, events, listeners, entries, writes, reads, errors, get stopCalls() { return stopCalls; }, get runtime() { return runtime; }, reload() { runtime.dispose(); runtime = createScriptRuntime(deps); return runtime; }, fail(key) { failKey = key; }, setHook(fn) { hook = fn; } };
+    return { get c() { return c; }, set c(value) { c = value; }, get cfg() { return cfg; }, set cfg(value) { cfg = value; }, page, pageListeners, trustedFrame, viewReplies, events, listeners, entries, writes, reads, errors, get stopCalls() { return stopCalls; }, get runtime() { return runtime; }, reload() { runtime.dispose(); runtime = createScriptRuntime(deps); return runtime; }, fail(key) { failKey = key; }, setHook(fn) { hook = fn; } };
 }
 
 test('report parser rejects duplicate keys, duplicate actors, fenced examples and caps actions', () => {
@@ -203,6 +236,39 @@ test('host listeners register once without inspecting or mutating the county reg
     assert.equal(h.listeners.get('GENERATION_AFTER_COMMANDS').size, 1); assert.equal(removed, 0); assert.equal(old.pending, false);
     assert.deepEqual([...h.page.__countyCombatSessions], countySessions);
     h.runtime.dispose(); assert.equal(h.listeners.get('GENERATION_AFTER_COMMANDS').size, 0);
+});
+
+test('complete HTML panel bridge returns live snapshot only to a trusted owned iframe', async () => {
+    const h = host({ chat: [{ mes: scene('') }] });
+    const card = h.c.characters[0];
+    h.cfg = normalizeSexCombatConfig({ ...h.cfg, enabled: true, trigger: { ...h.cfg.trigger, value: 'NSFWH' } });
+    h.c.chat = [{ mes: scene('', ['A']) }];
+    card.data.extensions.regex_scripts = buildSexCombatRegexScripts([], h.cfg);
+    h.runtime.init();
+    await h.runtime.tick();
+    assert.equal(h.runtime.snapshot()?.state?.active, true, 'trigger scene opens a live battle before panel query');
+    assert.equal(h.runtime.snapshot()?.scene?.triggered, true, 'runtime stores trigger scene for initial panel view');
+    assert.equal(h.runtime.snapshot()?.scene?.valid, true, `trigger scene is valid for panel view: ${JSON.stringify(h.runtime.snapshot()?.scene)}`);
+    const listener = [...h.pageListeners.values()][0];
+    if (typeof listener !== 'function') { h.runtime.dispose(); return assert.fail('runtime should install its iframe bridge listener for the card Regex'); }
+    listener({
+        data: { type: 'ruby-sex-combat-view-request', nonce: 'nonce-1' },
+        source: h.trustedFrame.contentWindow,
+        origin: 'null',
+    });
+    assert.equal(h.viewReplies.length, 1);
+    assert.equal(h.viewReplies[0][1], '*', 'opaque srcdoc frames receive a reply with null origin target');
+    assert.equal(h.viewReplies[0][0].nonce, 'nonce-1');
+    assert.match(h.viewReplies[0][0].html, /sc-board/, `live panel markup (snapshot=${JSON.stringify(h.runtime.snapshot())})`);
+    assert.match(h.viewReplies[0][0].html, /NSFWH 场景已识别，等待本楼有效行动报告；当前为 0 \/ 10 轮/);
+    assert.match(h.viewReplies[0][0].html, /P 1/);
+    assert.match(h.viewReplies[0][0].html, /A兴奋/);
+    assert.match(h.viewReplies[0][0].html, /疲软倒计时/);
+    assert.doesNotMatch(h.viewReplies[0][0].html, /<script/i);
+    h.pageListeners.clear();
+    const hostile = { postMessage() { throw Error('untrusted source must not receive status'); } };
+    listener({ data: { type: 'ruby-sex-combat-view-request', nonce: 'bad' }, source: hostile, origin: 'null' });
+    assert.equal(h.viewReplies.length, 1);
 });
 
 test('terminal injection waits for a successful generated reply and survives API failure', async () => {

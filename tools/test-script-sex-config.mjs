@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { renderSexCombatContent } from '../src/scripts/sex-combat-view.js';
 
 // Import trusted module source with only the registry seam replaced. No card code runs.
 const moduleUrl = new URL('../src/scripts/sex-combat.js', import.meta.url);
@@ -8,7 +9,8 @@ const original = await readFile(moduleUrl, 'utf8');
 let registration;
 globalThis.__registerSexCombatTest = (value) => { registration = value; };
 const source = original.replace("import { registerCardScript } from '../script-registry.js';", 'const registerCardScript = globalThis.__registerSexCombatTest;')
-    .replace("'../env.js'", JSON.stringify(new URL('../env.js', moduleUrl).href));
+    .replace("'../env.js'", JSON.stringify(new URL('../env.js', moduleUrl).href))
+    .replace("'./sex-combat-view.js'", JSON.stringify(new URL('../scripts/sex-combat-view.js', moduleUrl).href));
 const api = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 delete globalThis.__registerSexCombatTest;
 const { normalizeSexCombatConfig: normalize, parseSexCombatScene: parse, syncSexCombatMarkers: sync, buildSexCombatRegexScripts: regexScripts, sexCombatLevelName: level } = api;
@@ -151,14 +153,16 @@ test('ambiguous, incomplete and example XML do not trigger', () => {
 test('markers use exact closing offsets, never a missing-anchor tail, and are idempotent', () => {
     const full = `${scene}prefix${report}suffix`;
     const marked = sync(full, config);
-    assert.equal(marked, `${scene}prefix${report}</xingdou>suffix`);
+    assert.equal(marked, `${scene}prefix${report}\n</xingdou>\nsuffix`);
     assert.equal(sync(marked, config), marked);
     assert.equal(sync(`${marked}</xingdou>`, config), marked);
     assert.equal(sync(scene, config), scene);
     assert.equal(sync(scene + '<report>partial', config), scene + '<report>partial');
     assert.equal(sync(scene + report + report, config), scene + report + report);
-    assert.equal(sync(full, { ...config, marker: 'custom', markerAnchor: 'trigger' }), `${scene}</custom>prefix${report}suffix`);
-    assert.equal(sync(marked, { ...config, enabled: false }), full);
+    assert.equal(sync(full, { ...config, marker: 'custom', markerAnchor: 'trigger' }), `${scene}\n</custom>\nprefix${report}suffix`);
+    assert.match(sync(scene, { ...config, actionTag: 'report', markerAnchor: 'trigger' }), /<\/SceneInfo>\n<\/xingdou>$/);
+    const expectedUnmarked = full.replace('</report>suffix', '</report>\n\nsuffix');
+    assert.equal(sync(marked, { ...config, enabled: false }), expectedUnmarked);
     assert.equal(sync(`\`\`\`xml\n</xingdou>\n\`\`\`\n${marked}`, config), `\`\`\`xml\n</xingdou>\n\`\`\`\n${marked}`);
 });
 
@@ -175,10 +179,17 @@ test('Regex installation owns two stable entries and actually renders escaped HT
     const compile = (entry) => { const match = entry.findRegex.match(/^\/(.*)\/([a-z]*)$/); return new RegExp(match[1], match[2]); };
     assert.equal('a</x:mark>b'.replace(compile(prompt), prompt.replaceString), 'ab');
     const html = '</x:mark>'.replace(compile(display), display.replaceString);
-    assert.match(html, /ruby-sex-combat-panel/);
-    assert.match(html, /&lt;img/);
-    assert.match(html, /\$&/);
-    assert.doesNotMatch(html, /<script|<img\b/i);
+    assert.match(html, /^```html\n<!doctype html>[\s\S]*<style>[\s\S]*sc-board[\s\S]*<\/style>[\s\S]*<body>[\s\S]*data-ruby-sex-combat="true"[\s\S]*ruby-sex-combat-view-request[\s\S]*<\/html>\n```$/);
+    assert.match(html, /<!doctype html>[\s\S]*sc-pair[\s\S]*sc-gauges[\s\S]*sc-fatigue/);
+    const regexExpandedHtml = html.replace(/\\\$(\d+)|\\\$<([^>]+)>|\\\$([&'`$])/g, (_match, number, group, literal) => {
+        if (number) return '';
+        if (group) return '';
+        return literal;
+    });
+    const liveHtml = renderSexCombatContent({ state: { round: 1, p: 50, user: { pos: 10, ex: 20 }, opps: [{ name: '<img src=x onerror=alert(1)>$&', pos: 80, p: 50, ex: 25 }] }, levels: { user: 0, '<img src=x onerror=alert(1)>$&': 25 } });
+    assert.match(liveHtml, /&lt;img/);
+    assert.match(liveHtml, /\$&/);
+    assert.doesNotMatch(liveHtml, /<img\b/i);
     assert.equal(prompt.disabled, false);
     assert.equal(regexScripts([], {}).every((entry) => entry.disabled), true);
 });
