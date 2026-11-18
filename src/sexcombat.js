@@ -14,18 +14,69 @@ const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let SC = { state:null, exp:{}, lastFloor:-1, lastSig:'', booted:false, ready:false, panel:null, bound:false };
 
 // ── 脚本库配置 ──
+// 本机设置 = 运行时层（启停按角色、运行态经验）；角色卡 = 创作者配置层（sceneTag / chars 底账）
+// 面板「💾 保存」→ saveToCard 写入角色卡；start/refresh 时从卡水合（卡为准）
 function cfg() {
   const s = config.getSettings(); if (!s) return {};
   s.scripts = s.scripts || {};
-  s.scripts.sexcombat = s.scripts.sexcombat || { enabled:false, trigger:'nsfwh', defaultLevel:10, userName:'user', initialLevels:{}, positions:{} };
+  s.scripts.sexcombat = s.scripts.sexcombat || { enabled:false, trigger:'nsfwh', sceneTag:'SceneInfo', defaultLevel:10, userName:'user', initialLevels:{}, positions:{} };
   const c = s.scripts.sexcombat;
-  // 触发词允许清空（'' = 不启用性斗触发），只在从未设置时给默认值
+  // 触发词不在 UI 暴露（内部默认），允许为空（''=不启用性斗触发）
   c.trigger = (c.trigger === undefined || c.trigger === null) ? 'nsfwh' : String(c.trigger);
+  c.sceneTag = String(c.sceneTag || '').replace(/[<>\s]/g, '') || 'SceneInfo';
   if (!c.userName) c.userName = 'user';
   if (c.defaultLevel === undefined) c.defaultLevel = 10;
   c.initialLevels = c.initialLevels || {};
   c.positions = c.positions || {};
   return c;
+}
+function cardCfg() {
+  try {
+    const r = config.resolveConfig();
+    return (r?.data?.scripts?.sexcombat && typeof r.data.scripts.sexcombat === 'object') ? r.data.scripts.sexcombat : null;
+  } catch { return null; }
+}
+// 从角色卡水合创作者配置（sceneTag / chars 底账，卡为准）
+function hydrateCfg() {
+  const cc = cardCfg(); if (!cc) return false;
+  const c = cfg();
+  let touched = false;
+  const tag = String(cc.sceneTag || '').replace(/[<>\s]/g, '');
+  if (tag && tag !== c.sceneTag) { c.sceneTag = tag; touched = true; }
+  if (cc.chars && typeof cc.chars === 'object') {
+    c.initialLevels = { ...cc.chars }; touched = true;
+    Object.keys(cc.chars).forEach((n) => { if (SC.exp[n] === undefined) SC.exp[n] = parseInt(cc.chars[n], 10) || 0; });
+  }
+  return touched;
+}
+// 💾 保存：把 UI 配置（sceneTag / chars）写入角色卡 + 本机层
+export function saveToCard(patch = {}) {
+  const c = cfg();
+  const tag = String(patch.sceneTag ?? c.sceneTag ?? '').replace(/[<>\s]/g, '');
+  if (tag) c.sceneTag = tag;
+  if (patch.chars && typeof patch.chars === 'object') {
+    c.initialLevels = {};
+    Object.keys(patch.chars).forEach((n) => {
+      const v = parseInt(patch.chars[n], 10);
+      if (String(n).trim() && Number.isFinite(v)) c.initialLevels[String(n).trim()] = v;
+    });
+  }
+  config.persist();
+  try {
+    const r = config.resolveConfig();
+    if (r?.data) {
+      r.data.scripts = r.data.scripts || {};
+      r.data.scripts.sexcombat = {
+        ...(r.data.scripts.sexcombat || {}),
+        enabled: !!isEnabled(),
+        sceneTag: c.sceneTag,
+        chars: { ...c.initialLevels },
+      };
+      config.saveConfigData(r.data);
+      config.flushCardPersistNow();
+    }
+  } catch (e) { warn('[性斗] 写卡失败:', e?.message || e); }
+  if (SC.booted) safe(() => writeRule());
 }
 function isEnabled() { const k = cardKey(); return k ? !!cfg()[k] : false; }
 function setEnabled(v) { const k = cardKey(); if (k) { cfg()[k] = !!v; config.persist(); } }
@@ -86,26 +137,29 @@ function ensureRe() {
 }
 
 // ── 场景判断条目（纯格式注入；触发词从配置读，清空=不启用性斗触发） ──
+function scTag() { return cfg().sceneTag || 'SceneInfo'; }
+function tagReEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function trigRe() {
   const t = String(cfg().trigger || '').trim();
   return t ? new RegExp(t, 'i') : null;
 }
 function ruleT() {
+  const tag = scTag();
   const t = String(cfg().trigger || '').trim();
   const T = t.toUpperCase();
   const lines = [
-    '<SceneInfo>',
+    '<' + tag + '>',
     '地点：具体地点',
     '时间：YYYY年MM月DD日 周X 时段 HH:MM',
     '场景类型：SFW / NSFW' + (T ? ' / ' + T : ''),
     '在场角色：',
     '- 角色名|状态',
-    '</SceneInfo>',
-    '每层回复末尾必须输出上述 <SceneInfo> 块（放正文最后）。',
+    '</' + tag + '>',
+    '每层回复末尾必须输出上述 <' + tag + '> 块（放正文最后）。',
   ];
   if (T) {
     lines.push(
-      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <SceneInfo> 之后附 <report>。',
+      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <' + tag + '> 之后附 <report>。',
       '<report> 协议（' + T + ' 楼必附，其余楼层禁止输出）：',
       '<report>',
       '角色名:',
@@ -169,11 +223,12 @@ function pRep(mes) {
   return Object.keys(out).length ? out : null;
 }
 function pScene(mes) {
-  const m = String(mes || '').match(/<SceneInfo>([\s\S]*?)<\/SceneInfo>/i);
+  const tag = tagReEsc(scTag());
+  const m = String(mes || '').match(new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>', 'i'));
   if (!m) return { hard:false, chars:[] };
   const blk = m[1];
   const hard = !!trigRe()?.test(blk);
-  const cm = blk.match(/在场角色[：:]\s*([\s\S]*?)(?=\n\n|\n<\/SceneInfo>|$)/);
+  const cm = blk.match(new RegExp('在场角色[：:]\\s*([\\s\\S]*?)(?=\\n\\n|\\n<\\/' + tagReEsc(scTag()) + '>|$)'));
   const chars = [];
   if (cm) cm[1].split(/\r?\n/).forEach(l => {
     const t = l.trim(); if (!t.startsWith('-')) return;
@@ -398,6 +453,7 @@ function bindEvents() {
 async function start() {
   if (SC.booted) return; SC.booted = true;
   ensureP(); ensureRe(); bindEvents();
+  hydrateCfg();
   await writeRule();
   const rec = await readE(K.state);
   const body = rec?.content ? String(rec.content) : '';
@@ -419,6 +475,8 @@ async function stop() {
 // ── 库 API ──
 export function levelNameFor(e) { return L[lvI(parseInt(e, 10) || 0)].n; }
 export function getLevels() { const o = {}; Object.keys(cfg().initialLevels).forEach(n => { o[n] = cfg().initialLevels[n]; }); Object.keys(SC.exp).forEach(n => { o[n] = SC.exp[n]; }); return o; }
+// 创作者底账（不含战斗运行态经验）——内置脚本 UI 列表与保存写卡用
+export function getBaseLevels() { return { ...cfg().initialLevels }; }
 export function setInitLevel(n, e) { const c = cfg(); c.initialLevels = c.initialLevels || {}; c.initialLevels[n] = parseInt(e, 10) || 0; SC.exp[n] = parseInt(e, 10) || 0; config.persist(); }
 export function removeInitLevel(n) { delete cfg().initialLevels[n]; delete SC.exp[n]; (async () => { await writeE(K.lp + n, '', { constant: false }); })(); config.persist(); }
 export function entryWrite(key, content, opts) { return writeE(key, content, opts); }
@@ -429,8 +487,8 @@ export function getStatus() { const k = cardKey(); return { supported: !!k, enab
 async function safe(fn) { try { await fn(); } catch (e) { warn('[性斗] 失败:', e?.message || e); } }
 export async function toggle() { const v = !isEnabled(); setEnabled(v); if (v) await safe(start); else await safe(stop); return isEnabled(); }
 
-// 换卡/重进自动恢复：CHAT_CHANGED 后按当前卡配置重新武装
-function refresh() { if (isEnabled()) { if (!SC.booted) safe(start); } else if (SC.booted) safe(stop); }
+// 换卡/重进自动恢复：CHAT_CHANGED 后按当前卡配置重新武装（卡内创作者配置水合为准）
+function refresh() { hydrateCfg(); if (isEnabled()) { if (!SC.booted) safe(start); } else if (SC.booted) safe(stop); }
 export function init() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(init, 1000); return; }
   c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });

@@ -200,9 +200,22 @@ export function normalizeConfigData(raw) {
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
     // 格式保护：创作者配置的锚点标签列表（随卡导出；显示正则需匹配同名的 <标签>）
     result.formatMarks = normalizeFormatMarks(data.formatMarks);
-    // 随卡脚本：导入的创作者脚本（源码+UI+启用态）与内置脚本开关——原样透传
+    // 随卡脚本：导入的创作者脚本（源码+UI+启用态）与内置脚本配置——原样透传
+    // 内置通用性斗：sceneTag=场景判断条目的 XML 包裹标签；chars={角色名: 经验} 底账
+    const scxCfg = (data.scripts?.sexcombat && typeof data.scripts.sexcombat === 'object') ? data.scripts.sexcombat : {};
+    const scxChars = {};
+    if (scxCfg.chars && typeof scxCfg.chars === 'object') {
+      Object.keys(scxCfg.chars).forEach((n) => {
+        const v = parseInt(scxCfg.chars[n], 10);
+        if (String(n).trim() && Number.isFinite(v)) scxChars[String(n).trim()] = v;
+      });
+    }
     result.scripts = {
-      sexcombat: { enabled: data.scripts?.sexcombat?.enabled === true },
+      sexcombat: {
+        enabled: scxCfg.enabled === true,
+        sceneTag: String(scxCfg.sceneTag || '').replace(/[<>\s]/g, '').slice(0, 40),
+        chars: scxChars,
+      },
       installed: (data.scripts?.installed && typeof data.scripts.installed === 'object') ? data.scripts.installed : {},
     };
     result.presets = Array.isArray(data.presets) && data.presets.length > 0

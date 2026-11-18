@@ -703,14 +703,14 @@ function buildShellHtml() {
 
                             <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
                                 <span class="scx-label">📥 下载脚本文档</span>
-                                <button id="scx_doc_dl" class="menu_button" style="flex:none;">下载</button>
+                                <button id="scx_doc_dl" class="btn outline small" style="flex:none;">下载</button>
                             </div>
 
                             <div class="scx-box">
                                 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                                     <span class="scx-label">📦 内置脚本库</span>
                                     <span style="flex:1;"></span>
-                                    <button id="scx_lib_btn" class="menu_button" style="flex:none;">打开</button>
+                                    <button id="scx_lib_btn" class="btn outline small" style="flex:none;">打开</button>
                                 </div>
                                 <div id="scx_lib" style="display:none;margin-top:12px;">
                                     <div class="scx-libitem">
@@ -718,12 +718,13 @@ function buildShellHtml() {
                                             <span class="scx-name">通用性斗</span>
                                             <span id="scx_bz_state" class="scx-state"></span>
                                             <span style="flex:1;"></span>
-                                            <button id="scx_bz_install" class="menu_button" style="flex:none;">安装</button>
+                                            <button id="scx_bz_install" class="btn green small" style="flex:none;">安装</button>
                                         </div>
                                         <div class="tip" style="margin-top:8px;">
                                             高潮条双指针、性等级、行动骰、战况通报与情潮面板——随卡内置的性斗脚本。
-                                            安装后进入下方「脚本列表」，与创作者脚本同等管理：启停 / UI 窗口 / 卸载；
-                                            触发标记、等级底账、注入位置都在脚本的 UI 窗口里配置。
+                                            安装后进入下方「脚本列表」，与创作者脚本同等管理：启停 / UI 窗口 / 卸载。
+                                            UI 窗口里创作者只可定义：场景判断条目的 XML 包裹标签、角色与等级底账（增删），
+                                            点「💾 保存」写入角色卡随卡携带；其余全部由引擎自理。
                                         </div>
                                     </div>
                                 </div>
@@ -732,7 +733,7 @@ function buildShellHtml() {
                             <div class="scx-box" style="margin-top:14px;">
                                 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
                                     <span class="scx-label">脚本列表</span>
-                                    <button id="scx_import_btn" class="menu_button" style="flex:none;margin-left:auto;">📂 导入</button>
+                                    <button id="scx_import_btn" class="btn outline small" style="flex:none;margin-left:auto;">📂 导入</button>
                                     <input id="scx_import_file" type="file" accept=".js,.json" style="display:none;" />
                                 </div>
                                 <div id="scx_installed" class="scx-list"></div>
@@ -1078,10 +1079,10 @@ function wireTabs(root) {
         '<span class="scx-state">' + (on ? '已启用' : '未启用') + '</span>' +
         '</div>' +
         '<div class="scx-rowbtns">' +
-        (s.ui ? '<button class="menu_button" id="scx_ui_' + escH(id) + '">UI 窗口</button>' : '') +
-        (!builtin ? '<button class="menu_button" id="scx_exp_' + escH(id) + '">导出</button>' : '') +
-        '<button class="menu_button" id="scx_tg_' + escH(id) + '">' + (on ? '停用' : '启用') + '</button>' +
-        '<button class="menu_button" id="scx_del_' + escH(id) + '">' + (builtin ? '卸载' : '删除') + '</button>' +
+        (s.ui ? '<button class="btn outline small" id="scx_ui_' + escH(id) + '">UI 窗口</button>' : '') +
+        (!builtin ? '<button class="btn outline small" id="scx_exp_' + escH(id) + '">导出</button>' : '') +
+        '<button class="btn outline small" id="scx_tg_' + escH(id) + '">' + (on ? '停用' : '启用') + '</button>' +
+        '<button class="btn red small" id="scx_del_' + escH(id) + '">' + (builtin ? '卸载' : '删除') + '</button>' +
         '</div>' +
         '<div class="scx-uihost" id="scx_uihost_' + escH(id) + '"></div></div>';
     });
@@ -1144,7 +1145,9 @@ function wireTabs(root) {
     });
   }
 
-  /* 内置脚本（通用性斗）的 UI 窗口 = 设置面板：触发标记 / 等级底账 / 注入位置 */
+  /* 内置脚本（通用性斗）的 UI 窗口——创作者仅可操作两件事：
+     ① 场景判断条目的 XML 包裹标签  ② 角色与等级底账（增/删）
+     改完点「💾 保存」写入角色卡，其余一律引擎自理 */
   function scxToggleBuiltinWin(id) {
     const host = document.getElementById('scx_uihost_' + id);
     if (!host) return;
@@ -1160,49 +1163,48 @@ function wireTabs(root) {
     const c = sexcombat.getScriptCfg();
     w.innerHTML =
       '<div class="scx-setting">' +
-      '<div class="scx-setting-label">触发标记</div>' +
+      '<div class="scx-setting-label">场景判断 · XML 包裹标签</div>' +
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
-      '<input id="scx_trigger" class="text_input" value="' + escH(c.trigger || 'nsfwh') + '" style="flex:0 0 140px;" />' +
-      '<span class="scx-hint">SceneInfo 含此标记时性斗启动；清空 = 不启用性斗触发</span>' +
+      '<input id="scx_tag" class="text_input" value="' + escH(c.sceneTag || 'SceneInfo') + '" placeholder="SceneInfo" style="flex:0 0 160px;" />' +
+      '<span class="scx-hint">每层回复尾部的场景块用什么 XML 标签包裹（默认 SceneInfo；仅填标签名，尖括号自动包裹）</span>' +
       '</div></div>' +
       '<div class="scx-setting">' +
-      '<div class="scx-setting-label">等级底账</div>' +
+      '<div class="scx-setting-label">角色与等级底账</div>' +
       '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">' +
       '<input id="scx_lv_name" class="text_input" placeholder="角色名" style="flex:1 1 100px;" />' +
       '<input id="scx_lv_exp" class="text_input" type="number" placeholder="经验" style="flex:0 0 70px;" />' +
       '<span id="scx_lv_hint" class="scx-hint">—</span>' +
-      '<button id="scx_lv_add" class="menu_button" style="flex:none;">增加</button>' +
+      '<button id="scx_lv_add" class="btn green small" style="flex:none;">➕ 增加</button>' +
       '</div>' +
       '<div id="scx_lv_list"></div>' +
       '</div>' +
-      '<div class="scx-setting">' +
-      '<div class="scx-setting-label">注入位置（战况 / 开局 / 阶段）</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-      '<div style="flex:1;min-width:130px;"><div class="scx-hint">战况通报</div><div style="display:flex;gap:4px;"><input id="scx_p_rp" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_rp" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
-      '<div style="flex:1;min-width:130px;"><div class="scx-hint">情潮开局</div><div style="display:flex;gap:4px;"><input id="scx_p_op" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_op" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
-      '<div style="flex:1;min-width:130px;"><div class="scx-hint">阶段状态</div><div style="display:flex;gap:4px;"><input id="scx_p_st" class="text_input" type="number" placeholder="pos" style="flex:1;" /><input id="scx_o_st" class="text_input" type="number" placeholder="ord" style="flex:1;" /></div></div>' +
-      '</div></div>';
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+      '<button id="scx_save_btn" class="btn green">💾 保存</button>' +
+      '<span id="scx_save_hint" class="scx-hint">保存后写入角色卡（随卡携带），刷新/换机不丢</span>' +
+      '</div>';
     wireBuiltinSettings(w);
   }
   function renderBuiltinLvList(w) {
     const list = w.querySelector('#scx_lv_list'); if (!list) return;
-    const levels = sexcombat.getLevels();
+    const levels = sexcombat.getBaseLevels();
     list.innerHTML = Object.keys(levels).map((n) =>
       '<div class="scx-lvrow"><span class="scx-lvname">' + escH(n) + '</span>' +
       '<span class="scx-hint">经验 ' + levels[n] + '</span>' +
       '<span class="scx-lvtag">' + escH(sexcombat.levelNameFor(levels[n])) + '</span>' +
-      '<button class="menu_button scx-lvdel" data-n="' + escH(n) + '">移除</button></div>'
+      '<button class="btn red small scx-lvdel" data-n="' + escH(n) + '">✕ 移除</button></div>'
     ).join('') || '<div class="scx-hint">暂无底账——未登记角色默认按经验 10（新手）计算</div>';
     list.querySelectorAll('.scx-lvdel').forEach((b) => b.addEventListener('click', () => {
       sexcombat.removeInitLevel(b.dataset.n);
       renderBuiltinLvList(w);
+      const hint = w.querySelector('#scx_save_hint');
+      if (hint) hint.textContent = '有未保存的改动——点「💾 保存」写入角色卡';
     }));
   }
   function wireBuiltinSettings(w) {
-    const trig = w.querySelector('#scx_trigger');
-    if (trig) trig.addEventListener('change', () => {
-      sexcombat.getScriptCfg().trigger = trig.value.trim();
-      sexcombat.saveScriptCfg();
+    const tagInput = w.querySelector('#scx_tag');
+    if (tagInput) tagInput.addEventListener('change', () => {
+      const hint = w.querySelector('#scx_save_hint');
+      if (hint) hint.textContent = '有未保存的改动——点「💾 保存」写入角色卡';
     });
     const lvName = w.querySelector('#scx_lv_name');
     const lvExp = w.querySelector('#scx_lv_exp');
@@ -1215,26 +1217,20 @@ function wireTabs(root) {
       if (!n) { lvHint.textContent = '请输入角色名字'; return; }
       if (isNaN(e) || e < 0 || e > 100) { lvHint.textContent = '经验需为 0-100 的数值'; return; }
       sexcombat.setInitLevel(n, e);
-      lvName.value = ''; lvExp.value = ''; lvHint.textContent = '已登记';
+      lvName.value = ''; lvExp.value = ''; lvHint.textContent = '已登记（未保存）';
       renderBuiltinLvList(w);
+      const hint = w.querySelector('#scx_save_hint');
+      if (hint) hint.textContent = '有未保存的改动——点「💾 保存」写入角色卡';
     });
-    const defOrd = { reportPos: 210, openPos: 900, stagePos: 898 };
-    [['scx_p_rp', 'scx_o_rp', 'reportPos', 'reportOrder'], ['scx_p_op', 'scx_o_op', 'openPos', 'openOrder'], ['scx_p_st', 'scx_o_st', 'stagePos', 'stageOrder']].forEach(([pid, oid, pk, ok]) => {
-      const pi = w.querySelector('#' + pid); const oi = w.querySelector('#' + oid);
-      if (!pi || !oi) return;
-      const cc = sexcombat.getScriptCfg();
-      cc.positions = cc.positions || {};
-      pi.value = cc.positions[pk] ?? 1;
-      oi.value = cc.positions[ok] ?? defOrd[pk];
-      const save = () => {
-        const c2 = sexcombat.getScriptCfg();
-        c2.positions = c2.positions || {};
-        c2.positions[pk] = parseInt(pi.value, 10) || 1;
-        c2.positions[ok] = parseInt(oi.value, 10) || 0;
-        sexcombat.saveScriptCfg();
-      };
-      pi.addEventListener('change', save);
-      oi.addEventListener('change', save);
+    const saveBtn = w.querySelector('#scx_save_btn');
+    if (saveBtn) saveBtn.addEventListener('click', () => {
+      const tag = (w.querySelector('#scx_tag')?.value || '').trim();
+      const levels = sexcombat.getBaseLevels();
+      const chars = {};
+      Object.keys(levels).forEach((n) => { chars[n] = parseInt(levels[n], 10) || 0; });
+      sexcombat.saveToCard({ sceneTag: tag, chars });
+      const hint = w.querySelector('#scx_save_hint');
+      if (hint) hint.textContent = '已保存并写入角色卡 ✓';
     });
   }
   const SCX_DOCS = "# RUBY 随卡脚本 · 函数参考\n\n随卡脚本保存在角色卡内（data.extensions.RubyAnalyzer.scripts.installed），启用时以 new Function(\"api\", code) 执行——代码里直接使用 api 对象。\n\n## 生命周期\n- api.onEnable(fn)：启用/面板载入时执行\n- api.onDisable(fn)：停用时执行（清理条目、解绑）\n- api.registerUI(fn)：注册 UI 渲染函数 fn(container)，「UI 窗口」按钮打开时调用\n\n## 世界书读写（persistBook 安全通道）\n- api.read(key, book=\"chat\") → 条目内容文本\n- api.write(key, content, opts) → 写条目；opts = { constant, position, order, depth, comment, book }\n  蓝灯注入：opts.constant = true；@D 深度：opts.position = 4 且 opts.depth = N\n\n## 聊天与角色\n- api.getChat() → 聊天数组\n- api.getChatLength() → 楼层数\n- api.getCharName() → 角色名\n\n## 等级底账（与通用性斗共用）\n- api.getLevels() → { 角色名: 经验 }\n- api.setLevel(name, exp) → 设置角色初始经验\n- api.levelNameFor(exp) → 等级名（处子/新手/经验/老手/魅魔）\n\n## 通用性斗固定条目（引擎保留，请勿覆写）\n通用性斗_战况 / _当局 / _场景判断 / _开局 / _阶段状态 / _收场_* / _经验总档 / _等级_<角色名> / _report协议\n\n## 注意\n- 永远不要在脚本里调用 saveChat 改写消息文本（会杀掉结算队列——装甲叛客血泪 #1）\n- 条目写入走 persistBook（saveWorldInfo），安全\n- 脚本出错只影响自身，RUBY 主引擎不受影响";
