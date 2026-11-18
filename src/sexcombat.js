@@ -176,11 +176,21 @@ const HIDE_RES = () => ([
 function stripXml(s) { let o = String(s ?? ''); for (const re of HIDE_RES()) o = o.replace(re, ''); return o; }
 
 // 显示层：#chat 上挂 MutationObserver——洗掉情潮 XML / report；渲染由 RUBY 代行（refreshInline），
-// AI 不输出任何渲染锚点。
+// AI 不输出任何渲染锚点。观察回调一律去抖（流式输出时每 token 都会突变，直接处理会打架+卡死）。
 function ensureDomHide() {
   if (SC.domObs) return;
   const chatEl = document.getElementById('chat');
   if (!chatEl) { setTimeout(ensureDomHide, 1000); return; }
+  let scrubTimer = 0;
+  let refreshTimer = 0;
+  const scheduleScrub = () => {
+    if (scrubTimer) return;
+    scrubTimer = setTimeout(() => { scrubTimer = 0; scrub(chatEl); }, 150);
+  };
+  const scheduleRefresh = () => {
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => { refreshTimer = 0; safe(refreshInline); }, 250);
+  };
   const scrub = (el) => {
     if (!el || !(el instanceof Element)) return;
     const targets = el.classList?.contains('mes_text') ? [el] : [...(el.querySelectorAll?.('.mes_text') || [])];
@@ -190,14 +200,10 @@ function ensureDomHide() {
       if (out !== html) t.innerHTML = out;
     }
   };
-  SC.domObs = new MutationObserver((muts) => {
+  SC.domObs = new MutationObserver(() => {
     if (!SC.booted) return;
-    let touched = false;
-    for (const m of muts) {
-      m.addedNodes?.forEach((n) => { if (n instanceof Element) { scrub(n); touched = true; } else if (n.parentElement) { scrub(n.parentElement); touched = true; } });
-      if (m.type === 'characterData' && m.target?.parentElement) { scrub(m.target.parentElement); touched = true; }
-    }
-    if (touched) safe(refreshInline); // 消息重渲染（流式/切层/编辑）后重挂正文内面板（幂等，无状态则空操作）
+    scheduleScrub();
+    scheduleRefresh();
   });
   SC.domObs.observe(chatEl, { childList: true, subtree: true, characterData: true });
   scrub(chatEl); // 启动即扫一遍已渲染楼层（含启用前的旧楼层）
@@ -642,10 +648,17 @@ function panelInner(s) {
 function inlinePanelHTML() {
   const s = SC.state;
   if (!s || s.cleared) return '';
-  return '<div class="scx-inline"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
+  return '<div class="scx-inline" data-scx-sig="' + esc(scxSig(s)) + '"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
+}
+// 面板状态签名：战况数值指纹——签名不变绝不重绘（innerHTML 字符串比对永远不等，
+// 会造成 观察器→重绘→再突变 死循环把酒馆卡死）
+function scxSig(s) {
+  if (!s) return '';
+  const ended = s.ended ? [s.ended.type, ...(s.ended.names || [])].join(',') : '';
+  return [s.round, s.p, s.user.pos, s.user.ex, ended, ...s.opps.map(o => [o.name, o.pos, o.ex, o.present].join(':'))].join('|');
 }
 // 正文内渲染：RUBY 代行——把情潮面板挂到最新一层 AI 回复的显示层末尾（不动消息数据、不进提示词、AI 零参与）。
-// 幂等：无状态/清场时清掉全部面板；有状态时保证最新 AI 楼恰好一个面板并刷新其内容。
+// 幂等：无状态/清场时清掉全部面板；有状态时保证最新 AI 楼恰好一个面板，签名变化才刷新内容。
 function refreshInline() {
   const chatEl = document.getElementById('chat'); if (!chatEl) return;
   const s = SC.state;
@@ -661,11 +674,19 @@ function refreshInline() {
   }
   [...chatEl.querySelectorAll('.mes_text .scx-inline')].forEach((el) => { if (el.closest('.mes_text') !== target) el.remove(); });
   if (!target) return;
+  const sig = scxSig(s);
   let panel = target.querySelector('.scx-inline');
-  if (!panel) { target.insertAdjacentHTML('beforeend', inlinePanelHTML()); return; }
-  const body = panel.querySelector('.scx-inline-body');
-  const want = panelInner(s);
-  if (body && body.innerHTML !== want) body.innerHTML = want;
+  if (!panel) {
+    target.insertAdjacentHTML('beforeend', inlinePanelHTML());
+    panel = target.querySelector('.scx-inline');
+    if (panel) panel.dataset.scxSig = sig;
+    return;
+  }
+  if (panel.dataset.scxSig !== sig) {
+    panel.dataset.scxSig = sig;
+    const body = panel.querySelector('.scx-inline-body');
+    if (body) body.innerHTML = panelInner(s);
+  }
 }
 function bindEvents() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(bindEvents, 1000); return; }
