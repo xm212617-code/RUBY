@@ -7,6 +7,8 @@ import { initSettingsDrawer, initTheme } from './src/settings.js';
 import { openPanel } from './src/panel.js';
 import * as config from './src/config.js';
 import * as worldbook from './src/worldbook.js';
+import { initScriptRuntime } from './src/scripts/sex-combat-runtime.js';
+import './src/scripts/sex-combat.js';
 
 let commandRegistered = false;
 
@@ -423,6 +425,7 @@ function bootstrap() {
     }
     registerRubyCommand();
     initEngine();
+    initScriptRuntime();
     initCardWriter();
     ensureOrb();
     ensureQrBar();

@@ -8,6 +8,8 @@ import * as director from './director.js';
 import { BUILTIN_REFERENCES } from './builtin-refs.js';
 import { buildMessages } from './jailbreak.js';
 import { sanitizeReply, summarizeRemoved } from './sanitizer.js';
+import { applyFormatMarks, resolveMarkVars } from './format-marks.js';
+import { syncScriptMarkers } from './scripts/sex-combat-runtime.js';
 
 const state = {
     armed: false,
@@ -178,65 +180,8 @@ function readChatVars() {
     }
 }
 
-function resolveMarkVars(tag, vars, phaseOverride) {
-    return String(tag || '').replace(/\{\{var:([^}]+)\}\}/g, (_, name) => {
-        // phaseOverride 直接覆盖 _ruby_phase——不依赖任何变量存储，从前端 RPC 传值
-        if (phaseOverride !== undefined && phaseOverride !== null && String(name).trim() === '_ruby_phase') {
-            return String(phaseOverride);
-        }
-        const v = vars ? vars[String(name).trim()] : undefined;
-        return v === undefined || v === null ? '' : String(v);
-    });
-}
-
 function escapeRegExp(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** 在正文行数组中找锚标签所在行（候选逗号分隔，取首个命中行；未命中返回 -1） */
-function findAnchorLine(lines, relAnchor) {
-    const candidates = String(relAnchor || '').split(',').map((s) => s.trim()).filter(Boolean);
-    for (const cand of candidates) {
-        const re = new RegExp(`<\\/?${escapeRegExp(cand)}[\\s>/]`, 'i');
-        for (let i = 0; i < lines.length; i++) {
-            if (re.test(lines[i])) return i;
-        }
-    }
-    return -1;
-}
-
-/** 按配置把锚点写入正文行数组（相对定位优先，未命中回退 head/tail；返回 { mes, tags }） */
-function applyFormatMarks(mes, marks, vars, phaseOverride) {
-    const list = Array.isArray(marks) ? marks : [];
-    const resolved = list
-        // v3.0.19 修复（回归自 v3.0.3）：锚点必须包尖括号——v3.0.0 重构时漏包，
-        // 导致写入裸标签文字且每次同步重复堆叠（用户实测 <ruby/> 变成 8 行裸 ruby/）
-        .map((m) => ({ ...m, value: `<${resolveMarkVars(m.tag, vars, phaseOverride)}>` }))
-        .filter((m) => m.value !== '<>');
-    const tags = resolved.map((m) => m.value);
-    if (resolved.length === 0) return { mes, tags };
-
-    let lines = mes.split('\n');
-    const inserts = [];
-    const fallbackHead = [];
-    const fallbackTail = [];
-    for (const m of resolved) {
-        if (m.relAnchor) {
-            const idx = findAnchorLine(lines, m.relAnchor);
-            if (idx >= 0) {
-                inserts.push({ at: m.relSide === 'after' ? idx + 1 : idx, value: m.value });
-                continue;
-            }
-        }
-        (m.position === 'tail' ? fallbackTail : fallbackHead).push(m.value);
-    }
-    // 行号从大到小插入，避免位移
-    inserts.sort((a, b) => b.at - a.at);
-    for (const ins of inserts) lines.splice(ins.at, 0, ins.value);
-    let out = lines.join('\n');
-    if (fallbackHead.length) out = `${fallbackHead.join('\n')}\n${out}`;
-    if (fallbackTail.length) out = `${out}\n${fallbackTail.join('\n')}`;
-    return { mes: out, tags };
 }
 
 function rerenderMarked(c, idx, m) {
@@ -269,6 +214,7 @@ function tidyAfterStrip(mes) {
  * 各自独占一行。格式清空时把此前注入的标签全部撤除，正文回落原样。
  */
 export function syncFormatMark(messageId, phaseOverride) {
+    syncScriptMarkers(messageId);
     const c = ctx();
     if (!c || !Array.isArray(c.chat) || c.chat.length === 0) return;
     const chat = c.chat;

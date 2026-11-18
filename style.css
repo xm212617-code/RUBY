@@ -242,7 +242,15 @@
 #ra_panel .mode-tab:hover { color: #fff; background: rgba(255, 255, 255, .05); }
 #ra_panel .mode-tab.player.active { color: #fff; border-bottom-color: var(--ra-brand); background: rgba(184, 33, 56, .16); }
 #ra_panel .mode-tab.creator.active { color: #fff; border-bottom-color: #5B8BD9; background: rgba(36, 86, 168, .18); }
+#ra_panel .mode-tab.scripts.active { color: #fff; border-bottom-color: #8B6FD1; background: rgba(95, 71, 153, .2); }
 #ra_panel .mode-tab.cardwriter.active { color: #fff; border-bottom-color: #5FA376; background: rgba(47, 107, 69, .18); }
+
+#ra_panel .script-layout { display: grid; grid-template-columns: minmax(210px, 28%) minmax(0, 1fr); gap: 14px; padding: 16px; }
+#ra_panel .script-list-wrap, #ra_panel .script-detail { min-width: 0; }
+#ra_panel .script-card { display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 11px 12px; margin-bottom: 7px; text-align: left; color: var(--ra-ink-text); background: var(--ra-ink-1); border: 1px solid var(--ra-border); border-radius: var(--ra-radius-s); cursor: pointer; }
+#ra_panel .script-card.active { border-color: #8B6FD1; box-shadow: inset 3px 0 #8B6FD1; }
+#ra_panel .script-card small { color: var(--ra-ink-text-2); line-height: 1.4; }
+@media (max-width: 760px) { #ra_panel .script-layout { grid-template-columns: 1fr; } }
 
 /* 写卡模式步骤卡 */
 #ra_panel .cw-step {

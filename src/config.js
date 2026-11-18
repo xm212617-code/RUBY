@@ -70,6 +70,7 @@ export const makeDefaultConfigData = () => ({
     unlimitedInputChars: false,
     // 格式保护：注入到消息显示层（extra.display_text）的锚点标签列表，API 不可见；显示正则匹配同名 <标签>
     formatMarks: [],
+    cardScripts: {},
     presets: [makeDefaultPreset()],
     activePresetId: 'default',
     jailbreak: null,
@@ -198,6 +199,7 @@ export function normalizeConfigData(raw) {
     result.yuzukiIncludePlot = data.yuzukiIncludePlot !== false;
     // 格式保护：创作者配置的锚点标签列表（随卡导出；显示正则需匹配同名的 <标签>）
     result.formatMarks = normalizeFormatMarks(data.formatMarks);
+    result.cardScripts = normalizeCardScripts(data.cardScripts);
     result.presets = Array.isArray(data.presets) && data.presets.length > 0
         ? data.presets.map(normalizePreset)
         : [makeDefaultPreset()];
@@ -210,11 +212,20 @@ export function normalizeConfigData(raw) {
     return result;
 }
 
+/** Preserve arbitrary script settings as detached JSON without executing script-specific normalization. */
+export function normalizeCardScripts(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    try {
+        const value = JSON.parse(JSON.stringify(raw));
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    } catch {
+        return {};
+    }
+}
+
 /**
- * 格式保护锚点归一化：RUBY 注入到消息显示层（extra.display_text，API 不可见）的锚点标签。
- * - tag：创作者填纯文字即可，尖括号由 RUBY 包裹；此处剔除创作者误填的 < >
- * - position：'head'=正文前 | 'tail'=正文后
- * - 顺序：列表顺序即注入顺序；返回前自动归组——正文前的排前面、正文后的排后面，各组内保持原有相对顺序
+ * 格式保护锚点归一化：tag 剔除尖括号，head/tail 各组保持原有相对顺序。
+ * relBoundary='close' 精确匹配闭合标签；relMissing='skip' 缺锚不插入。
  */
 export function normalizeFormatMarks(raw) {
     const list = Array.isArray(raw) ? raw : [];
@@ -230,6 +241,9 @@ export function normalizeFormatMarks(raw) {
             // v3 相对定位（可选）：relAnchor=锚标签名（逗号分隔多候选，取正文首个命中行）；relSide=插到命中行的前/后
             relAnchor: String(item?.relAnchor || '').replace(/[<>]/g, '').trim().slice(0, 120),
             relSide: item?.relSide === 'after' ? 'after' : 'before',
+            // 精确闭合边界与缺锚跳过均为显式选项；旧卡继续按行定位并回退 head/tail。
+            ...(item?.relBoundary === 'close' ? { relBoundary: 'close' } : {}),
+            ...(item?.relMissing === 'skip' ? { relMissing: 'skip' } : {}),
         });
     }
     return [
@@ -652,6 +666,7 @@ export function parseImportTemplate(raw) {
         summaryProvider: ['littlewhitebox', 'shujuku', 'yuzuki', 'baibaibook'].includes(data.summaryProvider) ? data.summaryProvider : '',
         unlimitedInputChars: data.unlimitedInputChars === true,
         formatMarks: normalizeFormatMarks(data.formatMarks),
+        cardScripts: normalizeCardScripts(data.cardScripts),
         yuzukiIncludePlot: data.yuzukiIncludePlot !== false,
         jailbreak: data.jailbreak || null,
         gen: (data.gen && typeof data.gen === 'object') ? data.gen : {},

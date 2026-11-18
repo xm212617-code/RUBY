@@ -10,6 +10,7 @@ import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzuki
 import { isDarkMode } from './settings.js';
 import { BUILTIN_REFERENCES, findShadowingKey } from './builtin-refs.js';
 import * as director from './director.js';
+import { getCardScripts, getCardScript } from './script-registry.js';
 
 const PANEL_ID = 'ra_panel';
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
@@ -19,6 +20,7 @@ const on = (el, ev, cb) => el && el.addEventListener(ev, cb);
 
 const ui = {
     mode: 'player',
+    scriptId: '',
     playerSub: 'main',
     creatorSub: 'refs',
     editingPresetId: null,
@@ -277,6 +279,7 @@ function buildShellHtml() {
 
         <div class="mode-tabs">
             <div class="mode-tab player active" data-mode="player">🎮 玩家版面</div>
+            <div class="mode-tab scripts" data-mode="scripts">🧩 脚本</div>
             <div class="mode-tab creator active" data-mode="creator">🛠️ 创作者版面</div>
             <div class="mode-tab cardwriter" data-mode="cardwriter">✍️ 写卡</div>
         </div>
@@ -889,6 +892,21 @@ function buildShellHtml() {
                     </div>
                 </div>
             </div>
+
+            <div class="panel-content" data-panel="scripts">
+                <div class="script-layout">
+                    <aside class="script-list-wrap">
+                        <div class="form-section">
+                            <div class="form-header blue">■ 卡片脚本 <span id="ra_script_count"></span></div>
+                            <div class="form-body">
+                                <div id="ra_script_list"></div>
+                                <div class="tip">脚本功能由 RUBY 内置模块提供。角色卡保存的是该模块的配置和 Regex 规则，不会执行卡片任意代码。</div>
+                            </div>
+                        </div>
+                    </aside>
+                    <main id="ra_script_detail" class="script-detail"></main>
+                </div>
+            </div>
         </div>
     `;
 }
@@ -904,6 +922,7 @@ function wireTabs(root) {
         root.querySelectorAll('.mode-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
         root.querySelectorAll('.panel-content').forEach((p) => p.classList.toggle('active', p.dataset.panel === mode));
         saveUIState();
+        if (mode === 'scripts') renderScriptPanel(root);
     };
 
     const applySub = (panelEl, sub) => {
@@ -926,6 +945,7 @@ function wireTabs(root) {
             const panelEl = root.querySelector(`.panel-content[data-panel="${tab.dataset.mode}"]`);
             applySub(panelEl, panelEl.querySelector('.sub-tab.active')?.dataset.sub || panelEl.querySelector('.sub-tab')?.dataset.sub);
             if (tab.dataset.mode === 'creator') requestAnimationFrame(() => renderCycleInfo());
+            if (tab.dataset.mode === 'scripts') renderScriptPanel(root);
             saveUIState();
         });
     });
@@ -945,6 +965,57 @@ function wireTabs(root) {
     applySub(root.querySelector('.panel-content[data-panel="player"]'), ui.playerSub);
     applySub(root.querySelector('.panel-content[data-panel="creator"]'), ui.creatorSub);
     applySub(root.querySelector('.panel-content[data-panel="cardwriter"]'), root.querySelector('.panel-content[data-panel="cardwriter"] .sub-tab')?.dataset.sub);
+}
+
+function renderScriptPanel(root = $(PANEL_ID)) {
+    if (!root) return;
+    const list = root.querySelector('#ra_script_list');
+    const detail = root.querySelector('#ra_script_detail');
+    const count = root.querySelector('#ra_script_count');
+    if (!list || !detail) return;
+    const scripts = getCardScripts();
+    const cfg = config.resolveConfig();
+    const data = cfg.data;
+    const renderedIdentity = config.getCharacterIdentity?.();
+    const selected = scripts.find((script) => script.id === ui.scriptId) || scripts[0];
+    ui.scriptId = selected?.id || '';
+    if (count) count.textContent = `(${scripts.length})`;
+    list.innerHTML = scripts.length ? scripts.map((script) => `
+        <button type="button" class="script-card ${script.id === ui.scriptId ? 'active' : ''}" data-script-id="${h(script.id)}">
+            <strong>${h(script.name)}</strong><small>${h(script.description)}</small>
+        </button>`).join('') : '<div class="status-box">当前没有已注册的脚本 UI。</div>';
+    list.querySelectorAll('[data-script-id]').forEach((button) => on(button, 'click', () => {
+        ui.scriptId = button.dataset.scriptId;
+        renderScriptPanel(root);
+    }));
+    const registration = getCardScript(ui.scriptId);
+    if (!registration) { detail.innerHTML = ''; return; }
+    registration.render(detail, {
+        data,
+        layer: cfg.layer,
+        save(mutator) {
+            if (cfg.layer !== 'character') return Promise.resolve({ ok: false, message: '请先选择角色卡；脚本配置不会保存到全局设置。' });
+            const identity = config.getCharacterIdentity?.();
+            if (!identity) return Promise.resolve({ ok: false, message: '当前没有可保存的角色卡。' });
+            if (identity.avatar !== renderedIdentity?.avatar) return Promise.resolve({ ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' });
+            const fresh = config.resolveConfig().data;
+            const latest = config.getCharacterIdentity?.();
+            if (latest && (identity.avatar !== latest.avatar || identity.name !== latest.name)) {
+                return Promise.resolve({ ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' });
+            }
+            fresh.cardScripts ||= {};
+            const current = fresh.cardScripts[registration.id] && typeof fresh.cardScripts[registration.id] === 'object'
+                ? structuredClone(fresh.cardScripts[registration.id])
+                : {};
+            mutator(current);
+            fresh.cardScripts[registration.id] = current;
+            config.saveConfigData(fresh);
+            return config.flushCardPersistNow().then(() => {
+                renderScriptPanel(root);
+                return { ok: true };
+            }).catch((error) => ({ ok: false, message: error?.message || '写回角色卡失败' }));
+        },
+    });
 }
 
 function wireGlobalInteractions() {
