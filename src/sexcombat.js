@@ -118,48 +118,15 @@ function ensureRegexes() {
 /* ══════════ 场景判断（胶水版：分级判定 + 数值权威，格式教学归卡片规则条目） ══════════ */
 function ruleText() {
     return [
-      "<通用性斗_场景判断>"
-      "场景类型：SFW=无性内容 / NSFW=有性内容未发生性行为 / NSFWH=真正发生性行为（性器相接即算）"
-      "NSFWH 楼正文尾部附 <report>：每参与者一段（user 固定写 user），仅两键——单向0-3 / 双向0-2"
-      "性行为进展与结果以情潮战况数值为准，不自行判定"
-      "顶点归零 = 不应期，禁止继续性行为"
-      "</通用性斗_场景判断>"
-    ].join("\n");
-  } from './env.js';
-import * as config from './config.js';
+      '<通用性斗_场景判断>',
+      '场景类型：SFW=无性内容 / NSFW=有性内容未发生性行为 / NSFWH=真正发生性行为（性器相接即算）',
+      'NSFWH 楼正文尾部附 <report>：每参与者一段（user 固定写 user），仅两键——单向0-3 / 双向0-2',
+      '性行为进展与结果以情潮战况数值为准，不自行判定',
+      '顶点归零 = 不应期，禁止继续性行为'
+    ].join('\n');
+  }
 
-const K = {
-    state: '通用性斗_当局',
-    report: '通用性斗_战况',
-    rule: '通用性斗_场景判断',
-    open: '通用性斗_开局',
-    stage: '通用性斗_阶段状态',
-    exp: '通用性斗_经验总档',
-    levelPrefix: '通用性斗_等级_',
-};
-
-const LEVELS = [
-    { name: '处子', min: 0,  floor: 0,   charge: 5 },
-    { name: '新手', min: 12, floor: 10,  charge: 4 },
-    { name: '经验', min: 25, floor: 25,  charge: 3 },
-    { name: '老手', min: 37, floor: 50,  charge: 2 },
-    { name: '魅魔', min: 50, floor: 100, charge: 1 },
-];
-const STAGES = ['平静', '微热', '急促', '激越', '燃尽'];
-const HEART = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
-const escH = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const d = (n) => 1 + Math.floor(Math.random() * n);
-const dice = (count, faces) => { let s = 0; for (let i = 0; i < count; i++) s += d(faces); return s; };
-
-
-/* ══════════ 脚本库状态（按角色卡，存扩展设置） ══════════ */
-function cardKey() {
-    const id = config.getCharacterIdentity();
-    return id ? id.avatar : null;
-}
-function scriptCfg() {
-    const store = config.getSettings();
-    if (!store) return { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
+  function scriptCfg() {
     store.scripts = store.scripts || {};
     store.scripts.sexcombat = store.scripts.sexcombat || { enabled: false, initialLevels: {}, defaultLevel: 10, userName: 'user' };
     const sc = store.scripts.sexcombat;
