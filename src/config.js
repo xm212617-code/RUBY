@@ -201,8 +201,8 @@ export function normalizeConfigData(raw) {
     // 格式保护：创作者配置的锚点标签列表（随卡导出；显示正则需匹配同名的 <标签>）
     result.formatMarks = normalizeFormatMarks(data.formatMarks);
     // 随卡脚本：导入的创作者脚本（源码+UI+启用态）与内置脚本配置——原样透传
-    // 内置通用性斗：trigger=识别关键词；sceneTag=场景判断条目的 XML 包裹标签；
-    // ruleEnabled/rulePos/ruleDepth/ruleOrder=场景判断条目注入开关与位置；chars={角色名: 经验} 底账
+    // 内置通用性斗：trigger=识别关键词；sceneTag=类型判断块的 XML 包裹标签；
+    // ruleEnabled=类型判断条目注入开关；chars={角色名: 经验} 底账
     const scxCfg = (data.scripts?.sexcombat && typeof data.scripts.sexcombat === 'object') ? data.scripts.sexcombat : {};
     const scxChars = {};
     if (scxCfg.chars && typeof scxCfg.chars === 'object') {
@@ -218,9 +218,6 @@ export function normalizeConfigData(raw) {
         trigger: (scxCfg.trigger === undefined || scxCfg.trigger === null) ? undefined : String(scxCfg.trigger),
         sceneTag: String(scxCfg.sceneTag || '').replace(/[<>\s]/g, '').slice(0, 40),
         ruleEnabled: scxCfg.ruleEnabled !== false,
-        rulePos: ['before', 'after', 'depth'].includes(scxCfg.rulePos) ? scxCfg.rulePos : 'after',
-        ruleDepth: Math.max(0, parseInt(scxCfg.ruleDepth, 10) || 0),
-        ruleOrder: Math.max(0, parseInt(scxCfg.ruleOrder, 10) || 999),
         chars: scxChars,
       },
       installed: (data.scripts?.installed && typeof data.scripts.installed === 'object') ? data.scripts.installed : {},

@@ -1162,37 +1162,24 @@ function wireTabs(root) {
   }
   function renderBuiltinSettings(w) {
     const c = sexcombat.getScriptCfg();
-    const posSel = { before: '角色前', after: '角色后', depth: '@D 指定深度' };
     w.innerHTML =
       '<div class="scx-setting">' +
-      '<div class="scx-setting-label">场景判断条目</div>' +
+      '<div class="scx-setting-label">类型判断条目（世界书注入）</div>' +
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
       '<label style="display:flex;gap:6px;align-items:center;font-size:12px;cursor:pointer;">' +
       '<input id="scx_rule_on" type="checkbox" ' + (c.ruleEnabled === false ? '' : 'checked') + ' />' +
-      '<span>注入场景判断条目（关闭后引擎不再写入该条目）</span>' +
+      '<span>注入类型判断条目（关闭后引擎不再写入）</span>' +
       '</label>' +
       '</div>' +
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
       '<span class="scx-hint" style="flex:none;">包裹标签</span>' +
       '<input id="scx_tag" class="text_input" value="' + escH(c.sceneTag || 'SceneInfo') + '" placeholder="SceneInfo" style="flex:0 0 140px;" />' +
-      '<span class="scx-hint">场景块用什么 XML 标签包裹（仅填标签名）</span>' +
+      '<span class="scx-hint">AI 每层输出的场景块用什么 XML 标签包裹（仅填标签名）</span>' +
       '</div>' +
-      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">' +
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
       '<span class="scx-hint" style="flex:none;">识别关键词</span>' +
       '<input id="scx_trigger" class="text_input" value="' + escH(c.trigger === '' ? '' : (c.trigger || 'nsfwh')) + '" placeholder="nsfwh" style="flex:0 0 120px;" />' +
       '<span class="scx-hint">场景类型含此标记时性斗启动；清空 = 不启用性斗触发</span>' +
-      '</div>' +
-      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' +
-      '<span class="scx-hint" style="flex:none;">注入位置</span>' +
-      '<select id="scx_rule_pos" class="text_input" style="flex:0 0 130px;">' +
-      Object.keys(posSel).map((k) => '<option value="' + k + '"' + ((c.rulePos || 'after') === k ? ' selected' : '') + '>' + posSel[k] + '</option>').join('') +
-      '</select>' +
-      '<span id="scx_rule_depth_wrap" style="display:flex;gap:4px;align-items:center;' + ((c.rulePos || 'after') === 'depth' ? '' : 'display:none;') + '">' +
-      '<span class="scx-hint">@D</span>' +
-      '<input id="scx_rule_depth" class="text_input" type="number" value="' + (parseInt(c.ruleDepth, 10) || 0) + '" style="flex:0 0 60px;" />' +
-      '</span>' +
-      '<span class="scx-hint">order</span>' +
-      '<input id="scx_rule_order" class="text_input" type="number" value="' + (parseInt(c.ruleOrder, 10) || 999) + '" style="flex:0 0 70px;" />' +
       '</div></div>' +
       '<div class="scx-setting">' +
       '<div class="scx-setting-label">角色与等级底账</div>' +
@@ -1231,13 +1218,7 @@ function wireTabs(root) {
       const hint = w.querySelector('#scx_save_hint');
       if (hint) hint.textContent = '有未保存的改动——点「💾 保存」写入角色卡';
     };
-    const posSel = w.querySelector('#scx_rule_pos');
-    const depthWrap = w.querySelector('#scx_rule_depth_wrap');
-    if (posSel && depthWrap) posSel.addEventListener('change', () => {
-      depthWrap.style.display = posSel.value === 'depth' ? 'flex' : 'none';
-      markDirty();
-    });
-    ['#scx_rule_on', '#scx_rule_depth', '#scx_rule_order', '#scx_tag', '#scx_trigger'].forEach((sel) => {
+    ['#scx_rule_on', '#scx_tag', '#scx_trigger'].forEach((sel) => {
       const el = w.querySelector(sel);
       if (el) el.addEventListener('change', markDirty);
     });
@@ -1262,10 +1243,7 @@ function wireTabs(root) {
         sceneTag: (w.querySelector('#scx_tag')?.value || '').trim(),
         trigger: (w.querySelector('#scx_trigger')?.value || '').trim(),
         ruleEnabled: !!w.querySelector('#scx_rule_on')?.checked,
-        rulePos: w.querySelector('#scx_rule_pos')?.value || 'after',
-        ruleDepth: parseInt(w.querySelector('#scx_rule_depth')?.value, 10) || 0,
-        ruleOrder: parseInt(w.querySelector('#scx_rule_order')?.value, 10) || 999,
-        chars: (() => { const o = {}; Object.keys(sexcombat.getBaseLevels()).forEach((n) => { o[n] = parseInt(sexcombat.getBaseLevels()[n], 10) || 0; }); return o; })(),
+        chars: (() => { const o = {}; const lvs = sexcombat.getBaseLevels(); Object.keys(lvs).forEach((n) => { o[n] = parseInt(lvs[n], 10) || 0; }); return o; })(),
       };
       sexcombat.saveToCard(patch);
       const hint = w.querySelector('#scx_save_hint');

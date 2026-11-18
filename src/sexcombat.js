@@ -25,13 +25,9 @@ function cfg() {
   c.trigger = (c.trigger === undefined || c.trigger === null) ? 'nsfwh' : String(c.trigger);
   c.sceneTag = String(c.sceneTag || '').replace(/[<>\s]/g, '') || 'SceneInfo';
   if (c.ruleEnabled === undefined) c.ruleEnabled = true;
-  if (!c.rulePos) c.rulePos = 'after';
-  if (c.ruleDepth === undefined) c.ruleDepth = 0;
-  if (c.ruleOrder === undefined) c.ruleOrder = 999;
   if (!c.userName) c.userName = 'user';
   if (c.defaultLevel === undefined) c.defaultLevel = 10;
   c.initialLevels = c.initialLevels || {};
-  c.positions = c.positions || {};
   return c;
 }
 function cardCfg() {
@@ -52,9 +48,6 @@ function hydrateCfg() {
     if (t !== c.trigger) { c.trigger = t; touched = true; }
   }
   if (cc.ruleEnabled !== undefined && !!cc.ruleEnabled !== !!c.ruleEnabled) { c.ruleEnabled = !!cc.ruleEnabled; touched = true; }
-  if (cc.rulePos && cc.rulePos !== c.rulePos) { c.rulePos = String(cc.rulePos); touched = true; }
-  if (cc.ruleDepth !== undefined && parseInt(cc.ruleDepth, 10) !== c.ruleDepth) { c.ruleDepth = parseInt(cc.ruleDepth, 10) || 0; touched = true; }
-  if (cc.ruleOrder !== undefined && parseInt(cc.ruleOrder, 10) !== c.ruleOrder) { c.ruleOrder = parseInt(cc.ruleOrder, 10) || 999; touched = true; }
   if (cc.chars && typeof cc.chars === 'object') {
     c.initialLevels = { ...cc.chars }; touched = true;
     Object.keys(cc.chars).forEach((n) => { if (SC.exp[n] === undefined) SC.exp[n] = parseInt(cc.chars[n], 10) || 0; });
@@ -68,9 +61,6 @@ export function saveToCard(patch = {}) {
   if (tag) c.sceneTag = tag;
   if (patch.trigger !== undefined) c.trigger = String(patch.trigger);
   if (patch.ruleEnabled !== undefined) c.ruleEnabled = !!patch.ruleEnabled;
-  if (patch.rulePos !== undefined) c.rulePos = ['before', 'after', 'depth'].includes(patch.rulePos) ? patch.rulePos : 'after';
-  if (patch.ruleDepth !== undefined) c.ruleDepth = parseInt(patch.ruleDepth, 10) || 0;
-  if (patch.ruleOrder !== undefined) c.ruleOrder = parseInt(patch.ruleOrder, 10) || 999;
   if (patch.chars && typeof patch.chars === 'object') {
     c.initialLevels = {};
     Object.keys(patch.chars).forEach((n) => {
@@ -89,16 +79,12 @@ export function saveToCard(patch = {}) {
         trigger: c.trigger,
         sceneTag: c.sceneTag,
         ruleEnabled: !!c.ruleEnabled,
-        rulePos: c.rulePos,
-        ruleDepth: parseInt(c.ruleDepth, 10) || 0,
-        ruleOrder: parseInt(c.ruleOrder, 10) || 999,
         chars: { ...c.initialLevels },
       };
       config.saveConfigData(r.data);
       config.flushCardPersistNow();
     }
   } catch (e) { warn('[性斗] 写卡失败:', e?.message || e); }
-  if (SC.booted) safe(() => writeRule());
 }
 function isEnabled() { const k = cardKey(); return k ? !!cfg()[k] : false; }
 function setEnabled(v) { const k = cardKey(); if (k) { cfg()[k] = !!v; config.persist(); } }
@@ -169,17 +155,22 @@ const HIDE_RES = () => ([
 ]);
 function stripXml(s) { let o = String(s ?? ''); for (const re of HIDE_RES()) o = o.replace(re, ''); return o; }
 
-// 显示层：#chat 上挂 MutationObserver，凡是 .mes_text 里出现情潮 XML / report 一律洗掉
+// 显示层：#chat 上挂 MutationObserver——洗掉情潮 XML / report，并把 <情潮/> 渲染锚点替换为内联面板
 function ensureDomHide() {
   if (SC.domObs) return;
   const chatEl = document.getElementById('chat');
   if (!chatEl) { setTimeout(ensureDomHide, 1000); return; }
+  const markerRe = /<情潮\s*\/>|<情潮>\s*<\/情潮>/g;
   const scrub = (el) => {
     if (!el || !(el instanceof Element)) return;
     const targets = el.classList?.contains('mes_text') ? [el] : [...(el.querySelectorAll?.('.mes_text') || [])];
     for (const t of targets) {
       const html = t.innerHTML; if (!html) continue;
-      const out = stripXml(html);
+      let out = stripXml(html);
+      if (markerRe.test(out)) {
+        markerRe.lastIndex = 0;
+        out = out.replace(markerRe, () => inlinePanelHTML()); // 函数替换，防 $ 转义
+      }
       if (out !== html) t.innerHTML = out;
     }
   };
@@ -252,37 +243,20 @@ function ruleT() {
   ];
   if (T) {
     lines.push(
-      T + '=真正发生性行为（性器相接即算）。场景类型为 ' + T + ' 时，正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入）。',
+      T + '=真正发生性行为（性器相接即算）。',
+      '场景类型为 ' + T + ' 时：正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入），并另起一行输出 <情潮/>（情潮面板渲染锚点；其余楼层禁止输出 <情潮/>）。',
     );
   }
   return lines.join('\n');
 }
-// 场景判断条目的注入位置：'before'→0（角色前）| 'after'→1（角色后）| 'depth'→4（@D 指定深度）
-function rulePosNum() {
-  const p = String(cfg().rulePos || 'after');
-  if (p === 'before') return 0;
-  if (p === 'depth') return 4;
-  return 1;
-}
-
-// 注入位置配置：positions = { reportPos/reportOrder, openPos/openOrder, stagePos/stageOrder }
-function posCfg(k, def) {
-  const p = cfg().positions || {};
-  const v = parseInt(p[k], 10);
-  return Number.isFinite(v) ? v : def;
-}
-
 // ── 状态 ──
-function rollP(lo, hi) { if (hi <= lo) return lo; return Math.round(lo + (hi - lo) * ((d(100) + d(100)) / 2) / 100); }
-function st0() { return { active:true, startFloor:0, lastSettledFloor:-1, round:0, p:50, scanFloor:1, user:{pos:0,ex:0}, opps:[], ended:null, endedFloor:0, cleared:false, endEntries:[] }; }
+function st0() { return { active:true, startFloor:0, lastSettledFloor:-1, round:0, p:50, scanFloor:1, user:{pos:0,ex:0}, opps:[], ended:null, endedFloor:0, cleared:false }; }
 function stageOf(e) { return Math.max(0, Math.min(5, Math.ceil(e / 20))); }
 function newB(fl, chars) {
-  const old = SC.state, oldE = old ? old.endEntries || [] : [];
   const uLv = lvI(expOf(uName()));
   const maxOLv = Math.max(...chars.map(n => lvI(expOf(n))), uLv);
   SC.state = st0();
   Object.assign(SC.state, { startFloor:fl, scanFloor:fl+1, p:rollP(lvD(uLv).min, lvD(maxOLv).min), opps:chars.map(n => ({name:n, pos:100, ex:0, exited:false, present:true})) });
-  (async () => { const dd = [[K.stage, {constant:false, ord:898}]]; oldE.forEach(e => dd.push([e.key, {constant:false, ord:e.ord}])); for (const [k,o] of dd) await writeE(k, '', o); })();
 }
 
 // ── 骰子 ──
@@ -399,7 +373,7 @@ function battleT() {
   s.opps.forEach(o => { if (!o.exited && o.present !== false) { const dd = o.pos - s.p; if (dd < mn) { mn = dd; mnN = o.name; } } });
   const cal = mn === Infinity || uD > mn ? u : mnN;
   const op = s.opps.filter(o => !o.exited && o.present !== false).map(o => o.name + ' 距顶' + Math.max(0, o.pos - s.p)).join('｜');
-  return '【情潮战况】\n高潮条：' + u + ' 距顶' + uD + '｜' + op + '\n从容：' + cal + ' 更从容';
+  return '【情潮战况】\n高潮条：' + u + ' 距顶' + uD + '｜' + op + '\n从容：' + cal + ' 更从容（以此最新战况为准）';
 }
 function openT() {
   const s = SC.state; const u = uName();
@@ -430,45 +404,54 @@ function bFl() { return '<情潮收场 类型="疲软收场">写作指导：双�
 function bWin() { return '<情潮收场 类型="user胜利终局">写作指导：在场对手全部高潮进入不应期——写' + u() + '的从容，由其决定如何对待众人。\n</情潮收场>'; }
 
 // ── 持久化 ──
+// 引擎指导内容全部走世界书蓝灯条目（战况/开局/阶段/收场——AI 不写这些格式，只读）；
+// 世界书里另存当局状态/经验/等级三类数据条目。
 function persist() {
   const s = SC.state; if (!s) return;
+  writeE(K.state, JSON.stringify(s), { constant: false, comment: '当局' });
   const expL = Object.keys(SC.exp).map(n => '  ' + n + ': ' + SC.exp[n]).join('\n');
   writeE(K.exp, expL, { constant: false, comment: '经验总档' });
   s.opps.forEach(o => writeE(K.lp + o.name, '等级: ' + L[lvI(o.name)].n + '\n经验: ' + expOf(o.name), { constant: false, comment: '等级' }));
   writeE(K.lp + uName(), '等级: ' + L[lvI(uName())].n + '\n经验: ' + expOf(uName()), { constant: false, comment: '等级' });
   if (s.cleared) {
-    // 场景判断条目保留（下一局开局判定仍依赖 SceneInfo），只清战况/开局/阶段与收场
-    writeE(K.report, '', { constant: false, pos: posCfg('reportPos', 1), ord: posCfg('reportOrder', 210) });
-    writeE(K.open, '', { constant: false, pos: posCfg('openPos', 1), ord: posCfg('openOrder', 900) });
-    writeE(K.stage, '', { constant: false, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
-    s.endEntries.forEach(e => writeE(e.key, '', { constant: false, ord: e.ord }));
+    // 清场：战局条目全部清空（场景判断指令条目保留——下一局开局判定仍靠它）
+    writeE(K.report, '', { constant: false });
+    writeE(K.open, '', { constant: false });
+    writeE(K.stage, '', { constant: false });
+    clearEndEntries(s);
+  } else if (!s.ended) {
+    writeE(K.report, battleT(), { constant: true });
+    writeE(K.open, openT(), { constant: true, ord: 900 });
+    writeE(K.stage, stageTAll(), { constant: true, ord: 898 });
   } else {
-    writeE(K.report, s.ended ? (s.endEntries || []).filter(e => e.key.includes('user高潮')).map(e => e.text).join('\n') || battleT() : battleT(), { constant: true, pos: posCfg('reportPos', 1), ord: posCfg('reportOrder', 210) });
-    if (!s.ended) {
-      writeE(K.open, openT(), { constant: true, pos: posCfg('openPos', 1), ord: posCfg('openOrder', 900) });
-      writeE(K.stage, stageTAll(), { constant: true, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
-      s.endEntries.forEach(e => writeE(e.key, '', { constant: false, ord: e.ord }));
-    } else {
-      writeE(K.stage, '', { constant: false, pos: posCfg('stagePos', 1), ord: posCfg('stageOrder', 898) });
-      s.endEntries.forEach(e => writeE(e.key, e.text, { constant: true, ord: e.ord }));
-    }
+    // 收场：战况清空、阶段清空、开局清空，只留收场指导
+    writeE(K.report, '', { constant: false });
+    writeE(K.open, '', { constant: false });
+    writeE(K.stage, '', { constant: false });
+    const e = s.ended;
+    if (e.type === 'opp') (e.names || []).forEach((n, i) => writeE('通用性斗_收场_' + (n || i), bOpp(n), { constant: true, ord: 890 }));
+    else if (e.type === 'user') writeE('通用性斗_收场_user', bUser((s.opps.find(o => o.present !== false) || {}).name || '对手'), { constant: true, ord: 890 });
+    else if (e.type === 'flaccid') writeE('通用性斗_收场_疲软', bFl(), { constant: true, ord: 890 });
+    else writeE('通用性斗_收场_胜利', bWin(), { constant: true, ord: 890 });
   }
 }
 
-// ── 场景判断条目落笔（开关+位置玩家自选；@D 模式才带 depth） ──
+// 收场条目按当局 ended 类型清空（清场/停用用）
+function clearEndEntries(s) {
+  const e = s?.ended; if (!e) return;
+  if (e.type === 'opp') (e.names || []).forEach((n, i) => writeE('通用性斗_收场_' + (n || i), '', { constant: false }));
+  else if (e.type === 'user') writeE('通用性斗_收场_user', '', { constant: false });
+  else if (e.type === 'flaccid') writeE('通用性斗_收场_疲软', '', { constant: false });
+  else writeE('通用性斗_收场_胜利', '', { constant: false });
+}
+
+// ── 场景判断条目落笔（世界书蓝灯 @D0 常驻；开关玩家自选） ──
 async function writeRule() {
   if (cfg().ruleEnabled === false) {
     await writeE(K.rule, '', { constant: false, comment: '场景判断' });
     return;
   }
-  const pos = rulePosNum();
-  await writeE(K.rule, ruleT(), {
-    constant: true,
-    pos,
-    depth: pos === 4 ? (parseInt(cfg().ruleDepth, 10) || 0) : undefined,
-    ord: parseInt(cfg().ruleOrder, 10) || 999,
-    comment: '场景判断',
-  });
+  await writeE(K.rule, ruleT(), { constant: true, pos: 4, depth: 0, ord: 999, comment: '场景判断' });
 }
 
 // ── tick ──
@@ -505,24 +488,20 @@ async function tick() {
     persist();
   } catch (e) { warn('[性斗] tick 失败:', e?.message || e); } finally { render(); }
 }
-function restart(fl, chars) { log('[性斗] 换人重开 @楼' + fl); const old = SC.state; const oldE = old ? old.endEntries || [] : []; newB(fl, chars); (async () => { const dd = [[K.stage, {constant:false, ord:898}]]; oldE.forEach(e => dd.push([e.key, {constant:false, ord:e.ord}])); for (const [k,o] of dd) await writeE(k, '', o); })(); }
+function restart(fl, chars) { log('[性斗] 换人重开 @楼' + fl); newB(fl, chars); }
 
 // ── 面板 ──
-function render() {
-  let p = document.getElementById('ruby_sc_panel'); if (!p) return;
-  const s = SC.state;
-  if (!s) { p.classList.add('scx-absent'); return; }
-  p.classList.remove('scx-absent');
-  const inner = p.querySelector('.scx-inner'); if (!inner) return;
+// 面板内层 HTML：悬浮面板（render）与消息内渲染锚点（<情潮/> 捕捉替换）共用
+function panelInner(s) {
+  if (!s) return '';
   if (s.ended) {
     const n = s.ended.names?.join('、') || '对方';
     const t = s.ended.type === 'user' ? '再怎么努力也忍不住——高潮将至。' + n + '技高一筹。' : s.ended.type === 'opp' ? n + '已到顶——高潮将至。' + uName() + '技高一筹。' : s.ended.type === 'flaccid' ? '疲软将至——谁也没赢。' : '全胜。';
-    inner.innerHTML = '<div class="scx-end">' + esc(t) + '</div>'; return;
+    return '<div class="scx-end">' + esc(t) + '</div>';
   }
   const uD = Math.max(0, s.p - s.user.pos);
   let bars = '';
   s.opps.forEach(o => {
-    const dO = Math.max(0, o.pos - s.p);
     let sg = ''; for (let i = 0; i < 5; i++) sg += '<div class="scx-gseg' + (i < stageOf(o.ex) ? ' s' + stageOf(o.ex) : '') + '"></div>';
     let usg = ''; for (let i = 0; i < 5; i++) usg += '<div class="scx-gseg' + (i < stageOf(s.user.ex) ? ' s' + stageOf(s.user.ex) : '') + '"></div>';
     bars += '<div class="scx-opprow' + (o.present === false ? ' gone' : '') + '"><div class="scx-oppname">' + esc(o.name) + '·' + L[lvI(o.name)].n + (o.present === false ? '·未在场' : '') + '</div>' +
@@ -532,9 +511,23 @@ function render() {
       '<div class="scx-grow"><div class="scx-glabel"><span class="scx-gdot opp"></span>兴奋</div><div class="scx-gsegs">' + sg + '</div><div class="scx-gpill">' + S5[Math.max(0, stageOf(o.ex) - 1)] + '</div></div>' +
       '<div class="scx-grow"><div class="scx-glabel"><span class="scx-gdot user"></span>兴奋</div><div class="scx-gsegs">' + usg + '</div><div class="scx-gpill">' + S5[Math.max(0, stageOf(s.user.ex) - 1)] + '</div></div>';
   });
-  inner.innerHTML = '<div class="scx-namerow"><div class="scx-chip"><span class="scx-av user">你</span><span>' + esc(uName()) + '<small class="scx-lv">' + L[lvI(expOf(uName()))].n + '</small></span></div>' +
+  return '<div class="scx-namerow"><div class="scx-chip"><span class="scx-av user">你</span><span>' + esc(uName()) + '<small class="scx-lv">' + L[lvI(expOf(uName()))].n + '</small></span></div>' +
     '<div class="scx-chip"><span class="scx-av opp">彼</span><span>' + esc(s.opps.map(o => o.name).join('、')) + '</span></div></div>' + bars +
     '<div class="scx-fatigue"><span class="scx-ftag">疲软</span><div class="scx-ftrack"><div class="scx-ffill" style="width:' + s.round * 10 + '%"></div></div><span class="scx-fnum">' + s.round + '/10</span></div>';
+}
+// 消息内渲染锚点：<情潮/> → 内联情潮面板（战斗期间有状态才渲染，否则移除标记）
+function inlinePanelHTML() {
+  const s = SC.state;
+  if (!s || s.cleared) return '';
+  return '<div class="scx-inline"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
+}
+function render() {
+  let p = document.getElementById('ruby_sc_panel'); if (!p) return;
+  const s = SC.state;
+  if (!s) { p.classList.add('scx-absent'); return; }
+  p.classList.remove('scx-absent');
+  const inner = p.querySelector('.scx-inner'); if (!inner) return;
+  inner.innerHTML = panelInner(s);
 }
 function ensureP() {
   if (SC.panel) return;
@@ -563,6 +556,7 @@ async function start() {
   const body = rec?.content ? String(rec.content) : '';
   const jm = body.match(/\{[\s\S]*\}/);
   if (jm) { try { SC.state = JSON.parse(jm[0]); } catch {} }
+  if (SC.state && SC.state.cleared) SC.state = null; // 已清场的陈旧状态直接丢弃，不再逐层空写
   const expR = await readE(K.exp);
   const eb = expR?.content ? String(expR.content) : '';
   eb.split(/\r?\n/).forEach(l => { const m = l.trim().match(/^([^:：]+)[:：]\s*(\d+)\s*$/); if (m) SC.exp[m[1].trim()] = parseInt(m[2], 10); });
@@ -572,6 +566,8 @@ async function start() {
 }
 async function stop() {
   for (const k of [K.report, K.rule, K.open, K.stage]) await writeE(k, '', { constant: false });
+  clearEndEntries(SC.state);
+  await writeE(K.state, '', { constant: false });
   SC.exp = {}; SC.state = null; SC.booted = false; SC.ready = false; render();
   log('[性斗] 已停用');
 }
