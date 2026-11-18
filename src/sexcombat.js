@@ -11,7 +11,7 @@ const d = n => 1 + Math.floor(Math.random() * n);
 const dice = (c, f) => { let s = 0; for (let i = 0; i < c; i++) s += d(f); return s; };
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
-let SC = { state:null, exp:{}, lastFloor:-1, lastSig:'', booted:false, ready:false, panel:null, bound:false };
+let SC = { state:null, exp:{}, lastFloor:-1, lastSig:'', booted:false, ready:false, panel:null, bound:false, domObs:null, promptHook:null, textgenHook:null, mainApiIsOpenai:null };
 
 // ── 脚本库配置 ──
 // 本机设置 = 运行时层（启停按角色、运行态经验）；角色卡 = 创作者配置层（sceneTag / chars 底账）
@@ -156,6 +156,75 @@ function ensureRe() {
     }
   }
   if (a) { if (typeof c.saveSettingsDebounced === 'function') c.saveSettingsDebounced(); log('[性斗] 隐藏正则 ×' + a); }
+}
+
+// ── RUBY 代行隐藏（不依赖正则扩展，双保险） ──
+// 第一层：原生正则扩展脚本（ensureRe，环境正常时生效）；
+// 第二层：显示层 MutationObserver 洗 DOM + 提示词层官方事件钩剥离——正则扩展被禁用/未生效也能隐藏。
+const HIDE_RES = () => ([
+  /<情潮[\s\S]*?<\/情潮[^>]*>/g,
+  /&lt;情潮[\s\S]*?&lt;\/情潮[^>]*>/g,
+  /<report>[\s\S]*?<\/report>/gi,
+  /&lt;report&gt;[\s\S]*?&lt;\/report&gt;/gi,
+]);
+function stripXml(s) { let o = String(s ?? ''); for (const re of HIDE_RES()) o = o.replace(re, ''); return o; }
+
+// 显示层：#chat 上挂 MutationObserver，凡是 .mes_text 里出现情潮 XML / report 一律洗掉
+function ensureDomHide() {
+  if (SC.domObs) return;
+  const chatEl = document.getElementById('chat');
+  if (!chatEl) { setTimeout(ensureDomHide, 1000); return; }
+  const scrub = (el) => {
+    if (!el || !(el instanceof Element)) return;
+    const targets = el.classList?.contains('mes_text') ? [el] : [...(el.querySelectorAll?.('.mes_text') || [])];
+    for (const t of targets) {
+      const html = t.innerHTML; if (!html) continue;
+      const out = stripXml(html);
+      if (out !== html) t.innerHTML = out;
+    }
+  };
+  SC.domObs = new MutationObserver((muts) => {
+    if (!SC.booted) return;
+    for (const m of muts) {
+      m.addedNodes?.forEach((n) => { if (n instanceof Element) scrub(n); else if (n.parentElement) scrub(n.parentElement); });
+      if (m.type === 'characterData' && m.target?.parentElement) scrub(m.target.parentElement);
+    }
+  });
+  SC.domObs.observe(chatEl, { childList: true, subtree: true, characterData: true });
+  scrub(chatEl); // 启动即扫一遍已渲染楼层（含启用前的旧楼层）
+  log('[性斗] RUBY 代行隐藏已挂载（显示层）');
+}
+
+// 提示词层：
+// - chat completion 通道：剥 assistant 历史（主聊天上轮申报不会泄露给 AI）；RUBY 自身分析载荷的
+//   聊天正文在 user 消息里、破限在 system/assistant 首条——均不受影响；
+//   世界书注入的情潮开局/阶段走独立消息，不在 assistant 历史里，不会被误删。
+// - 文本补全通道：final prompt 是单串（含世界书条目），只剥 <report> 块——情潮 XML 必须保留（引擎指导靠它）。
+function ensurePromptHide() {
+  const c = ctx(); if (!c?.eventSource || !c?.eventTypes) return;
+  const mainIsOpenai = c.mainApi === 'openai';
+  if (mainIsOpenai && !SC.promptHook) {
+    SC.promptHook = (generateData) => {
+      if (!SC.booted || !Array.isArray(generateData?.messages)) return;
+      for (const m of generateData.messages) {
+        if (m?.role !== 'assistant') continue;
+        if (typeof m.content === 'string') { const s = stripXml(m.content); if (s !== m.content) m.content = s; }
+        else if (Array.isArray(m.content)) m.content.forEach((p) => { if (typeof p?.text === 'string') p.text = stripXml(p.text); });
+      }
+    };
+    c.eventSource.on(c.eventTypes.CHAT_COMPLETION_SETTINGS_READY, SC.promptHook);
+    log('[性斗] RUBY 代行隐藏已挂载（提示词层 · chat completion）');
+  }
+  if (!mainIsOpenai && !SC.textgenHook) {
+    SC.textgenHook = (generateData) => {
+      if (!SC.booted || typeof generateData?.prompt !== 'string') return;
+      const s = generateData.prompt.replace(/<report>[\s\S]*?<\/report>/gi, '');
+      if (s !== generateData.prompt) generateData.prompt = s;
+    };
+    c.eventSource.on(c.eventTypes.GENERATE_AFTER_DATA, SC.textgenHook);
+    log('[性斗] RUBY 代行隐藏已挂载（提示词层 · 文本补全）');
+  }
+  SC.mainApiIsOpenai = mainIsOpenai;
 }
 
 // ── 场景判断条目（纯格式注入；触发词从配置读，清空=不启用性斗触发） ──
@@ -487,7 +556,7 @@ function bindEvents() {
 // ── 启停 ──
 async function start() {
   if (SC.booted) return; SC.booted = true;
-  ensureP(); ensureRe(); bindEvents();
+  ensureP(); ensureRe(); ensureDomHide(); ensurePromptHide(); bindEvents();
   hydrateCfg();
   await writeRule();
   const rec = await readE(K.state);
@@ -523,7 +592,11 @@ async function safe(fn) { try { await fn(); } catch (e) { warn('[性斗] 失败:
 export async function toggle() { const v = !isEnabled(); setEnabled(v); if (v) await safe(start); else await safe(stop); return isEnabled(); }
 
 // 换卡/重进自动恢复：CHAT_CHANGED 后按当前卡配置重新武装（卡内创作者配置水合为准）
-function refresh() { hydrateCfg(); if (isEnabled()) { if (!SC.booted) safe(start); } else if (SC.booted) safe(stop); }
+function refresh() {
+  hydrateCfg();
+  if (SC.booted) ensurePromptHide(); // 主API可能在运行中切换，补挂对应通道的提示词钩
+  if (isEnabled()) { if (!SC.booted) safe(start); } else if (SC.booted) safe(stop);
+}
 export function init() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(init, 1000); return; }
   c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
