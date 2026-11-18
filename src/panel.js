@@ -1204,7 +1204,7 @@ function wireGlobalInteractions() {
     if (interactionsBound) return;
     interactionsBound = true;
 
-    try { initScriptsTab(); } catch (e) { console.error('[随卡脚本] 初始化失败:', e); }
+    try { scxWire(); } catch (e) { console.error('[随卡脚本] 初始化失败:', e); }
     document.addEventListener('click', (e) => {
         const refGroupHeader = e.target?.closest?.('.ref-group-header');
         if (refGroupHeader && !e.target.closest('.help-tip') && !e.target.closest('.ref-scan-cb')) {
