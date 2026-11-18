@@ -12,7 +12,7 @@ const d = n => 1 + Math.floor(Math.random() * n);
 const dice = (c, f) => { let s = 0; for (let i = 0; i < c; i++) s += d(f); return s; };
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
-let SC = { state:null, exp:{}, lastFloor:-1, lastSig:'', booted:false, ready:false, panel:null, bound:false, domObs:null, promptHook:null, textgenHook:null, mainApiIsOpenai:null };
+let SC = { state:null, exp:{}, lastFloor:-1, lastSig:'', booted:false, ready:false, panel:null, bound:false, domObs:null, promptHook:null, textgenHook:null, mainApiIsOpenai:null, book:'' };
 
 // ── 脚本库配置 ──
 // 本机设置 = 运行时层（启停按角色、运行态经验）；角色卡 = 创作者配置层（sceneTag / chars 底账）
@@ -121,17 +121,42 @@ function lvI(n) {
 const lvD = i => L[Math.max(0, Math.min(4, i))];
 
 // ── 斜杠 ══
+// 目标世界书解析：只认聊天书——聊天已绑定书优先，没有才用 RUBY 自建聊天书；绝不碰角色主世界书。
+// 换书后把性斗条目从另一本聊天书退役，避免双书重复注入。
+async function resolveBook() {
+  if (SC.book) return SC.book;
+  let existing = '';
+  try { existing = String(await worldbook.getExistingChatBookName() || '').trim(); } catch { existing = ''; }
+  SC.book = existing || await worldbook.getChatBookName();
+  safe(retireOthers);
+  log('[性斗] 注入目标世界书：' + SC.book);
+  return SC.book;
+}
+async function retireOthers() {
+  const mine = SC.book;
+  try {
+    const rb = await worldbook.getChatBookName();
+    if (!rb || rb === mine) return;
+    const recs = await worldbook.readBookEntriesByName(rb, '通用性斗_', { all: true });
+    const keys = new Set([K.rule, K.report, K.open, K.stage, K.state, K.exp]);
+    (recs || []).forEach(r => (r.keys || []).forEach(k => keys.add(k)));
+    for (const k of keys) writeE(k, '', { book: rb, constant: false });
+    log('[性斗] 旧聊天书性斗条目退役：' + rb);
+  } catch { /* 忽略 */ }
+}
 async function run(cmd) { return String(await st(cmd) ?? ''); }
 async function readE(key, book) {
-  const raw = await run('/ruby read key=' + q(key) + ' json=true book=' + (book || 'chat'));
+  const b = book || await resolveBook();
+  const raw = await run('/ruby read key=' + q(key) + ' json=true book=' + b);
   try { return JSON.parse(raw); } catch { return null; }
 }
 async function writeE(key, content, o = {}) {
+  const b = o.book || await resolveBook();
   const v = '_sx_' + Date.now().toString(36) + Math.floor(Math.random() * 999);
   await run('/setvar key=' + v + ' ' + q(content));
   const pos = o.pos ?? o.position ?? 1;
   const ord = o.ord ?? o.order ?? 210;
-  let cmd = '/ruby RPC~write~key=' + key + '~var=' + v + '~book=' + (o.book || 'chat') + '~position=' + pos + '~order=' + ord + (o.constant !== undefined ? '~constant=' + (o.constant ? 'true' : 'false') : '') + (o.depth !== undefined ? '~depth=' + o.depth : '');
+  let cmd = '/ruby RPC~write~key=' + key + '~var=' + v + '~book=' + b + '~position=' + pos + '~order=' + ord + (o.constant !== undefined ? '~constant=' + (o.constant ? 'true' : 'false') : '') + (o.depth !== undefined ? '~depth=' + o.depth : '');
   if (o.comment) cmd += '~comment=' + o.comment;
   await run(cmd);
 }
@@ -764,7 +789,7 @@ async function stop() {
     (legacyEnds || []).forEach(r => writeE(r.keys?.[0] || ('通用性斗_收场_' + r.uid), '', { constant: false }));
   } catch { /* 清理失败不影响主流程 */ }
   await writeE(K.state, '', { constant: false });
-  SC.exp = {}; SC.state = null; SC.booted = false; SC.ready = false; domPass();
+  SC.exp = {}; SC.state = null; SC.booted = false; SC.ready = false; SC.book = ''; domPass();
   log('[性斗] 已停用');
 }
 
@@ -791,7 +816,7 @@ function refresh() {
 }
 export function init() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(init, 1000); return; }
-  c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
+  c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; SC.book = ''; refresh(); });
   refresh();
 }
 
