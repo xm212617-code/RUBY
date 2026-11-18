@@ -427,16 +427,16 @@ function stageT(n, e) {
 }
 function stageTAll() {
   const s = SC.state;
-  const parts = [stageT(u(), s.user.ex)];
+  const parts = [stageT(uName(), s.user.ex)];
   s.opps.forEach(o => { if (!o.exited && o.present !== false) parts.push(stageT(o.name, o.ex)); });
   return parts.filter(Boolean).join('\n');
 }
 function d1T(n) { return '<情潮指南 类型="不应期" 角色="' + n + '">\n扮演指导：' + n + '已进入不应期——敏感度大幅钝化，性刺激不引发反应。写：不应期身体事实、余韵。不写：性刺激引发的反应。\n</情潮指南>'; }
 function d2T(n) { return '<情潮指南 类型="user高潮后反应" 角色="' + n + '">\n扮演指导：' + n + '还没到顶，悬在半途。反应按性格：假高潮（破绽可见）/嘲讽/失望/宽慰/照顾；催促=他还动着时她推他，他射了她才接话。\n</情潮指南>'; }
 function bOpp(n) { return '<情潮收场 类型="对手高潮" 角色="' + n + '">\n写作指导：' + n + '已高潮进入不应期——写其后状态与余韵。禁止继续主动性行为。\n</情潮收场>'; }
-function bUser(n) { return '<情潮收场 类型="user高潮">写作指导：' + u() + '已高潮进入不应期——禁止再写性行为。' + n + '的反应按人设：假高潮/嘲讽/安慰/口头认下。\n</情潮收场>'; }
+function bUser(n) { return '<情潮收场 类型="user高潮">写作指导：' + uName() + '已高潮进入不应期——禁止再写性行为。' + n + '的反应按人设：假高潮/嘲讽/安慰/口头认下。\n</情潮收场>'; }
 function bFl() { return '<情潮收场 类型="疲软收场">写作指导：双方均进入不应期——性行为无法继续。写疲软与收束。无人到顶。禁止继续性行为。\n</情潮收场>'; }
-function bWin() { return '<情潮收场 类型="user胜利终局">写作指导：在场对手全部高潮进入不应期——写' + u() + '的从容，由其决定如何对待众人。\n</情潮收场>'; }
+function bWin() { return '<情潮收场 类型="user胜利终局">写作指导：在场对手全部高潮进入不应期——写' + uName() + '的从容，由其决定如何对待众人。\n</情潮收场>'; }
 
 // ── 持久化 ──
 // 世界书只存数据条目（当局状态/经验/等级）；战局指导内容走正文注入（syncBlocks 三位置）。
@@ -732,5 +732,6 @@ export function init() {
   c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
   refresh();
 }
+
 
 
