@@ -175,34 +175,33 @@ const HIDE_RES = () => ([
 ]);
 function stripXml(s) { let o = String(s ?? ''); for (const re of HIDE_RES()) o = o.replace(re, ''); return o; }
 
-// 显示层：#chat 上挂 MutationObserver——洗掉情潮 XML / report，并把 <情潮/> 渲染锚点替换为内联面板
+// 显示层：#chat 上挂 MutationObserver——洗掉情潮 XML / report；渲染由 RUBY 代行（refreshInline），
+// AI 不输出任何渲染锚点。
 function ensureDomHide() {
   if (SC.domObs) return;
   const chatEl = document.getElementById('chat');
   if (!chatEl) { setTimeout(ensureDomHide, 1000); return; }
-  const markerRe = /<情潮\s*\/>|<情潮>\s*<\/情潮>/g;
   const scrub = (el) => {
     if (!el || !(el instanceof Element)) return;
     const targets = el.classList?.contains('mes_text') ? [el] : [...(el.querySelectorAll?.('.mes_text') || [])];
     for (const t of targets) {
       const html = t.innerHTML; if (!html) continue;
-      let out = stripXml(html);
-      if (markerRe.test(out)) {
-        markerRe.lastIndex = 0;
-        out = out.replace(markerRe, () => inlinePanelHTML()); // 函数替换，防 $ 转义
-      }
+      const out = stripXml(html);
       if (out !== html) t.innerHTML = out;
     }
   };
   SC.domObs = new MutationObserver((muts) => {
     if (!SC.booted) return;
+    let touched = false;
     for (const m of muts) {
-      m.addedNodes?.forEach((n) => { if (n instanceof Element) scrub(n); else if (n.parentElement) scrub(n.parentElement); });
-      if (m.type === 'characterData' && m.target?.parentElement) scrub(m.target.parentElement);
+      m.addedNodes?.forEach((n) => { if (n instanceof Element) { scrub(n); touched = true; } else if (n.parentElement) { scrub(n.parentElement); touched = true; } });
+      if (m.type === 'characterData' && m.target?.parentElement) { scrub(m.target.parentElement); touched = true; }
     }
+    if (touched) safe(refreshInline); // 消息重渲染（流式/切层/编辑）后重挂正文内面板（幂等，无状态则空操作）
   });
   SC.domObs.observe(chatEl, { childList: true, subtree: true, characterData: true });
   scrub(chatEl); // 启动即扫一遍已渲染楼层（含启用前的旧楼层）
+  safe(refreshInline);
   log('[性斗] RUBY 代行隐藏已挂载（显示层）');
 }
 
@@ -264,7 +263,7 @@ function ruleT() {
   if (T) {
     lines.push(
       T + '=真正发生性行为（性器相接即算）。',
-      '场景类型为 ' + T + ' 时：正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入），并另起一行输出 <情潮/>（情潮面板渲染锚点；其余楼层禁止输出 <情潮/>）。',
+      '场景类型为 ' + T + ' 时：正文末尾 <' + tag + '> 之后附 <report>（report 协议见情潮开局注入）。',
     );
   }
   return lines.join('\n');
@@ -615,7 +614,7 @@ async function tick() {
 function restart(fl, chars) { log('[性斗] 换人重开 @楼' + fl); newB(fl, chars); }
 
 // ── 面板 ──
-// 面板内层 HTML：悬浮面板（render）与消息内渲染锚点（<情潮/> 捕捉替换）共用
+// 面板内层 HTML：正文内情潮面板共用
 function panelInner(s) {
   if (!s) return '';
   if (s.ended) {
@@ -639,20 +638,34 @@ function panelInner(s) {
     '<div class="scx-chip"><span class="scx-av opp">彼</span><span>' + esc(s.opps.map(o => o.name).join('、')) + '</span></div></div>' + bars +
     '<div class="scx-fatigue"><span class="scx-ftag">疲软</span><div class="scx-ftrack"><div class="scx-ffill" style="width:' + s.round * 10 + '%"></div></div><span class="scx-fnum">' + s.round + '/10</span></div>';
 }
-// 消息内渲染锚点：<情潮/> → 内联情潮面板（战斗期间有状态才渲染，否则移除标记）
+// 内联面板外壳：战斗期间挂到最新 AI 楼正文显示层末尾，无状态/清场时移除
 function inlinePanelHTML() {
   const s = SC.state;
   if (!s || s.cleared) return '';
   return '<div class="scx-inline"><div class="scx-inline-head">' + H + ' 情潮战况</div><div class="scx-inline-body">' + panelInner(s) + '</div></div>';
 }
-// 正文内渲染刷新：状态变化后把所有已渲染的内联面板更新到当前战况（无状态则移除）
+// 正文内渲染：RUBY 代行——把情潮面板挂到最新一层 AI 回复的显示层末尾（不动消息数据、不进提示词、AI 零参与）。
+// 幂等：无状态/清场时清掉全部面板；有状态时保证最新 AI 楼恰好一个面板并刷新其内容。
 function refreshInline() {
+  const chatEl = document.getElementById('chat'); if (!chatEl) return;
   const s = SC.state;
-  document.querySelectorAll('#chat .mes_text .scx-inline').forEach((el) => {
-    if (!s || s.cleared) { el.remove(); return; }
-    const body = el.querySelector('.scx-inline-body');
-    if (body) body.innerHTML = panelInner(s);
-  });
+  let target = null;
+  if (s && !s.cleared) {
+    const mess = chatEl.querySelectorAll('.mes');
+    for (let i = mess.length - 1; i >= 0; i--) {
+      const el = mess[i];
+      if (el.getAttribute('is_user') === 'true' || el.getAttribute('is_system') === 'true') continue;
+      const t = el.querySelector('.mes_text');
+      if (t) { target = t; break; }
+    }
+  }
+  [...chatEl.querySelectorAll('.mes_text .scx-inline')].forEach((el) => { if (el.closest('.mes_text') !== target) el.remove(); });
+  if (!target) return;
+  let panel = target.querySelector('.scx-inline');
+  if (!panel) { target.insertAdjacentHTML('beforeend', inlinePanelHTML()); return; }
+  const body = panel.querySelector('.scx-inline-body');
+  const want = panelInner(s);
+  if (body && body.innerHTML !== want) body.innerHTML = want;
 }
 function bindEvents() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(bindEvents, 1000); return; }
@@ -719,4 +732,5 @@ export function init() {
   c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; refresh(); });
   refresh();
 }
+
 
