@@ -1996,3 +1996,63 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
 }
 #chat .scx-scene .scx-chip2.cast { border-color: var(--ra-border-strong); color: var(--ra-text); }
 #chat .scx-scene .scx-type { color: var(--ra-ink-text); background: var(--ra-brand); border-color: var(--ra-brand-deep); }
+
+
+/* ---------- 场景卡升级（学县城结构：meta 行 + 角色卡 + 类型徽章） ---------- */
+#chat .scx-scene { padding: 12px 14px; gap: 10px; }
+#chat .scx-scene .scx-scene-head { display: flex; flex-direction: column; gap: 8px; }
+#chat .scx-scene .scx-scene-meta { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+#chat .scx-scene .scx-scene-type {
+    align-self: flex-start;
+    padding: 2px 12px;
+    border-radius: 99px;
+    border: 1px solid var(--ra-border-strong);
+    background: var(--ra-panel-2);
+    color: var(--ra-text);
+    font-size: 11px; font-weight: 800; letter-spacing: .1em;
+}
+#chat .scx-scene .scx-scene-type.hot {
+    background: var(--ra-brand);
+    border-color: var(--ra-brand-deep);
+    color: var(--ra-ink-text);
+}
+#chat .scx-scene .scx-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ra-brand);
+    box-shadow: 0 0 8px var(--ra-brand);
+}
+#chat .scx-scene .scx-chip2 {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 12px;
+    border: 1px solid var(--ra-border);
+    border-radius: 99px;
+    background: var(--ra-panel-2);
+    font-size: 11.5px; font-weight: 600;
+    color: var(--ra-text);
+}
+#chat .scx-scene .scx-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+#chat .scx-scene .scx-card {
+    flex: 0 1 180px; min-width: 140px;
+    padding: 9px 12px;
+    border: 1px solid var(--ra-border);
+    border-radius: var(--ra-radius-m);
+    background: var(--ra-panel-2);
+}
+#chat .scx-scene .scx-card-name {
+    font-size: 13px; font-weight: 800; color: var(--ra-text);
+    display: flex; align-items: center; gap: 6px;
+}
+#chat .scx-scene .scx-stage {
+    flex: none; padding: 1px 7px; border-radius: 99px;
+    font-size: 9px; font-weight: 700;
+    color: var(--ra-ink-text); background: var(--ra-brand);
+}
+#chat .scx-scene .scx-card-state {
+    margin-top: 3px;
+    font-size: 11px; color: var(--ra-text-2);
+}
+#chat .scx-scene .scx-card-sub {
+    margin-top: 3px;
+    font-size: 10.5px; font-weight: 700; color: var(--ra-text-3);
+}
+#chat .scx-scene .scx-dist { color: var(--ra-blue); }

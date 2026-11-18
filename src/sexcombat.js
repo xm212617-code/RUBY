@@ -230,27 +230,46 @@ function replaceSceneBlocks(html, isLatest) {
   out = out.replace(new RegExp('&lt;' + te + '[^&]*&gt;([\\s\\S]*?)&lt;\\/' + te + '&gt;', 'gi'), (m, inner) => card(inner));
   return out;
 }
+// 场景卡（学县城内核：捕获 → 解析 → 按底账解析角色 → 结构化渲染）
+// - meta 行：时间/地点 chips（脉冲点）
+// - 角色卡：名字 | 状态（来自捕获行）+ 等级名（底账）+ 战斗中加 阶段/距顶
+// - 最新一层额外并入战况通报面板
 function sceneCardHTML(text, isLatest) {
   const s = String(text || '');
   const g = (re) => { const m = s.match(re); return m ? m[1].trim() : ''; };
   const loc = g(/地点\s*[：:]\s*([^\n]+)/);
   const time = g(/时间\s*[：:]\s*([^\n]+)/);
   const type = g(/场景类型\s*[：:]\s*([^\n]+)/);
-  const chars = [];
+  const st = SC.state && !SC.state.cleared ? SC.state : null;
+  const cast = [];
   const cm = s.match(/在场角色\s*[：:]\s*([\s\S]*?)(?=\n\s*\n|\n\s*<|$)/i);
   if (cm) cm[1].split(/\r?\n/).forEach((l) => {
     let t = l.trim().replace(/^[-•*·—]\s*/, '');
     if (!t || /^[^|]{0,8}[：:]/.test(t)) return;
-    const n = (t.includes('|') ? t.split('|')[0] : t.split(/[、，,]/)[0]).trim();
-    if (n && n !== uName() && !chars.includes(n)) chars.push(esc(n));
+    t.split(/[、，,]/).forEach((part) => {
+      const n = (part.includes('|') ? part.split('|')[0] : part).trim();
+      const stat = part.includes('|') ? part.split('|')[1].trim() : '';
+      if (!n || n === uName() || cast.some((c) => c.n === n)) return;
+      cast.push({ n, stat });
+    });
   });
-  const chips = [];
-  if (time) chips.push(esc(time));
-  if (loc) chips.push(esc(loc));
-  if (type) chips.push('<span class="scx-type">' + esc(type) + '</span>');
+  const meta = [];
+  if (time) meta.push('<span class="scx-chip2"><span class="scx-dot"></span>' + esc(time) + '</span>');
+  if (loc) meta.push('<span class="scx-chip2"><span class="scx-dot"></span>' + esc(loc) + '</span>');
+  const cards = cast.map((c) => {
+    const opp = st ? st.opps.find(o => o.name === c.n) : null;
+    const stage = opp ? '<span class="scx-stage">' + esc(S5[Math.max(0, stageOf(opp.ex) - 1)]) + '</span>' : '';
+    const dist = opp ? '<span class="scx-dist">距顶' + Math.max(0, opp.pos - st.p) + '</span>' : '';
+    return '<div class="scx-card">' +
+      '<div class="scx-card-name">' + esc(c.n) + stage + '</div>' +
+      (c.stat ? '<div class="scx-card-state">' + esc(c.stat) + '</div>' : '') +
+      '<div class="scx-card-sub">' + esc(L[lvI(expOf(c.n))].n) + (dist ? ' · ' + dist : '') + '</div>' +
+      '</div>';
+  }).join('');
+  const typeChip = type ? '<div class="scx-scene-type' + (type.toUpperCase() === String(cfg().trigger || '').toUpperCase() ? ' hot' : '') + '">' + esc(type.toUpperCase()) + '</div>' : '';
   return '<div class="scx-scene">' +
-    (chips.length ? '<div class="scx-scene-meta">' + chips.map((c) => '<span class="scx-chip2">' + c + '</span>').join('') + '</div>' : '') +
-    (chars.length ? '<div class="scx-scene-cast">' + chars.map((n) => '<span class="scx-chip2 cast">' + n + '</span>').join('') + '</div>' : '') +
+    (meta.length || typeChip ? '<div class="scx-scene-head">' + (typeChip || '') + (meta.length ? '<div class="scx-scene-meta">' + meta.join('') + '</div>' : '') + '</div>' : '') +
+    (cards ? '<div class="scx-cards">' + cards + '</div>' : '') +
     (isLatest ? battlePanelHTML() : '') +
     '</div>';
 }
@@ -684,6 +703,21 @@ async function syncBlocks() {
 }
 
 // ── tick ──
+// ── 已扫描水位线（聊天元数据）：开场白里的触发词错过一次也能在下一次 tick 补扫，
+// 且聊天重载后不会从旧开场白重复开局（清场后旧楼层视为已消费）。
+function scannedFloor() {
+  try { const v = ctx()?.chatMetadata?.sx_scanned; return typeof v === 'number' ? v : -1; } catch { return -1; }
+}
+function markScanned(f) {
+  try {
+    const c = ctx(); if (!c?.chatMetadata) return;
+    const cur = typeof c.chatMetadata.sx_scanned === 'number' ? c.chatMetadata.sx_scanned : -1;
+    if (f > cur) {
+      c.chatMetadata.sx_scanned = f;
+      if (typeof c.saveMetadataDebounced === 'function') c.saveMetadataDebounced();
+    }
+  } catch { /* 忽略 */ }
+}
 async function tick() {
   const c = ctx(); if (!c?.chat?.length) return;
   const last = c.chat.length - 1;
@@ -692,9 +726,11 @@ async function tick() {
   SC.lastFloor = last; SC.lastSig = sig;
   try {
     if (SC.state && !SC.state.active && !SC.state.cleared && last > SC.state.endedFloor) {
-      log('[性斗] 清场 @楼' + last); SC.state.cleared = true; await persist(); SC.state = null; domPass(); await safe(syncBlocks); return;
+      log('[性斗] 清场 @楼' + last); SC.state.cleared = true; await persist(); SC.state = null; markScanned(last); domPass(); await safe(syncBlocks); return;
     }
-    let scan = SC.state?.active ? Math.max(SC.state.scanFloor || SC.state.startFloor, SC.state.startFloor, SC.state.lastSettledFloor + 1) : last;
+    let scan = SC.state?.active
+      ? Math.max(SC.state.scanFloor || SC.state.startFloor, SC.state.startFloor, SC.state.lastSettledFloor + 1)
+      : scannedFloor() + 1;
     const TRr = trigRe();
     for (let f = Math.min(scan, last); f <= last; f++) {
       const msg = c.chat[f]; if (!msg || msg.is_user) continue;
@@ -715,6 +751,7 @@ async function tick() {
       }
     }
     if (SC.state) SC.state.scanFloor = Math.max(SC.state.scanFloor || SC.state.startFloor, last + 1);
+    markScanned(last);
     persist();
     await safe(ensureRule);
     await safe(syncBlocks);
@@ -816,7 +853,12 @@ function refresh() {
 }
 export function init() {
   const c = ctx(); if (!c?.eventSource || !c?.eventTypes) { setTimeout(init, 1000); return; }
-  c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => { SC.lastFloor = -1; SC.book = ''; refresh(); });
+  // 聊天加载时身份/启用态可能滞后一次事件——延迟二次武装，开场白触发词不再漏检
+  c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => {
+    SC.lastFloor = -1; SC.book = '';
+    refresh();
+    setTimeout(() => { SC.book = ''; refresh(); }, 700);
+  });
   refresh();
 }
 
