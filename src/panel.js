@@ -1003,6 +1003,7 @@ function wireTabs(root) {
   stEl.textContent = SCX_TAB_CSS;
   document.head.appendChild(stEl);
 
+  function escH(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function scxData() {
     const r = config.resolveConfig();
     r.data.scripts = r.data.scripts || { sexcombat: { enabled: false }, installed: {} };
@@ -1024,7 +1025,7 @@ function wireTabs(root) {
       getCharName: () => (ctx() || {}).name2 || '',
       log: (...a) => log('[脚本:' + id + ']', ...a),
       getLevels: () => sexcombat.getLevels(),
-      setLevel: (n, e) => sexcombat.setInitialLevel(n, e),
+      setLevel: (n, e) => sexcombat.setInitLevel(n, e),
       levelNameFor: (e) => sexcombat.levelNameFor(e),
       registerUI: (fn) => { handles.ui = fn; },
       onEnable: (fn) => { handles.onEnable = fn; },
@@ -1142,7 +1143,7 @@ function wireTabs(root) {
       const e = parseInt(bzExp.value, 10);
       if (!n) { bzHint.textContent = '请输入角色名字'; return; }
       if (isNaN(e) || e < 0 || e > 100) { bzHint.textContent = '经验需为 0-100 的数值'; return; }
-      sexcombat.setInitialLevel(n, e);
+      sexcombat.setInitLevel(n, e);
       bzName.value = ''; bzExp.value = ''; bzHint.textContent = '已登记';
       scxRenderBzList();
     });
