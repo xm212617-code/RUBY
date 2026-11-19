@@ -60,14 +60,15 @@ export function installAgentChat({ document: doc = globalThis.document, getConte
         else notify('Agent模式请在聊天框发送需求，或用停止按钮中止当前任务');
     };
     const updateBadge = () => {
-        const textarea = doc.querySelector('#send_textarea');
-        if (!textarea?.parentElement) return;
+        const form = doc.querySelector('#send_form');
+        if (!form?.parentElement) return;
         let badge = doc.getElementById('ruby-agent-composer-badge');
         if (!badge) {
             badge = doc.createElement('div'); badge.id = 'ruby-agent-composer-badge';
             badge.setAttribute('role', 'status');
-            textarea.parentElement.insertBefore(badge, textarea);
         }
+        // The native textarea lives in a non-wrapping flex row. Never add siblings there.
+        if (badge.parentElement !== form.parentElement) form.parentElement.insertBefore(badge, form);
         const state = controller.getState();
         badge.hidden = state.mode !== 'agent';
         badge.textContent = state.running ? `RUBY Agent：${state.phase} · 新输入会保留，完成或停止后发送` : 'RUBY Agent 写卡接管中 · 直接在此输入需求并发送';

@@ -1828,6 +1828,6 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
 }
 #ruby_analyzer_ext_settings .ra-cb-remove:hover { opacity: 1; }
 /* Agent ownership indicator beside the native composer. */
-#ruby-agent-composer-badge { flex-basis:100%; padding:6px 12px; border:1px solid #a64e59; border-radius:6px; background:#7a283226; color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.6; }
+#ruby-agent-composer-badge { display:block; box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:0 0 4px; padding:4px 10px; border:1px solid #a64e59; border-radius:6px; background:#7a283226; color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; pointer-events:none; }
 #ruby-agent-composer-badge[hidden] { display:none; }
 #ra_panel .form-section[hidden] { display:none; }
