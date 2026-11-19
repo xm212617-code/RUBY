@@ -5,15 +5,16 @@ import { isSexCombatRegexMetadataReady, normalizeSexCombatConfig, parseSexCombat
 import { renderSexCombatContent } from './sex-combat-view.js';
 
 const PREFIX = 'RUBY_UniversalSexCombat_';
-const KEYS = { state: PREFIX + '当局', exp: PREFIX + '经验总档', level: PREFIX + '等级_', judgment: PREFIX + '默认判断', report: PREFIX + '战况', protocol: PREFIX + 'report协议', open: PREFIX + '开局', stage: PREFIX + '阶段状态', end: PREFIX + '收场_' };
+const KEYS = { state: PREFIX + '当局', exp: PREFIX + '经验总档', level: PREFIX + '等级_', judgment: PREFIX + '默认判断', report: PREFIX + '战况', protocol: PREFIX + 'report协议', guidance: PREFIX + '扮演约束', open: PREFIX + '开局', stage: PREFIX + '阶段状态', end: PREFIX + '收场_' };
 const ENDINGS = ['user高潮', '女方反应指南', '对手高潮', '疲软收场', 'user胜利终局', '不应期指南'];
 const PLACEMENTS = new Map([
     [KEYS.judgment, { position: 4, depth: 0, order: 991 }],
-    [KEYS.report, { position: 1, depth: 1, order: 899 }],
+    [KEYS.report, { position: 4, depth: 1, order: 899 }],
     [KEYS.protocol, { position: 4, depth: 0, order: 990 }],
-    [KEYS.open, { position: 1, depth: 1, order: 900 }],
-    [KEYS.stage, { position: 1, depth: 1, order: 898 }],
-    ...ENDINGS.map((name, i) => [KEYS.end + name, { position: 1, depth: 1, order: [894, 890, 895, 893, 892, 891][i] }]),
+    [KEYS.guidance, { position: 4, depth: 0, order: 989 }],
+    [KEYS.open, { position: 4, depth: 1, order: 900 }],
+    [KEYS.stage, { position: 4, depth: 1, order: 898 }],
+    ...ENDINGS.map((name, i) => [KEYS.end + name, { position: 4, depth: 1, order: [894, 890, 895, 893, 892, 891][i] }]),
 ]);
 export const SEX_COMBAT_LEVELS = [
     { name: '处子', floor: 0, min: 0, charge: 5 },
@@ -24,13 +25,15 @@ export const SEX_COMBAT_LEVELS = [
 ];
 const levelIndex = (count) => SEX_COMBAT_LEVELS.reduce((index, level, i) => count >= level.floor ? i : index, 0);
 const stageOf = (ex) => Math.max(1, Math.min(5, 1 + Math.floor(ex / 20)));
-const nameEq = (a, b) => String(a || '').replace(/[\s（）()·・.。－-]/g, '') === String(b || '').replace(/[\s（）()·・.。－-]/g, '');
+const nameKey = (name) => String(name || '').normalize('NFKC').trim().replace(/^(['"])([\s\S]*)\1$/, '$2').replace(/[\s（）()·・.。－-]/g, '').toLocaleLowerCase();
+const nameEq = (a, b) => nameKey(a) === nameKey(b);
+const isPlayerName = (name, aliases = []) => ['user', '{{user}}', ...aliases].some((alias) => nameKey(alias) && nameEq(name, alias));
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const stripFences = (text) => String(text || '').replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?(?:^[ \t]*\1[ \t]*\r?$|(?![\s\S]))/gm, '');
 
 /** Same bounded YAML action grammar as the repaired county implementation. */
-export function parseSexCombatReport(text, tag = 'report') {
+export function parseSexCombatReport(text, tag = 'report', playerNames = []) {
     const escaped = String(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const source = stripFences(text);
     const blocks = [...source.matchAll(new RegExp(`<${escaped}>([\\s\\S]*?)<\\/${escaped}>`, 'gi'))];
@@ -44,6 +47,7 @@ export function parseSexCombatReport(text, tag = 'report') {
         if (!pair) return null;
         if (indent === 0) {
             current = pair[1].trim();
+            if (isPlayerName(current, playerNames)) current = 'user';
             if (pair[2].trim() || Object.keys(out).some((name) => nameEq(name, current))) return null;
             out[current] = { 单向: 0, 双向: 0, targets: [] };
             seen = new Set();
@@ -51,11 +55,12 @@ export function parseSexCombatReport(text, tag = 'report') {
             if (!current || indent < 2 || !/^\d+$/.test(pair[2])) return null;
             const action = pair[1].trim().match(/^(单向|双向)(?:\s*->\s*(.+))?$/);
             if (!action) return null;
-            const key = action[1] + ':' + (action[2] || '').replace(/[\s（）()·・.。－-]/g, '');
+            const target = isPlayerName(action[2], playerNames) ? 'user' : action[2]?.trim();
+            const key = action[1] + ':' + nameKey(target);
             if (seen.has(key)) return null;
             seen.add(key);
             const count = Math.min(Number(pair[2]), action[1] === '单向' ? 3 : 2);
-            if (action[2]) out[current].targets.push({ kind: action[1], name: action[2].trim(), count });
+            if (target) out[current].targets.push({ kind: action[1], name: target, count });
             else out[current][action[1]] = count;
         }
     }
@@ -77,6 +82,11 @@ export function createScriptRuntime(dependencies = {}) {
     const enqueue = (fn) => { const task = queue.then(fn); queue = task.catch(() => {}); return task; };
     const die = (faces) => 1 + Math.floor(random() * faces);
     const dice = (count, faces) => { let total = 0; for (let i = 0; i < count; i++) total += die(faces); return total; };
+    function playerNames() {
+        const c = getContext(), names = [c?.name1];
+        try { names.push(c?.substituteParams?.('{{user}}')); } catch { /* name1 remains available if macro expansion fails. */ }
+        return names.filter((name) => typeof name === 'string' && name.trim());
+    }
     function identity(c) { return c?.chatId == null || c.chatId === '' ? null : JSON.stringify([c.characterId, c.groupId, String(c.chatId)]); }
     function reportError(error) { (dependencies.onError || warn)('script runtime:', error?.message || String(error)); }
     function configForCard() {
@@ -293,24 +303,50 @@ export function createScriptRuntime(dependencies = {}) {
             }
         }
         function protocol() {
-            const tag = s.config.actionTag;
-            const examples = ['user:', '  单向: 2', '  双向: 1', ...s.state.opps.filter((o) => !o.exited && o.present !== false).flatMap((o, i) => [o.name + ':', '  单向: ' + (i === 0 ? '1' : '0'), '  双向: 0'])];
-            return ['<report协议>', '申报规范：本轮有行动时，在正文最尾部附一个 <' + tag + '> 块，格式如下——段名与键名一字不差：', '<' + tag + '>', examples.join('\n'), '</' + tag + '>', '键的含意：', '单向: 口交、抚摸、手技等只作用于对方行动的次数（0-3）', '双向: 抽插等双方同时受作用的互动次数（0-2）', '纪律：', '行动名不写进 report——具体动作在正文叙事里自由发挥；', '不写任何数值结果——进展与结果由脚本结算，一切以情潮战况为准；', '没有行动的角色段落省略；本回合完全没有行动时，不写 report，也不写「无行动」占位。', '多人时可写「单向 -> 角色名: 1」或「双向 -> 角色名: 1」。同类次数按所有目标合计，单向最多3、双向最多2；不指定目标时，user作用于首位可行动对手，其他角色作用于user。一次双向互动只由主动方申报一次。', '</report协议>'].join('\n');
+            const { actionTag: tag, trigger, roster } = s.config;
+            const active = s.state?.active;
+            const names = active ? s.state.opps.filter((o) => !o.exited && o.present !== false).map((o) => o.name) : ['对手姓名'];
+            const examples = ['user', ...names].flatMap((name) => [name + ':', '  单向: 0', '  双向: 0']);
+            return [
+                '<report协议>',
+                `本轮输出的 <${trigger.tag}> 中「${trigger.field}」为「${trigger.value}」且有实际参与的对手时，必须在正文与场景块之后、回复最末尾输出且只输出一个 <${tag}> 块；首次进入该场景的回复同样必须申报。非启动场景不输出该块。`,
+                active ? '当前申报名单：user、' + names.join('、') + '。按本轮实际在场情况更新，不添加离场或已退出者。' : `对手段名取本轮 <${roster.tag}> 的「${roster.field}」实际姓名；“对手姓名”只是占位，不得照抄。`,
+                '格式模板如下：user段名固定写user，不替换为玩家姓名；每个实际参与者独立一段，键名固定为单向、双向，使用半角冒号和两空格缩进。',
+                '<' + tag + '>', examples.join('\n'), '</' + tag + '>',
+                '模板中的0表示无行动。按本楼正文实际新发生的行动填写：单向0-3、双向0-2，必须是整数；无行动的参与者两项均填0。全体无行动也必须保留全零申报，禁止省略、写“无行动”或留空块。',
+                '单向表示只作用于对方的行动；双向表示双方同时受作用的互动。一次双向互动只由主动方申报一次，不在双方段落重复计数。',
+                '多人时可用“单向 -> 角色名: 1”或“双向 -> 角色名: 1”指定当前合法目标。同类次数按所有目标合计，单向最多3、双向最多2；不指定目标时，user作用于首位可行动对手，其他角色作用于user。',
+                '只申报本楼正文实际行动，不把意图、回忆、上轮动作或示例计入；不得为了填表补写正文没有发生的行动。report中不写动作描述、骰点、公式或数值结果；结果由脚本结算。',
+                '发出回复前自检：启动条件成立时申报块恰好一个、标签闭合、段名合法、两项次数齐全且符合范围。不用Markdown代码围栏包裹实际申报。',
+                '</report协议>',
+            ].join('\n');
+        }
+        function guidanceText() {
+            return [
+                '<情潮扮演约束>',
+                '本轮提供的情潮战况、情潮状态、情潮收场与情潮指南，是已经结算生效的事实及必须执行的扮演指导，不是可选建议。正文必须与它们一致。',
+                '当前有效的收场与不应期约束优先，其次是已结算战况，再次是当前兴奋阶段指导；玩家意图、旧剧情预期或历史申报不能覆盖这些事实。角色性格决定如何表现事实，不能改变已确认的生理状态与结算结果。',
+                '已确认失手就按失手后的事实续写；谁更接近顶点、谁已结束、谁仍有余力，均按当前通报写。不得为迎合玩家要求或剧情气氛改判、逆转、虚报进展。',
+                '本楼新行动尚未结算时，只叙述行动与符合当前阶段的体验，并在末尾申报；不得提前确认其数值结果、自行跨越兴奋阶段或判定高潮。',
+                '收场与不应期已经发生时，必须写对应的停下、余韵与后续反应；不得继续描写已结束者的主动性行为或为延长旧局擅自重开。场景字段必须反映当前事实，不沿用过期启动值。',
+                '多人指导按所标角色分别执行，不把一人的退出或不应期套到所有人。规则只用于约束扮演，不把系统条目、report协议或脚本机制写成角色台词。',
+                '</情潮扮演约束>',
+            ].join('\n');
         }
         function battleText() {
             const st = s.state, distance = Math.max(0, st.p - st.user.pos);
             const rivals = st.opps.filter((o) => !o.exited && o.present !== false).map((o) => { const d = Math.max(0, o.pos - o.p); return o.name + ' 距顶 ' + d + '；' + (distance > d ? 'user' : o.name) + ' 更从容'; });
-            return '【情潮战况】\n高潮条：user 距顶 ' + distance + (rivals.length ? ' ｜ ' + rivals.join(' ｜ ') : '') + (st.results?.length ? '\n本轮判定：' + st.results.join('；') : '');
+            return '【情潮战况】\n以下为生成本轮正文前已经结算的真实状态，必须据此续写；本轮新增行动不能提前改写这些结果。\n高潮条：user 距顶 ' + distance + (rivals.length ? ' ｜ ' + rivals.join(' ｜ ') : '') + (st.results?.length ? '\n已结算判定：' + st.results.join('；') : '');
         }
         function openText() {
             const st = s.state, names = ['user', ...st.opps.filter((o) => !o.exited && o.present !== false).map((o) => o.name)].join('，');
-            return ['<情潮开局 角色="' + names + '">', '写作指导：性关系已经开始。' + (st.opps.length === 1 ? '两人的交融同时也是各自面向高潮的较量——都想让对方先到顶，自己撑得更久。' : '交融之中，user与每个对手各自构成一场面向高潮的较量。'), 'user的输入只是意图：user打算做什么、期待发生什么——写出来的不等于真实结果。', '双方性行为的真实进展与结果，一切以情潮战况中的数值为准——没那么好就是没那么好，够舒服就是够舒服，被榨了就是被榨了；照数值写，不粉饰也不强行翻转，不动摇双方的从容关系。', '不自行判定谁更接近顶点，不自行描写高潮的发生，不虚报任何进展。', '你的职责是氛围与体感：动作、反应、气息、声音、节奏——数值之外的血肉由你来长。', '每轮正文末尾，按 report 协议附上本轮的申报。', '</情潮开局>'].join('\n');
+            return ['<情潮开局 角色="' + names + '">', '写作指导：性关系已经开始。' + (st.opps.length === 1 ? '两人的交融同时也是各自面向高潮的较量——都想让对方先到顶，自己撑得更久。' : '交融之中，user与每个对手各自构成一场面向高潮的较量。'), 'user的输入只是意图：user打算做什么、期待发生什么——写出来的不等于真实结果。', '双方性行为的真实进展与结果，一切以情潮战况中的数值为准——没那么好就是没那么好，够舒服就是够舒服，被榨了就是被榨了；照数值写，不粉饰也不强行翻转，不动摇双方的从容关系。', '必须执行当前阶段和收场指导，不自行判定谁更接近顶点，不自行描写高潮的发生，不虚报任何进展。', '你的职责是氛围与体感：动作、反应、气息、声音、节奏——数值之外的血肉由你来长。', '启动场景的每楼末尾必须按 report 协议申报，无行动也明确填0，不得省略。', '</情潮开局>'].join('\n');
         }
         function stageText() {
             return [{ name: 'user', ...s.state.user }, ...s.state.opps.filter((o) => !o.exited && o.present !== false)].map((o) => {
                 const stage = stageOf(o.ex);
-                const text = stage === 3 ? o.name + '进入急促阶段。状态：单向行动增多，动作更密更贴，节奏也更快。' : stage === 4 ? o.name + '的兴奋值升到阶段④。状态：转为主动，开始抢主导——单向行动明显变多，双向里也不肯落下风。' : stage === 5 ? o.name + '进入燃尽阶段。状态：单向行动最盛，顶格状态持续到本局结束。' : '';
-                return text ? '<情潮状态 角色="' + o.name + '" 阶段="' + stage + '" 进度="' + o.ex + '/100">\n' + text + '\n</情潮状态>' : '';
+                const text = stage === 3 ? o.name + '进入急促阶段。状态：单向行动增多，动作更密更贴，节奏也更快。' : stage === 4 ? o.name + '的兴奋值升到阶段④。状态：转为主动，开始抢主导——单向行动明显变多，双向里也不肯落下风。' : stage === 5 ? o.name + '进入燃尽阶段。状态：单向行动最盛，顶格状态持续到本局结束。' : o.name + (stage === 2 ? '当前处于微热阶段。' : '当前处于平静阶段。');
+                return '<情潮状态 角色="' + o.name + '" 阶段="' + stage + '" 进度="' + o.ex + '/100">\n必须按当前阶段扮演：' + text + '具体反应保持角色人设，不擅自跳到其他阶段或把阶段状态写成已经高潮。\n</情潮状态>';
             }).filter(Boolean).join('\n');
         }
         function judgmentText() {
@@ -337,7 +373,7 @@ export function createScriptRuntime(dependencies = {}) {
                 '每次回复在正文之外输出一个 <' + trigger.tag + '> 块，其中「' + trigger.field + '」字段记录当前场景类型。',
                 '只有真正发生性行为、性器接触时，该字段才可写为「' + trigger.value + '」；仅暧昧、裸露、准备、事后休息均不满足，应写为 SFW 或 NSFW 等非启动值。',
                 (sameBlock ? '同一块内' : '另输出一个 <' + roster.tag + '> 块，') + '用「' + roster.field + '」字段列出当前实际在场角色，格式为' + format + '。',
-                '角色名单只列实际在场者，不把回忆、想象、提及但不在场的人加入。',
+                '角色名单只列实际在场的对手，不列user、{{user}}或玩家角色名；玩家始终由系统单独管理。不把回忆、想象、提及但不在场的人加入。',
                 '严格参照以下完整格式输出，标签必须成对闭合、字段名保持不变。不要用 Markdown 代码围栏包裹实际输出。',
                 '示例姓名仅示范格式；实际输出请替换成当前在场角色的真实姓名，不要照抄“角色甲/角色乙”。这里只要求场景与角色字段，不要额外照搬其它卡的地点或时间字段。',
                 '【未达到启动条件的输出示例】',
@@ -350,8 +386,9 @@ export function createScriptRuntime(dependencies = {}) {
         }
         async function publish(desired) {
             if (s.config.enabled && s.config.defaultJudgment) desired.set(KEYS.judgment, judgmentText());
+            if (s.config.enabled && (s.config.preSceneProtocol || s.state?.active)) desired.set(KEYS.protocol, protocol());
             for (const entryKey of new Set([...s.known, ...desired.keys()])) {
-                const text = desired.get(entryKey) || '', placement = PLACEMENTS.get(entryKey) || { position: 1, depth: 1, order: 895 };
+                const text = desired.get(entryKey) || '', placement = PLACEMENTS.get(entryKey) || { position: 4, depth: 1, order: 895 };
                 const fingerprint = JSON.stringify([text, placement]);
                 if (s.published.get(entryKey) === fingerprint) continue;
                 await put(entryKey, text, placement, Boolean(text));
@@ -360,8 +397,9 @@ export function createScriptRuntime(dependencies = {}) {
         }
         function desiredEntries() {
             const desired = new Map();
-            if (s.state?.active) { desired.set(KEYS.report, battleText()); desired.set(KEYS.protocol, protocol()); desired.set(KEYS.open, openText()); desired.set(KEYS.stage, stageText()); }
+            if (s.state?.active) { desired.set(KEYS.report, battleText()); desired.set(KEYS.open, openText()); desired.set(KEYS.stage, stageText()); }
             if (s.state && !s.state.endConsumed) for (const entry of s.state.endEntries || []) desired.set(entry.key, entry.text);
+            if (s.state?.active || (s.state && !s.state.endConsumed && s.state.endEntries?.length)) desired.set(KEYS.guidance, guidanceText());
             return desired;
         }
         async function persist() {
@@ -389,13 +427,29 @@ export function createScriptRuntime(dependencies = {}) {
                 s.signature = null;
                 return;
             }
+            const aliases = playerNames();
+            // Older checkpoints may contain the expanded player name as a second combatant.
+            // Repair identities without replaying settled actions or changing genuine opponent stats.
+            if (s.state?.opps.some((o) => isPlayerName(o.name, aliases))) {
+                s.state.opps = s.state.opps.filter((o) => !isPlayerName(o.name, aliases));
+                s.state.results = [];
+                s.dirty = true;
+                if (!s.state.opps.length) clear();
+            }
             if (s.dirty) await persist();
             const c = getContext();
             if (!Array.isArray(c.chat) || (!preparing && (s.generating || (c.streamingProcessor && !c.streamingProcessor.isFinished)))) return;
             let last = c.chat.length - 1;
             while (last >= 0 && (c.chat[last]?.is_user || c.chat[last]?.is_system)) last--;
             if (last < 0) { if (s.state || s.lockedThrough >= 0) { clear(true); await persist(); } else await publish(new Map()); return; }
-            const signature = JSON.stringify([last, c.chat[last].swipe_id, c.chat[last].mes, config]);
+            const sceneFor = (text) => {
+                const scene = parseSexCombatScene(text, config);
+                const names = scene.characters.filter((name) => !isPlayerName(name, aliases)).slice(0, 6);
+                return { ...scene, roster: names, characters: names };
+            };
+            // Refresh the visible roster even when this floor has already been settled and locked.
+            s.scene = sceneFor(c.chat[last].mes);
+            const signature = JSON.stringify([last, c.chat[last].swipe_id, c.chat[last].mes, config, aliases]);
             if (s.signature === signature) return;
             if (s.state?.startFloor > last) clear();
             const start = s.state ? Math.min(s.scan, last) : last;
@@ -404,10 +458,10 @@ export function createScriptRuntime(dependencies = {}) {
                 if (!message || message.is_user || message.is_system || floor <= s.lockedThrough) continue;
                 const signature = JSON.stringify([floor, message.swipe_id, message.mes]);
                 if (signature === s.failedReply) continue;
-                const scene = parseSexCombatScene(message.mes, config);
+                const scene = sceneFor(message.mes);
                 s.scene = scene;
                 if (!scene.active) { if (s.state) clear(); await publish(new Map()); break; }
-                const names = (scene.characters || scene.roster || []).filter((name) => !nameEq(name, 'user')).slice(0, 6);
+                const names = scene.characters;
                 if (!names.length) { if (s.state) clear(); await publish(new Map()); break; }
                 if (s.state?.ended) { if (!s.state.endConsumed) break; s.state = null; }
                 if (s.state && !names.some((name) => s.state.opps.some((o) => nameEq(o.name, name)))) s.state = null;
@@ -419,7 +473,7 @@ export function createScriptRuntime(dependencies = {}) {
                 }
                 const st = s.state;
                 if (!st.nsfwhFloors.includes(floor)) st.nsfwhFloors.push(floor);
-                const rep = parseSexCombatReport(message.mes, config.actionTag);
+                const rep = parseSexCombatReport(message.mes, config.actionTag, aliases);
                 s.dirty = true;
                 if (!rep) { s.scan = floor === last ? floor : floor + 1; st.scanFloor = s.scan; continue; }
                 settle(rep, floor);

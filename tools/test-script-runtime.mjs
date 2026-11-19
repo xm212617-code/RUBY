@@ -27,6 +27,7 @@ const { createScriptRuntime, parseSexCombatReport } = module.namespace;
 const KEY = 'RUBY_UniversalSexCombat_';
 const scene = (report = '', names = ['A'], grade = 'NSFWH') => `<SceneInfo>\n场景类型: ${grade}\n在场角色:\n${names.map((name) => '- ' + name + '|普通').join('\n')}\n</SceneInfo>\n${report}`;
 const action = '<report>\nuser:\n  单向: 1\n  双向: 0\n</report>';
+const protocolReport = (text) => parseSexCombatReport(text.match(/^<report>\r?\n[\s\S]*?^<\/report>[ \t]*$/m)?.[0] || '');
 
 test('complete standalone panel renders dashboard data and its read-only bridge script', () => {
     const state = {
@@ -156,6 +157,149 @@ test('missing report starts round zero, publishes protocol and supports same-flo
     assert.equal(h.runtime.snapshot().state.opps[0].pos, 100, 'severe miss does not push');
 });
 
+test('conditional report protocol is injected before the first active scene independently of scene judgment', async () => {
+    const h = host({ config: { defaultJudgment: false, preSceneProtocol: true }, chat: [{ mes: 'Ordinary opening' }] });
+    await h.runtime.before('normal', {}, false);
+    const entry = h.entries.get(KEY + 'report协议');
+    assert.equal(h.runtime.snapshot().state, null);
+    assert.equal(entry.constant, true);
+    assert.equal(entry.disable, false);
+    assert.equal(entry.position, 4);
+    assert.equal(entry.depth, 0);
+    assert.match(entry.content, /SceneInfo.*场景类型.*NSFWH/);
+    assert.match(entry.content, /首次进入.*同样必须申报/);
+    assert.match(entry.content, /非启动场景不输出/);
+    assert.match(entry.content, /全体无行动也必须保留全零申报/);
+    const template = protocolReport(entry.content);
+    assert.ok(template);
+    for (const actor of Object.values(template)) {
+        assert.equal(actor.单向, 0);
+        assert.equal(actor.双向, 0);
+        assert.equal(actor.targets.length, 0);
+    }
+    assert.equal(h.entries.has(KEY + '默认判断'), false);
+    assert.equal(h.entries.has(KEY + '战况'), false);
+    assert.equal(h.entries.has(KEY + '扮演约束'), false);
+});
+
+test('pre-scene protocol defaults off and toggles independently without disabling active protocols', async () => {
+    assert.equal(normalizeSexCombatConfig().preSceneProtocol, false);
+    assert.equal(normalizeSexCombatConfig({ preSceneProtocol: 'true' }).preSceneProtocol, false);
+    assert.equal(normalizeSexCombatConfig({ preSceneProtocol: true }).preSceneProtocol, true);
+    const h = host({ chat: [{ mes: 'Ordinary opening' }], entries: {
+        [KEY + 'report协议']: { content: 'old always-on protocol', constant: true, disable: false },
+    } });
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').disable, true, 'Existing cards without the flag default off');
+    assert.equal(h.entries.get(KEY + '默认判断').constant, true);
+    h.cfg.preSceneProtocol = true;
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').constant, true);
+    h.cfg.preSceneProtocol = false;
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').disable, true);
+    h.c.chat.push({ mes: scene() });
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').constant, true, 'Active battles still receive the full protocol');
+    h.c.chat.push({ mes: scene('', ['A'], 'SFW') });
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').disable, true);
+});
+
+test('active templates use current actor names and omit departed or exited participants', async () => {
+    const h = host({ chat: [{ mes: scene('', ['A', 'B']) }] });
+    await h.runtime.tick();
+    let report = protocolReport(h.entries.get(KEY + 'report协议').content);
+    assert.deepEqual(Object.keys(report), ['user', 'A', 'B']);
+    h.c.chat.push({ mes: scene('', ['B']) });
+    await h.runtime.tick();
+    report = protocolReport(h.entries.get(KEY + 'report协议').content);
+    assert.deepEqual(Object.keys(report), ['user', 'B']);
+    assert.equal(report.B.单向, 0);
+    assert.equal(report.B.双向, 0);
+    assert.doesNotMatch(h.entries.get(KEY + 'report协议').content, /完全没有行动时，不写 report/);
+});
+
+test('an explicit all-zero report rolls no dice and does not advance a round, charge or XP', async () => {
+    const zero = '<report>\nuser:\n  单向: 0\n  双向: 0\nA:\n  单向: 0\n  双向: 0\n</report>';
+    const saved = checkpoint({ round: 3, lastSettledFloor: -1, user: { pos: 12, ex: 45, lv: 0 },
+        opps: [{ name: 'A', pos: 75, p: 50, ex: 20, lv: 0, present: true, exited: false }] }, { user: 7, A: 12 });
+    const h = host({ entries: { [KEY + '当局']: saved }, chat: [{ mes: scene(zero) }],
+        random: () => { throw Error('Zero reports must not roll dice'); } });
+    await h.runtime.tick();
+    const snapshot = h.runtime.snapshot();
+    assert.equal(snapshot.state.round, 3);
+    assert.equal(snapshot.state.lastSettledFloor, -1);
+    assert.equal(snapshot.state.user.pos, 12);
+    assert.equal(snapshot.state.user.ex, 45);
+    assert.equal(snapshot.state.opps[0].pos, 75);
+    assert.equal(snapshot.state.opps[0].ex, 20);
+    assert.equal(snapshot.levels.user, 7);
+    assert.equal(snapshot.levels.A, 12);
+    await h.runtime.tick();
+    await h.reload().tick();
+    assert.equal(h.runtime.snapshot().state.round, 3);
+});
+
+test('missing reports remain missing and the report-based panel anchor is unchanged', async () => {
+    const text = scene();
+    const h = host({ chat: [{ mes: text }] });
+    await h.runtime.tick();
+    h.runtime.syncMarkers();
+    assert.equal(h.c.chat[0].mes, text, 'No report or marker may be fabricated');
+    assert.equal(parseSexCombatReport(h.c.chat[0].mes), null);
+    assert.equal(h.runtime.snapshot().state.round, 0);
+    assert.equal(normalizeSexCombatConfig(h.cfg).markerAnchor, 'report');
+});
+
+test('roleplay facts use actual D1 injections and a D0 authority rule', async () => {
+    const h = host({ chat: [{ mes: scene() }] });
+    await h.runtime.tick();
+    for (const suffix of ['战况', '开局', '阶段状态']) {
+        const entry = h.entries.get(KEY + suffix);
+        assert.equal(entry.constant, true, suffix);
+        assert.equal(entry.position, 4, suffix);
+        assert.equal(entry.depth, 1, suffix);
+    }
+    const guidance = h.entries.get(KEY + '扮演约束');
+    assert.equal(guidance.position, 4);
+    assert.equal(guidance.depth, 0);
+    assert.match(guidance.content, /已经结算生效的事实及必须执行的扮演指导/);
+    assert.match(guidance.content, /收场与不应期约束优先/);
+    assert.match(guidance.content, /玩家意图、旧剧情预期或历史申报不能覆盖/);
+    assert.match(guidance.content, /本楼新行动尚未结算/);
+    assert.match(guidance.content, /多人指导按所标角色分别执行/);
+    assert.match(h.entries.get(KEY + '战况').content, /已经结算的真实状态/);
+});
+
+test('all five stages publish explicit current-stage roleplay constraints', async () => {
+    const zero = '<report>\nuser:\n  单向: 0\n  双向: 0\n</report>';
+    for (const [index, ex] of [0, 20, 40, 60, 80].entries()) {
+        const h = host({ entries: { [KEY + '当局']: checkpoint({ user: { pos: 0, ex, lv: 0 } }) },
+            chat: [{ mes: scene(zero) }], random: () => { throw Error('Stage publishing must not roll'); } });
+        await h.runtime.tick();
+        const text = h.entries.get(KEY + '阶段状态').content;
+        assert.match(text, new RegExp(`角色="user" 阶段="${index + 1}"`));
+        assert.match(text, /必须按当前阶段扮演/);
+        assert.match(text, /不擅自跳到其他阶段/);
+    }
+});
+
+test('leaving a scene retracts active guidance while retaining the conditional protocol until disabled', async () => {
+    const h = host({ config: { preSceneProtocol: true } });
+    await h.runtime.tick();
+    h.c.chat.push({ mes: scene('', ['A'], 'SFW') });
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + '扮演约束').disable, true);
+    assert.equal(h.entries.get(KEY + '阶段状态').disable, true);
+    assert.equal(h.entries.get(KEY + 'report协议').constant, true);
+    assert.equal(h.entries.get(KEY + 'report协议').depth, 0);
+    h.cfg.enabled = false;
+    await h.runtime.tick();
+    assert.equal(h.entries.get(KEY + 'report协议').disable, true);
+    assert.equal(h.entries.get(KEY + 'report协议').content, '');
+});
+
 test('one report settles once across duplicate events, swipe, edits and a new runtime', async () => {
     const h = host(); await h.runtime.tick();
     assert.equal(h.runtime.snapshot().state.round, 1);
@@ -166,6 +310,65 @@ test('one report settles once across duplicate events, swipe, edits and a new ru
     assert.equal(h.entries.get(KEY + '当局').constant, false);
 });
 
+test('player macros and the current persona name never become opponents', async () => {
+    const h = host({ chat: [{ mes: scene('', ['user', '{{user}}', 'Player One', 'A']) }] });
+    h.c.name1 = 'Player One';
+    h.c.substituteParams = (value) => value.replace(/\{\{user\}\}/g, 'Player One');
+    await h.runtime.tick();
+    assert.deepEqual(Array.from(h.runtime.snapshot().state.opps, (o) => o.name), ['A']);
+    assert.deepEqual(Array.from(h.runtime.snapshot().scene.roster), ['A']);
+});
+
+test('macro expansion fallback matches normalized player aliases without excluding similar NPC names', async () => {
+    const h = host({ chat: [{ mes: scene('', ['{{USER}}', 'Ｐｌａｙｅｒ Ｏｎｅ', 'Player One Jr', 'A']) }] });
+    h.c.substituteParams = () => 'Player One';
+    await h.runtime.tick();
+    assert.deepEqual(Array.from(h.runtime.snapshot().state.opps, (o) => o.name), ['Player One Jr', 'A']);
+});
+
+test('persona report headings and explicit user targets resolve to the user actor', async () => {
+    const h = host({ chat: [{ mes: scene('<report>\nPlayer One:\n  单向: 1\nA:\n  单向 -> {{user}}: 1\n</report>') }] });
+    h.c.name1 = 'Player One';
+    await h.runtime.tick();
+    const state = h.runtime.snapshot().state;
+    assert.equal(state.round, 1);
+    assert.equal(state.results.length, 2);
+    assert.match(state.results[0], /^user → A /);
+    assert.match(state.results[1], /^A → user /);
+    assert.equal(parseSexCombatReport('<report>\nuser:\n  单向: 1\nPlayer One:\n  单向: 1\n</report>', 'report', ['Player One']), null,
+        'Aliases must not allow the same actor to submit twice');
+});
+
+test('previously saved player opponents are repaired without rerolling settled turns', async () => {
+    const saved = JSON.parse(checkpoint({ round: 1, lastSettledFloor: 0, results: ['user → Player One 单向：得手'],
+        opps: [{ name: 'Player One', pos: 80, p: 50, ex: 10, lv: 0, present: false, exited: false },
+            { name: 'A', pos: 75, p: 50, ex: 20, lv: 0, present: true, exited: false }] }));
+    saved.lockedThrough = 0;
+    saved.scan = 1;
+    const h = host({ entries: { [KEY + '当局']: JSON.stringify(saved) }, chat: [{ mes: scene(action) }],
+        random: () => { throw Error('Settled turns must not reroll during identity repair'); } });
+    h.c.name1 = 'Player One';
+    await h.runtime.tick();
+    const snapshot = h.runtime.snapshot();
+    assert.deepEqual(Array.from(snapshot.state.opps, (o) => o.name), ['A']);
+    assert.equal(snapshot.state.round, 1);
+    assert.equal(snapshot.state.opps[0].pos, 75);
+    assert.equal(snapshot.state.results.length, 0);
+    assert.doesNotMatch(renderSexCombatContent(snapshot), /Player One/);
+    assert.deepEqual(JSON.parse(h.entries.get(KEY + '当局').content).state.opps.map((o) => o.name), ['A']);
+});
+
+test('departed opponents are retained for bookkeeping but not displayed as current pairs', async () => {
+    const h = host({ chat: [{ mes: scene('', ['A', 'B']) }] });
+    await h.runtime.tick();
+    h.c.chat.push({ mes: scene('', ['B']) });
+    await h.runtime.tick();
+    const snapshot = h.runtime.snapshot();
+    assert.equal(snapshot.state.opps.find((o) => o.name === 'A').present, false);
+    assert.doesNotMatch(renderSexCombatContent(snapshot), /class="sc-rival-label">A /);
+    assert.match(renderSexCombatContent(snapshot), /class="sc-rival-label">B /);
+});
+
 test('ten action rounds finish once, retain XP through disable and empty chat', async () => {
     const h = host(); await h.runtime.tick();
     for (let i = 1; i < 10; i++) { h.c.chat.push({ mes: scene(action) }); await h.runtime.tick(); }
@@ -173,6 +376,8 @@ test('ten action rounds finish once, retain XP through disable and empty chat', 
     assert.equal(snapshot.state.ended.type, 'flaccid'); assert.equal(snapshot.levels.user, 10); assert.equal(snapshot.levels.A, 20);
     await h.reload().tick(); assert.equal(h.runtime.snapshot().levels.A, 20);
     const terminal = h.entries.get(KEY + '收场_疲软收场'); assert.equal(terminal.constant, true);
+    assert.equal(terminal.position, 4); assert.equal(terminal.depth, 1);
+    assert.equal(h.entries.get(KEY + '扮演约束').constant, true);
     h.cfg.enabled = false; await h.runtime.tick();
     assert.equal(h.runtime.snapshot().state, null);
     assert.equal(h.entries.get(KEY + '收场_疲软收场').constant, false);
@@ -272,18 +477,21 @@ test('complete HTML panel bridge returns live snapshot only to a trusted owned i
 });
 
 test('terminal injection waits for a successful generated reply and survives API failure', async () => {
-    const h = host(); h.runtime.init(); await h.runtime.tick();
+    const h = host({ config: { preSceneProtocol: true } }); h.runtime.init(); await h.runtime.tick();
     for (let i = 1; i < 10; i++) { h.c.chat.push({ mes: scene(action) }); await h.runtime.tick(); }
     await h.events.emit('GENERATION_AFTER_COMMANDS', 'normal', {}, false);
     await h.events.emit('GENERATE_AFTER_DATA', {}, false);
     await h.events.emit('GENERATION_ENDED');
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(h.entries.get(KEY + '收场_疲软收场').constant, true);
+    assert.equal(h.entries.get(KEY + '扮演约束').constant, true);
     await h.events.emit('GENERATION_AFTER_COMMANDS', 'normal', {}, false);
     await h.events.emit('GENERATE_AFTER_DATA', {}, false);
     h.c.chat.push({ mes: scene('', ['A'], 'NSFW') });
     await h.events.emit('MESSAGE_RECEIVED', h.c.chat.length - 1, 'normal');
     assert.equal(h.entries.get(KEY + '收场_疲软收场').disable, true);
+    assert.equal(h.entries.get(KEY + '扮演约束').disable, true);
+    assert.equal(h.entries.get(KEY + 'report协议').constant, true);
     assert.equal(h.runtime.snapshot().levels.A, 20);
     h.runtime.dispose();
 });
@@ -295,6 +503,8 @@ test('custom trigger, actor list, action tag and host marker work without openin
     assert.match(h.c.chat[0].mes, /<\/moves>\s*<\/done>/);
     assert.equal(h.runtime.snapshot().state.opps[0].name, 'B'); assert.equal(h.runtime.snapshot().state.round, 1);
     assert.match(h.entries.get(KEY + 'report协议').content, /<moves>/);
+    assert.match(h.entries.get(KEY + 'report协议').content, /Game.*模式.*ACTIVE/);
+    assert.doesNotMatch(h.entries.get(KEY + 'report协议').content, /SceneInfo|场景类型/);
     h.runtime.dispose();
 });
 

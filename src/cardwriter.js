@@ -39,6 +39,24 @@ const state = {
 
 const listeners = new Set();
 let initialized = false;
+let captureTimer = null;
+let capturePending = false;
+let cancelBuildConfirm = null;
+const capturedRecords = new WeakMap();
+
+function sessionGuard() {
+    const initial = ctx();
+    const chatId = initial?.getCurrentChatId?.();
+    const current = () => {
+        const c = ctx();
+        return c?.chat === initial?.chat && c?.chatMetadata === initial?.chatMetadata
+            && c?.characterId === initial?.characterId && c?.groupId === initial?.groupId
+            && c?.getCurrentChatId?.() === chatId;
+    };
+    const guard = () => { if (!current()) throw new Error('写卡聊天或角色已切换，已取消旧操作'); };
+    guard.isCurrent = current;
+    return guard;
+}
 
 export function onStateChange(fn) {
     listeners.add(fn);
@@ -134,18 +152,23 @@ function stepKey(step) {
 }
 
 async function ensureDraftBook() {
+    const c = ctx();
+    const mainBook = String(c?.characters?.[c.characterId]?.data?.extensions?.world || '').trim();
+    let book = '';
     try {
-        const named = String(await st(`/getchatbook create=true name=${q(DRAFT_BOOK)}`)).trim();
-        if (named) return named;
+        book = String(await st(`/getchatbook create=true name=${q(DRAFT_BOOK)}`)).trim();
     } catch (e) {
         warn(`[cardwriter] named chat book unavailable (${e.message}), falling back to auto name`);
     }
-    return String(await st('/getchatbook create=true')).trim();
+    if (!book) book = String(await st('/getchatbook create=true')).trim();
+    if (!book) throw new Error('无法取得聊天草稿世界书');
+    if (mainBook && book === mainBook) throw new Error('主世界书与聊天世界书是同一本，请先绑定独立的聊天草稿书，避免写卡修改角色主书');
+    return book;
 }
 
 function findEntryIn(entries, key) {
     for (const e of Object.values(entries)) {
-        if (Array.isArray(e?.key) && e.key.includes(key)) return e;
+        if (Array.isArray(e?.key) && e.key[0] === key) return e;
     }
     return null;
 }
@@ -164,9 +187,31 @@ async function ensureEntryIn(book, entries, key) {
     return e;
 }
 
+function normalizeManagedEntries(entries) {
+    for (const entry of Object.values(entries)) {
+        const key = entry?.key?.[0];
+        if (!isRubyProcessEntry(String(key || ''))) continue;
+        Object.assign(entry, { role: ROLE_SYSTEM, useProbability: false, probability: 100, ignoreBudget: key !== INVENTORY_KEY,
+            keysecondary: [], selective: false, triggers: [], excludeRecursion: true, preventRecursion: true,
+            delayUntilRecursion: 0, group: '', groupOverride: false, vectorized: false, sticky: null, cooldown: null, delay: null });
+        delete entry.characterFilter;
+    }
+}
+
 async function saveBook(book, data) {
     const c = ctx();
+    normalizeManagedEntries(data.entries);
     await c.saveWorldInfo(book, data, true);
+    if (typeof c.getRequestHeaders === 'function') {
+        const response = await fetch('/api/worldinfo/get', { method: 'POST', headers: c.getRequestHeaders(), body: JSON.stringify({ name: book }) });
+        if (!response.ok) throw new Error(`世界书保存后回读失败：HTTP ${response.status}`);
+        const saved = await response.json();
+        if (JSON.stringify(saved?.entries) !== JSON.stringify(data.entries)) {
+            const cached = await c.loadWorldInfo(book);
+            if (cached && saved?.entries) Object.assign(cached, saved);
+            throw new Error('世界书保存校验失败，服务器内容与待保存内容不一致');
+        }
+    }
 }
 
 async function loadBookData(book) {
@@ -276,38 +321,27 @@ export function namesSimilar(a, b) {
 
 /** 提取消息中的全部记录标记。返回 [{action:'new'|'update', num, yaml}] */
 export function extractRecords(text) {
-    const s = String(text || '');
     const out = [];
-    const patterns = [
-        { re: /<ruby新条目>\s*```yaml[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*\r?\n?<\/ruby新条目>/g, action: 'new' },
-        { re: /<ruby更新条目([^>]*)>\s*```yaml[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*\r?\n?<\/ruby更新条目>/g, action: 'update' },
-    ];
-    for (const { re, action } of patterns) {
-        for (const m of s.matchAll(re)) {
-            let num = '';
-            let yaml = '';
-            if (action === 'new') {
-                yaml = m[1];
-            } else {
-                const attr = m[1] || '';
-                const nm = attr.match(/编号\s*=\s*["']?([\w-]*)["']?/);
-                num = nm ? nm[1] : '';
-                yaml = m[2];
-            }
-            yaml = yaml.trim();
-            if (!yaml) continue;
-            out.push({ action, num, yaml });
-        }
+    for (const m of String(text || '').matchAll(/<ruby(新条目|更新条目)([^>]*)>\s*((?:`{3,}|~{3,})[ \t]*(?:yaml|yml)[ \t]*\r?\n[\s\S]*?)<\/ruby\1\s*>/gi)) {
+        const yaml = fencedBody(m[3], /^(yaml|yml)$/i);
+        if (!yaml) continue;
+        const attr = m[2].match(/编号\s*=\s*(?:"([\w-]+)"|'([\w-]+)'|([\w-]+))/);
+        out.push({ action: m[1] === '新条目' ? 'new' : 'update', num: attr ? attr[1] || attr[2] || attr[3] : '', yaml });
     }
     return out;
 }
 
+function fencedBody(text, language) {
+    const m = String(text || '').trim().match(/^(`{3,}|~{3,})[ \t]*([a-z]+)[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\1[ \t]*$/i);
+    return m && language.test(m[2]) ? m[3].trim() : '';
+}
+
 /** 合成标记：提取 <ruby合成> 内的 JSON manifest */
 export function extractManifest(text) {
-    const m = String(text || '').match(/<ruby合成>\s*```json[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*\r?\n?<\/ruby合成>/);
+    const m = String(text || '').match(/<ruby合成\s*>\s*((?:`{3,}|~{3,})[ \t]*json[ \t]*\r?\n[\s\S]*?)<\/ruby合成\s*>/i);
     if (!m) return null;
     try {
-        const parsed = JSON.parse(m[1]);
+        const parsed = JSON.parse(fencedBody(m[1], /^json$/i));
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.条目)) return null;
         return parsed;
     } catch {
@@ -355,16 +389,17 @@ function collectRecords(entries) {
 
 /** 编号知识注入：当前步骤的记录清单（Overview=全部步骤），告知AI该更新哪条 */
 function buildRegistryContent(stepId, records) {
-    const list = stepId === 'Overview' ? records : records.filter((r) => r.stepId === stepId);
+    const allSteps = ['Overview', 'Step3', 'ScanChar', 'ScanChat'].includes(stepId);
+    const list = allSteps ? records : records.filter((r) => r.stepId === stepId);
     const lines = ['【RUBY写卡·编号知识】（本条目由RUBY自动维护，禁止在回复中复述）'];
     if (list.length === 0) {
         lines.push(stepId === 'Overview' ? '全部步骤暂无入库记录。' : `当前步骤（${stepId}）暂无入库记录——首次产出用 <ruby新条目>。`);
     } else {
-        const scope = stepId === 'Overview' ? '全部步骤的记录' : `当前步骤（${stepId}）的记录`;
+        const scope = allSteps ? '全部步骤可引用的记录' : `当前步骤（${stepId}）的记录`;
         lines.push(`${scope}：`);
         for (const r of list) lines.push(`  ${r.stepId}_${r.num} · ${r.label || '（未命名）'}`);
         lines.push('');
-        lines.push('更新已有内容 → <ruby更新条目 编号="编号">（编号取下划线后的部分，如 001）');
+        lines.push(allSteps ? '跨步骤更新必须使用完整编号，如 <ruby更新条目 编号="Step1_001">；仅写001时更新当前步骤。' : '更新已有内容 → <ruby更新条目 编号="编号">（编号取下划线后的部分，如 001）');
         lines.push('全新交付物 → <ruby新条目>（拿不准归属就开新条目）');
         if (stepId === 'Overview') {
             lines.push('合成清单的"记录"字段引用上面的 步骤_编号（如 Step3_001）。');
@@ -377,8 +412,10 @@ function buildRegistryContent(stepId, records) {
 async function refreshRegistryEntry(book, entries, stepId) {
     const records = collectRecords(entries);
     const entry = await ensureEntryIn(book, entries, REGISTRY_KEY);
+    const sources = stepId === 'Step3' ? records.filter((r) => ['Step1', 'StepL', 'Step2'].includes(r.stepId)).map((r) => `${r.stepId}_${r.num}:\n${String(findEntryIn(entries, r.key)?.content || '')}`).join('\n\n') : '';
+    const sourceText = sources ? '\n\n【整合来源正文】\n' + sources.slice(0, 24000) + (sources.length > 24000 ? '\n【来源过长已截断，缺失部分需按编号读取，不得猜测】' : '') : '';
     Object.assign(entry, {
-        content: buildRegistryContent(stepId, records),
+        content: buildRegistryContent(stepId, records) + sourceText,
         comment: 'RUBY写卡·编号知识（自动维护）',
         position: POS_AT_DEPTH, depth: 1, order: REGISTRY_ORDER,
         role: ROLE_SYSTEM, constant: true, disable: false,
@@ -387,10 +424,18 @@ async function refreshRegistryEntry(book, entries, stepId) {
 }
 
 /** 写入一条记录（新/更新）。返回 {key, label, action} */
-async function writeRecord(record, stepId) {
+async function writeRecord(record, stepId, guard = sessionGuard()) {
     if (!getSettings().draftToBook) return null;
+    guard();
+    const qualified = record.num.match(/^([^_]+)_(.+)$/);
+    if (qualified && getStep(qualified[1])) {
+        stepId = qualified[1];
+        record = { ...record, num: qualified[2] };
+    }
     const book = await ensureDraftBook();
+    guard();
     const data = await loadBookData(book);
+    guard();
     const entries = data.entries;
     const step = getStep(stepId);
     const label = extractRecordLabel(record.yaml) || '未命名';
@@ -436,6 +481,7 @@ async function writeRecord(record, stepId) {
     }
 
     const primary = String(target.key?.[0] || '');
+    if (!record.num) record.num = primary.slice(RECORD_PREFIX.length + stepId.length + 1);
     const oldExtras = Array.isArray(target.key) ? target.key.slice(1) : [];
     target.key = [...new Set([primary, ...oldExtras, ...names])];
     target.comment = `RUBY写卡记录·${stepId}·${primary.slice(RECORD_PREFIX.length + stepId.length + 1)}·${label}`;
@@ -447,12 +493,14 @@ async function writeRecord(record, stepId) {
     target.excludeRecursion = true;
     target.preventRecursion = true;
 
-    await refreshRegistryEntry(book, entries, stepId);
+    await refreshRegistryEntry(book, entries, state.stepId || stepId);
     // 清点步骤中落库：聊天书清单同步刷新，Ruby 看到的 uid 始终最新
     if (isScanStep(stepId)) {
         await refreshInventoryEntry(book, entries, stepId === 'ScanChar' ? 'char' : 'chat');
     }
+    guard();
     await saveBook(book, data);
+    guard();
     state.draftCount += 1;
     log(`[cardwriter] record ${action === 'new' ? 'created' : 'updated'}: ${primary} (${label}) -> ${book}`);
     return { key: primary, label, action };
@@ -485,7 +533,7 @@ function deleteEntriesByKeys(entries, keys) {
     const keySet = new Set(keys);
     let removed = 0;
     for (const [uid, e] of Object.entries(entries)) {
-        if (Array.isArray(e?.key) && e.key.some((k) => keySet.has(k))) {
+        if (Array.isArray(e?.key) && keySet.has(e.key[0])) {
             delete entries[uid];
             removed++;
         }
@@ -524,9 +572,6 @@ async function setStepEntries(book, stepId) {
         }
     }
 
-    // ★ 第一段原子提交：先落盘"全部步骤已关闭"的基准状态。
-    await saveBook(book, data);
-
     if (stepId) {
         const step = getStep(stepId);
         if (step) {
@@ -558,6 +603,9 @@ async function setStepEntries(book, stepId) {
     // 特殊步骤（ScanChar/ScanChat）：代码清点对应世界书 → 【世界书现状】常驻知识
     if (isScanStep(stepId)) {
         await refreshInventoryEntry(book, entries, stepId === 'ScanChar' ? 'char' : 'chat');
+    } else {
+        const inventory = findEntryIn(entries, INVENTORY_KEY);
+        if (inventory) inventory.disable = true;
     }
 
     // ★ 第二段原子提交：开启目标步骤的最终状态
@@ -598,7 +646,7 @@ function buildRoadmapContent(stepId) {
             lines.push(`当前：合成阶段（${overview.name}）。${overview.brief}。`);
         } else if (idx >= 0) {
             lines.push(`当前：第${idx + 1}/${total}步——${cur.id} ${cur.name}，${cur.brief}。`);
-            lines.push('每个步骤都可以反复工作：产出按记录入库，RUBY不自动顺延。创作者说切换时输出 <ruby切换/>；创作者的需求明确属于其他步骤（跨步/回补）时，直接输出 <ruby切换 步骤="StepX"/> 跳过去并用一句话告知。');
+            lines.push('每个步骤都可以反复工作：产出按记录入库，RUBY不自动顺延。创作者说切换时输出 <ruby切换/>；明确跨步时使用真实目标，例如 <ruby切换 步骤="Step3"/>。StepX是自检工具，不是占位符；只有两个Scan步骤必须手动进入。');
         } else {
             lines.push(`当前：${cur.id} ${cur.name}——${cur.brief}（${cur.special ? '特殊步骤，仅手动进入；重新点击步骤卡可刷新清点' : '工具步骤，不在主流程序列中'}）。`);
         }
@@ -623,7 +671,7 @@ const ROLE_NAMES = ['system', 'user', 'assistant'];
 
 function posLabelOf(entry) {
     const pos = entry?.position;
-    const name = POS_LABELS[pos] ?? `位置${pos ?? '?'}`;
+    const name = pos === 4 ? `@D${entry.depth ?? 4}` : (POS_LABELS[pos] ?? `位置${pos ?? '?'}`);
     if (pos === 4 && typeof entry?.role === 'number' && entry.role > 0) {
         return `${name}·${ROLE_NAMES[entry.role] || entry.role}`;
     }
@@ -654,16 +702,17 @@ function buildInventoryContent(scope, bookName, entries) {
         const primary = keys[0] || '';
         const content = String(e?.content || '');
         const preview = content.replace(/\s+/g, ' ').trim().slice(0, 60);
-        const light = e?.disable ? '关闭' : (e?.constant ? '蓝灯' : '绿灯');
+        const light = e?.disable ? '关闭' : (e?.constant ? '蓝灯' : (e?.vectorized ? '向量灯' : '绿灯'));
         const prob = e?.useProbability && typeof e?.probability === 'number' && e.probability < 100 ? ` · 概率${e.probability}%` : '';
-        const sel = sec.length ? ` · 副词${e?.selective ? 'AND生效' : '未生效'}` : '';
+        const sel = sec.length ? ` · 副词${e?.selective ? ['AND ANY', 'NOT ALL', 'NOT ANY', 'AND ALL'][e.selectiveLogic ?? 0] || '未知逻辑' : '未生效'}` : '';
         lines.push(`uid=${uid} · ${comment || primary || '（未命名）'}${isRubyProcessEntry(primary) ? ' ·（RUBY流程条目，合成清单禁止引用）' : ''}`);
         lines.push(`  关键词[${keys.join('、')}]${sec.length ? ` · 副关键词[${sec.join('、')}]` : ''} · ${posLabelOf(e)} · 顺序${e?.order ?? '?'} · ${light}${sel}${prob}${content.length ? ` · 内容${content.length}字` : ' · 无内容'}`);
         if (preview) lines.push(`  预览：${preview}…`);
     }
     lines.push('');
-    lines.push('合成清单引用既有条目：对象 {"书": "...", "uid": N} 或字符串 "主世界书:N"/"聊天世界书:N"；条目字段省略=沿用现状，填写=覆盖。');
-    return lines.join('\n');
+    lines.push('灯位仅为配置状态，不代表本次提示词一定激活。合成清单条目必须是对象：{"书":"主世界书","uid":5} 或 {"记录":"主世界书:N"}/{"记录":"聊天世界书:N"}；省略字段沿用来源。');
+    const content = lines.join('\n');
+    return content.length > 24000 ? content.slice(0, 24000) + '\n【清点过长，已截断；缺失条目请按实际书名和uid定向查询，不得猜测】' : content;
 }
 
 /**
@@ -707,8 +756,11 @@ async function refreshInventoryEntry(book, entries, scope) {
 
 /** 内部切换核心（无 busy 守卫）：供 handleGenerationEnded 在记录落库后执行切换标记 */
 async function applyStepSwitch(stepId) {
+    const guard = sessionGuard();
     const book = await ensureDraftBook();
+    guard();
     await setStepEntries(book, stepId);
+    guard();
     state.stepId = stepId;
     state.lastStepId = stepId;
     state.lastAction = `切换标记 → ${stepId} ${getStep(stepId)?.name || ''}`;
@@ -729,10 +781,13 @@ export async function switchStep(stepId, { manual = false } = {}) {
         emitState();
         return false;
     }
+    const guard = sessionGuard();
     state.busy = true;
     try {
         const book = await ensureDraftBook();
+        guard();
         await setStepEntries(book, stepId);
+        guard();
         state.stepId = stepId;
         state.lastStepId = stepId;
         state.lastAction = `${manual ? '手动' : '自动'}切换 → ${stepId || '结束'}`;
@@ -741,27 +796,34 @@ export async function switchStep(stepId, { manual = false } = {}) {
         notify('info', `RUBY写卡：已切换到 ${stepId ? `${stepId} ${step?.name}` : '空闲'}`);
         return true;
     } catch (e) {
+        if (!guard.isCurrent()) return false;
         state.lastError = e.message;
         warn(`[cardwriter] switchStep failed: ${e.message}`);
         emitState();
         return false;
     } finally {
         state.busy = false;
+        if (capturePending && state.active) scheduleCapture();
     }
 }
 
 export async function startSession(stepId = 'StepW') {
     if (state.busy) return false;
+    if (!getStep(stepId)) { state.lastError = `未知步骤: ${stepId}`; emitState(); return false; }
     if (!ctx()?.chat) {
         state.lastError = '请先打开一个聊天';
         emitState();
         return false;
     }
+    const guard = sessionGuard();
     state.busy = true;
     try {
         const book = await ensureDraftBook();
+        guard();
         await setupBaseEntries(book);
+        guard();
         await setStepEntries(book, stepId);
+        guard();
         const c = ctx();
         Object.assign(state, {
             active: true,
@@ -781,21 +843,25 @@ export async function startSession(stepId = 'StepW') {
         setTimeout(() => { scanAndPromptManifest().catch(() => { }); }, 0);
         return true;
     } catch (e) {
+        if (!guard.isCurrent()) return false;
         state.lastError = e.message;
         warn(`[cardwriter] startSession failed: ${e.message}`);
         emitState();
         return false;
     } finally {
         state.busy = false;
+        if (capturePending && state.active) scheduleCapture();
     }
 }
 
 export async function endSession({ keepDrafts = true } = {}) {
     if (state.busy) return false;
+    const guard = sessionGuard();
     state.busy = true;
     try {
         const book = await ensureDraftBook();
         const data = await loadBookData(book);
+        guard();
         if (!keepDrafts) {
             for (const [uid, e] of Object.entries(data.entries)) {
                 const k = Array.isArray(e?.key) ? e.key[0] : '';
@@ -805,16 +871,17 @@ export async function endSession({ keepDrafts = true } = {}) {
                 }
             }
         } else {
-            const offKeys = new Set([RULES_KEY, PERSONA_KEY, ROADMAP_KEY, REGISTRY_KEY, INVENTORY_KEY]);
+            const offKeys = new Set([RULES_KEY, PERSONA_KEY, APPENDIX_KEY, ROADMAP_KEY, REGISTRY_KEY, INVENTORY_KEY]);
             for (const s of CARDWRITER_DATA.steps) {
                 offKeys.add(stepKey(s));
                 offKeys.add(`${stepKey(s)}_说明`);
             }
             for (const e of Object.values(data.entries)) {
-                if (Array.isArray(e?.key) && e.key.some((k) => offKeys.has(k))) e.disable = true;
+                if (Array.isArray(e?.key) && offKeys.has(e.key[0])) e.disable = true;
             }
         }
         await saveBook(book, data);
+        guard();
         reloadEditorIfShowing(book);
         Object.assign(state, {
             active: false,
@@ -828,21 +895,49 @@ export async function endSession({ keepDrafts = true } = {}) {
         notify('info', keepDrafts ? 'RUBY写卡会话已结束，记录保留在聊天世界书' : 'RUBY写卡会话已结束，写卡条目已清空');
         return true;
     } catch (e) {
+        if (!guard.isCurrent()) return false;
         state.lastError = e.message;
         warn(`[cardwriter] endSession failed: ${e.message}`);
         emitState();
         return false;
     } finally {
         state.busy = false;
+        if (capturePending && state.active) scheduleCapture();
     }
 }
 
 // ---------- 合成角色卡 ----------
 
 const POS_MAP = { '角色前': 0, '角色后': 1, 'D0': 4 };
+const positionOf = (entry) => Number.isInteger(entry.位置) ? entry.位置 : (POS_MAP[entry.位置 || '角色前'] ?? 0);
 
 function sanitizeDownloadName(name) {
     return String(name || '角色卡').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+}
+
+function validateManifest(manifest) {
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !Array.isArray(manifest.条目)) throw new Error('合成清单必须包含条目数组');
+    if (manifest.卡名 != null && typeof manifest.卡名 !== 'string') throw new Error('卡名必须是字符串');
+    if (manifest.分析任务 != null && !Array.isArray(manifest.分析任务)) throw new Error('分析任务必须是数组');
+    const stringList = (value, label) => {
+        if (value != null && (!Array.isArray(value) || value.some((s) => typeof s !== 'string'))) throw new Error(`${label}必须是字符串数组`);
+    };
+    for (const entry of manifest.条目) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('条目数组每项必须是对象，请使用 {书, uid} 或 {记录:"书名:uid"}');
+        if (entry.条目名 != null && typeof entry.条目名 !== 'string') throw new Error('条目名必须是字符串');
+        if (entry.启用 != null && typeof entry.启用 !== 'boolean') throw new Error('启用必须是布尔值');
+        stringList(entry.关键词, '关键词'); stringList(entry.副关键词, '副关键词');
+        if (entry.位置 != null && !Object.hasOwn(POS_MAP, entry.位置) && !(Number.isInteger(entry.位置) && entry.位置 >= 0 && entry.位置 <= 8)) throw new Error(`不支持的条目位置：${entry.位置}`);
+        if (entry.灯位 != null && !['蓝灯', '绿灯', '关闭'].includes(entry.灯位)) throw new Error(`不支持的灯位：${entry.灯位}`);
+        for (const key of ['顺序', '深度']) if (entry[key] != null && (!Number.isInteger(entry[key]) || entry[key] < 0)) throw new Error(`${key}必须是非负整数`);
+    }
+    for (const task of manifest.分析任务 || []) {
+        if (!task || typeof task !== 'object' || typeof task.任务名 !== 'string' || !task.任务名.trim() || typeof task.提示词条目名 !== 'string' || !task.提示词条目名.trim()) throw new Error('分析任务必须填写字符串任务名与提示词条目名');
+        if (task.输出条目名 != null && typeof task.输出条目名 !== 'string') throw new Error('输出条目名必须是字符串');
+        stringList(task.参考条目, '参考条目'); stringList(task.捕捉关键词, '捕捉关键词');
+        if (task.周期位置 != null && (!Number.isInteger(task.周期位置) || task.周期位置 < 1)) throw new Error('周期位置必须是正整数');
+    }
+    if (!manifest.条目.length && !manifest.分析任务?.length) throw new Error('合成清单没有条目或分析任务');
 }
 
 function manifestSummary(manifest) {
@@ -873,10 +968,12 @@ function showBuildConfirm(manifest) {
             </div>`;
         document.body.appendChild(overlay);
         const done = (choice) => {
+            cancelBuildConfirm = null;
             overlay.remove();
             document.removeEventListener('keydown', onKey);
             resolve(choice);
         };
+        cancelBuildConfirm = () => done('chat');
         const onKey = (e) => {
             if (e.key === 'Escape') done('chat');
         };
@@ -891,17 +988,18 @@ function showBuildConfirm(manifest) {
 
 /** 由记录条目构建 v3 卡条目（与 build-card.js 的 v3 形状一致）；引用既有条目时未覆盖字段沿用来源现状 */
 function buildCardEntry(index, mEntry) {
-    const positionStr = mEntry.位置 === 'D0' ? 'at_depth' : (mEntry.位置 === '角色后' ? 'after_char' : 'before_char');
+    const position = positionOf(mEntry);
+    const positionStr = position === 4 ? 'at_depth' : (position === 1 ? 'after_char' : 'before_char');
     const light = mEntry.灯位 === '蓝灯';
     const disabled = mEntry.灯位 === '关闭' || mEntry.启用 === false;
-    const keys = [...new Set([mEntry.条目名, ...(mEntry.关键词 || [])])].filter(Boolean);
+    const keys = [...new Set(mEntry._source ? (mEntry.关键词 || []) : [mEntry.条目名, ...(mEntry.关键词 || [])])].filter(Boolean);
     const depth = typeof mEntry.深度 === 'number' ? mEntry.深度 : (mEntry.位置 === 'D0' ? 0 : 4);
     const src = mEntry._source || null;
     const ROLE_MAP = { system: 0, user: 1, assistant: 2 };
     const role = typeof mEntry.角色 === 'number' ? mEntry.角色
         : (ROLE_MAP[mEntry.角色] ?? (src && typeof src.role === 'number' ? src.role : 0));
     const selective = src ? (mEntry._hasExplicitSec || !!src.selective) : true;
-    return {
+    const result = {
         id: index,
         keys,
         secondary_keys: (mEntry.副关键词 || []).filter(Boolean),
@@ -914,7 +1012,8 @@ function buildCardEntry(index, mEntry) {
         position: positionStr,
         insertion_order: typeof mEntry.顺序 === 'number' ? mEntry.顺序 : 100,
         extensions: {
-            position: POS_MAP[mEntry.位置 || '角色前'] ?? 0,
+            ...src?.extensions,
+            position,
             exclude_recursion: src ? !!src.excludeRecursion : true,
             display_index: index,
             probability: src && typeof src.probability === 'number' ? src.probability : 100,
@@ -922,11 +1021,15 @@ function buildCardEntry(index, mEntry) {
             depth,
             selectiveLogic: src && typeof src.selectiveLogic === 'number' ? src.selectiveLogic : 0,
             prevent_recursion: src ? !!src.preventRecursion : true,
-            delay_until_recursion: src ? !!src.delayUntilRecursion : false,
+            delay_until_recursion: src?.delayUntilRecursion ?? false,
             role,
             vectorized: src ? !!src.vectorized : false,
         },
     };
+    if (src) for (const field of ['outletName', 'group', 'groupOverride', 'groupWeight', 'scanDepth', 'caseSensitive', 'matchWholeWords', 'useGroupScoring', 'automationId', 'sticky', 'cooldown', 'delay', 'triggers', 'ignoreBudget', 'matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes']) {
+        if (src[field] !== undefined) result.extensions[field.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())] = src[field];
+    }
+    return result;
 }
 
 /** 由 manifest.分析任务 构建 RubyAnalyzer preset */
@@ -1073,7 +1176,10 @@ function showComposeResult(fileName, text, stats) {
  * ② RubyAnalyzer preset 按分析任务生成
  * ③ 下载 v3 角色 JSON
  */
-async function buildCharacterCardFromManifest(manifest) {
+async function buildCharacterCardFromManifest(manifest, guard = sessionGuard()) {
+    guard();
+    validateManifest(manifest);
+    manifest = JSON.parse(JSON.stringify(manifest));
     const book = await ensureDraftBook();
     const data = await loadBookData(book);
     const records = collectRecords(data.entries);
@@ -1084,13 +1190,14 @@ async function buildCharacterCardFromManifest(manifest) {
         const rec = records.find((r) => r.key === key);
         return rec ? findEntryIn(data.entries, key) : null;
     };
-    const contentOf = (entry) => String(entry?.content || '').replace(/```yaml[ \t]*\r?\n?/g, '').replace(/```[ \t]*\r?\n?/g, '').trim();
+    const contentOf = (entry) => String(entry?.content ?? '');
 
     // ---- 既有条目引用：主世界书 / 聊天世界书 / 任意书名（全局导入的书）的 "书:uid" ----
     let charBookName = '';
     try { charBookName = String(await st('/getcharbook')).trim(); } catch { /* 无主世界书 */ }
     const bookDataCache = new Map([['聊天世界书', data]]);
     const getBookData = async (scope) => {
+        guard();
         if (bookDataCache.has(scope)) return bookDataCache.get(scope);
         let d = null;
         try {
@@ -1100,22 +1207,26 @@ async function buildCharacterCardFromManifest(manifest) {
                 d = await loadBookData(scope); // 任意书名：全局导入的世界书，无需绑定
             }
             if (d && (!d.entries || Object.keys(d.entries).length === 0)) d = null; // 不存在/空书一律视为无此书
-        } catch { d = null; }
+        } catch { guard(); d = null; }
+        guard();
         bookDataCache.set(scope, d);
         return d;
+    };
+    const normalizeScope = (raw) => {
+        if (raw === book || raw === '聊天世界书' || /^chat\s*book$/i.test(raw)) return '聊天世界书';
+        if (raw === charBookName || raw === '主世界书' || /^(char|character)\s*book$/i.test(raw)) return '主世界书';
+        return raw;
     };
     const parseBookRef = (ref) => {
         if (ref && typeof ref === 'object' && ref.uid != null) {
             const raw = String(ref.书 || ref.book || ref.source || '').trim();
-            const uid = parseInt(ref.uid, 10);
-            if (!raw || isNaN(uid)) return null;
-            if (raw === '主世界书' || /^(char|character)\s*book$/i.test(raw)) return { scope: '主世界书', uid };
-            if (raw === '聊天世界书' || /^chat\s*book$/i.test(raw)) return { scope: '聊天世界书', uid };
-            return { scope: raw, uid }; // 任意书名（全局导入的世界书）
+            const uid = Number(ref.uid);
+            if (!raw || !/^\d+$/.test(String(ref.uid)) || !Number.isSafeInteger(uid)) return null;
+            return { scope: normalizeScope(raw), uid };
         }
         const m = String(ref || '').match(/^(.+?)\s*[:：]\s*#?(\d+)\s*$/);
         if (!m || !m[1].trim()) return null;
-        return { scope: m[1].trim(), uid: parseInt(m[2], 10) };
+        return { scope: normalizeScope(m[1].trim()), uid: Number(m[2]) };
     };
     /** 统一解析（异步）：记录引用 → 草稿记录内容；书:uid 引用 → 既有条目内容 + 来源数据（供默认值沿用） */
     const resolveRef = async (ref) => {
@@ -1129,7 +1240,7 @@ async function buildCharacterCardFromManifest(manifest) {
         }
         const rec = recordOf(ref);
         if (!rec) return null;
-        return { content: contentOf(rec), source: null, bookRef: null };
+        return { content: contentOf(rec), source: null, bookRef: null, recordUid: rec.uid };
     };
     const refDisplay = (ref) => {
         if (ref && typeof ref === 'object') return `${ref.书 || '书'}:${ref.uid}`;
@@ -1142,6 +1253,7 @@ async function buildCharacterCardFromManifest(manifest) {
             return !required;
         }
         const r = await resolveRef(ref);
+        guard();
         if (!r) { missing.push(refDisplay(ref)); return false; }
         if (r.notFoundBook) { missing.push(`${r.notFoundBook.scope}:${r.notFoundBook.uid}（世界书《${r.notFoundBook.scope}》不存在或为空）`); return false; }
         if (r.notFoundUid) { missing.push(`${r.notFoundUid.scope}:${r.notFoundUid.uid}（该书没有这个 uid）`); return false; }
@@ -1156,6 +1268,7 @@ async function buildCharacterCardFromManifest(manifest) {
         holder._content = r.content;
         holder._source = r.source;
         holder._bookRef = r.bookRef;
+        holder._recordUid = r.recordUid;
         return true;
     };
 
@@ -1181,19 +1294,20 @@ async function buildCharacterCardFromManifest(manifest) {
     for (const mEntry of (manifest.条目 || [])) {
         const src = mEntry._source;
         if (!src) continue;
+        const hasLight = mEntry.灯位 != null;
         mEntry._hasExplicitSec = Array.isArray(mEntry.副关键词) && mEntry.副关键词.length > 0;
         if (mEntry.条目名 == null) mEntry.条目名 = String(src.comment || '').trim() || keysOf(src)[0] || '未命名条目';
         if (!Array.isArray(mEntry.关键词) || mEntry.关键词.length === 0) mEntry.关键词 = keysOf(src);
         if (!Array.isArray(mEntry.副关键词)) mEntry.副关键词 = (Array.isArray(src.keysecondary) ? src.keysecondary.map(String).filter(Boolean) : []);
-        if (mEntry.位置 == null) mEntry.位置 = POS_LABELS[src.position] ?? '角色前';
+        if (mEntry.位置 == null) mEntry.位置 = POS_LABELS[src.position] ?? src.position ?? 0;
         if (mEntry.顺序 == null) mEntry.顺序 = typeof src.order === 'number' ? src.order : 100;
         if (mEntry.深度 == null) mEntry.深度 = typeof src.depth === 'number' ? src.depth : (mEntry.位置 === 'D0' ? 0 : 4);
         if (mEntry.灯位 == null) mEntry.灯位 = src.disable ? '关闭' : (src.constant ? '蓝灯' : '绿灯');
-        if (mEntry.启用 == null) mEntry.启用 = !src.disable;
+        if (mEntry.启用 == null) mEntry.启用 = hasLight ? mEntry.灯位 !== '关闭' : !src.disable;
     }
 
     // 分析任务缺提示词条目时自动补挂（关闭条目，角色前 999）
-    const entryNames = new Set((manifest.条目 || []).flatMap((e) => [e.条目名, ...(e.关键词 || [])]));
+    const entryNames = new Set((manifest.条目 || []).flatMap((e) => e._source ? (e.关键词 || []) : [e.条目名, ...(e.关键词 || [])]));
     for (const t of (manifest.分析任务 || [])) {
         if (t.提示词条目名 && !entryNames.has(t.提示词条目名)) {
             manifest.条目.push({
@@ -1207,10 +1321,17 @@ async function buildCharacterCardFromManifest(manifest) {
                 副关键词: [],
                 启用: false,
                 _content: t._content,
+                _recordUid: t._recordUid,
+                _bookRef: t._bookRef,
+                _source: t._source,
             });
             entryNames.add(t.提示词条目名);
             log(`[cardwriter] manifest: auto-appended prompt entry ${t.提示词条目名}`);
         }
+    }
+
+    for (const task of manifest.分析任务 || []) for (const reference of task.参考条目 || []) {
+        if (!entryNames.has(reference)) throw new Error(`分析任务「${task.任务名}」的参考条目未包含在卡中：${reference}`);
     }
 
     // ---- 构建卡 JSON（v3，与 build-card.js 同形） ----
@@ -1280,33 +1401,47 @@ async function buildCharacterCardFromManifest(manifest) {
             delete data.entries[uid];
         }
     }
-    (manifest.条目 || []).forEach((mEntry) => {
+    const rewritten = new Set();
+    (manifest.条目 || []).forEach((mEntry, index) => {
         let e = null;
+        let sourceUid;
         if (mEntry._bookRef) {
             if (mEntry._bookRef.scope !== '聊天世界书') return; // 主世界书条目不动原书，只进卡JSON
-            e = data.entries[mEntry._bookRef.uid];
+            sourceUid = mEntry._bookRef.uid;
         } else if (mEntry.记录) {
-            e = findEntryIn(data.entries, `${RECORD_PREFIX}${mEntry.记录}`);
+            sourceUid = mEntry._recordUid;
         }
+        e = data.entries[sourceUid];
         if (!e) return;
+        if (rewritten.has(sourceUid)) {
+            const uid = Math.max(-1, ...Object.keys(data.entries).map(Number)) + 1;
+            e = data.entries[uid] = { ...e, uid };
+        }
+        rewritten.add(sourceUid);
         const disabled = mEntry.灯位 === '关闭' || mEntry.启用 === false;
         Object.assign(e, {
-            key: [...new Set([mEntry.条目名, ...(mEntry.关键词 || [])])].filter(Boolean),
+            key: cardEntries[index].keys,
             comment: mEntry.条目名,
             content: mEntry._content,
-            position: POS_MAP[mEntry.位置 || '角色前'] ?? 0,
+            position: positionOf(mEntry),
             depth: typeof mEntry.深度 === 'number' ? mEntry.深度 : (mEntry.位置 === 'D0' ? 0 : 4),
             order: typeof mEntry.顺序 === 'number' ? mEntry.顺序 : 100,
             constant: mEntry.灯位 === '蓝灯',
             disable: disabled,
             excludeRecursion: mEntry._source ? !!mEntry._source.excludeRecursion : true,
             preventRecursion: mEntry._source ? !!mEntry._source.preventRecursion : true,
+            keysecondary: cardEntries[index].secondary_keys,
+            selective: cardEntries[index].selective,
+            selectiveLogic: cardEntries[index].extensions.selectiveLogic,
+            role: cardEntries[index].extensions.role,
         });
         if (mEntry.位置 === 'D0' && typeof mEntry.角色 === 'number') e.role = mEntry.角色;
     });
+    guard();
     await saveBook(book, data);
     reloadEditorIfShowing(book);
 
+    guard();
     // ---- 下载 JSON ----
     const entryCount = (manifest.条目 || []).length;
     const taskCount = (manifest.分析任务 || []).length;
@@ -1335,14 +1470,19 @@ function findLatestManifestInChat(chat, fromIndex = 0, { includeUser = false } =
 }
 
 async function promptManifestChoice(manifest, stepId, messageIndex) {
+    const guard = sessionGuard();
     try { await writeProgress({ manifestPrompted: messageIndex }); } catch { /* ignore */ }
     try {
+        guard();
+        validateManifest(manifest);
         const choice = await showBuildConfirm(manifest);
+        guard();
         if (choice !== 'build') {
             state.lastAction = `${stepId} 检测到合成清单 → 创作者选择再改改`;
             return null;
         }
-        const result = await buildCharacterCardFromManifest(manifest);
+        const result = await buildCharacterCardFromManifest(manifest, guard);
+        guard();
         Object.assign(state, {
             active: false,
             stepId: null,
@@ -1356,6 +1496,7 @@ async function promptManifestChoice(manifest, stepId, messageIndex) {
         notify('success', `RUBY写卡：${result.cardName} 合成完成！角色卡 JSON 已开始下载，聊天世界书已整理为干净条目`, { timeOut: 8000 });
         return result;
     } catch (e) {
+        if (!guard.isCurrent()) return null;
         state.lastError = e.message;
         warn(`[cardwriter] build failed: ${e.message}`);
         notify('error', `RUBY写卡：合成失败（第 ${messageIndex + 1} 楼的清单：${e.message}）`, { timeOut: 10000 });
@@ -1369,15 +1510,17 @@ async function scanAndPromptManifest({ ignoreWatermark = false, includeUser = fa
     const c = ctx();
     if (!Array.isArray(c?.chat)) return null;
     const from = ignoreWatermark ? 0 : manifestWatermark() + 1;
-    const hit = findLatestManifestInChat(c.chat, from, { includeUser });
+    const scanChat = ignoreWatermark ? c.chat : c.chat.slice(0, state.lastHandledMessage + 1);
+    const hit = findLatestManifestInChat(scanChat, from, { includeUser });
     if (!hit) return null;
     state.busy = true;
     try {
         const result = await promptManifestChoice(hit.manifest, state.stepId, hit.index);
-        return result ? 'built' : 'declined';
+        return result ? 'built' : state.lastError ? 'failed' : 'declined';
     } finally {
         state.busy = false;
         emitState();
+        if (capturePending && state.active) scheduleCapture();
     }
 }
 
@@ -1386,125 +1529,125 @@ export async function composeFromChat() {
     // 手动合成接受任意楼层的清单：AI 楼层（Ruby 输出）与用户楼层（创作者手动粘贴测试）均可
     const res = await scanAndPromptManifest({ ignoreWatermark: true, includeUser: true });
     if (!res) return '聊天中未找到可用的 <ruby合成> 清单（需含 ```json 围栏的完整合法 JSON——注意逗号/引号完整性）';
+    if (res === 'failed') return `合成失败：${state.lastError}`;
     return res === 'built' ? `合成完成：${state.lastAction}` : '已弹出确认，创作者选择再改改';
 }
 
 // ---------- 消息监听 ----------
 
 async function handleGenerationEnded() {
-    if (!state.active || state.busy) return;
+    if (!state.active) return;
+    if (state.busy) { capturePending = true; return; }
     const c = ctx();
     const chat = c?.chat;
     if (!Array.isArray(chat)) return;
-
-    // 批量收集未处理的 AI 楼：错过事件窗口（busy/切换竞态）的楼下次事件补处理，标记永不丢失
-    const pending = [];
-    for (let i = Math.max(state.lastHandledMessage + 1, 0); i < chat.length; i++) {
-        if (chat[i]?.is_user === false && String(chat[i]?.mes || '').trim()) {
-            pending.push({ index: i, message: chat[i] });
-        }
-    }
-    if (pending.length === 0) return;
-    state.lastHandledMessage = pending[pending.length - 1].index;
-
-    const stepId = state.stepId;
-    if (!stepId) return;
-    const texts = pending.map((p) => String(p.message.mes || ''));
-    const text = texts.join('\n\n');
-
-    // 合成标记：任意步骤的 <ruby合成> JSON（逐楼扫描，跳过已询问过的楼层）→ 同楼记录先落库 → 立刻弹窗询问是否现在下载
-    const watermark = manifestWatermark();
-    let manifest = null;
-    let manifestIdx = -1;
-    for (const p of pending) {
-        if (p.index <= watermark) continue;
-        const m = extractManifest(String(p.message.mes || ''));
-        if (m) { manifest = m; manifestIdx = p.index; break; }
-    }
-
-    // 记录阶段：捕捉 <ruby新条目>/<ruby更新条目 编号>；随后处理 <ruby切换/>（记录与切换可同楼共存；有合成标记时切换忽略）
-    let records = extractRecords(text);
-    const switchMark = manifest ? null : extractSwitch(text);
-    if (records.length === 0 && !switchMark && !manifest) {
-        state.lastAction = stepId === 'Overview'
-            ? `收到回复（合成阶段未检测到 <ruby合成> 标记）`
-            : `收到回复（${stepId} 无记录标记，视为讨论）`;
-        emitState();
-        return;
-    }
-    if (stepId === 'Step7' && records.length > 1) {
-        warn(`[cardwriter] Step7 outputs ${records.length} records in one message, keeping the first only`);
-        notify('warning', 'RUBY写卡：动态任务设计一次只允许定稿一个任务，本楼只记录了第一个');
-        records = records.slice(0, 1);
-    }
-
+    const guard = sessionGuard();
     state.busy = true;
     try {
-        const results = [];
-        for (const record of records.slice(0, 3)) {
-            const r = await writeRecord(record, stepId);
-            if (r) results.push(r);
-        }
-        if (results.length) {
-            const r0 = results[0];
-            const step = getStep(stepId);
-            state.lastAction = `${stepId} 已${r0.action === 'new' ? '记录' : '更新'} ${r0.key}（${r0.label}）——可继续本步骤，或手动切换下一步`;
-            await writeProgress({ stepId, stepName: step?.name || '' });
-            notify('info', `RUBY写卡：${r0.action === 'new' ? '已记录' : '已更新'} ${r0.label}（${stepId} ${step?.name || ''}）`);
-            for (const r of results) {
-                window.dispatchEvent(new CustomEvent('ruby:cardwriter-draft', { detail: { stepId, key: r.key, action: r.action } }));
+        for (let index = Math.max(state.lastHandledMessage + 1, 0); index < chat.length && state.active; index++) {
+            guard();
+            state.lastError = null;
+            const message = chat[index];
+            if (message?.is_user !== false || message.is_system || !String(message.mes || '').trim()) continue;
+            const text = String(message.mes);
+            let receipt = capturedRecords.get(message);
+            if (!receipt || receipt.text !== text) {
+                const previous = receipt;
+                receipt = { text, stepId: previous?.stepId || state.stepId, records: extractRecords(text), completed: new Set() };
+                const reused = new Set();
+                for (let i = 0; i < receipt.records.length; i++) {
+                    const record = receipt.records[i];
+                    const oldIndex = previous?.records.findIndex((old, j) => !reused.has(j) && old.action === record.action && old.yaml === record.yaml && (!record.num || old.num === record.num)) ?? -1;
+                    const old = previous?.records[oldIndex >= 0 ? oldIndex : i];
+                    if (oldIndex >= 0) reused.add(oldIndex);
+                    if (!record.num && old?.action === record.action && (oldIndex >= 0 || !previous.completed.has(i))) record.num = old.num;
+                    if (oldIndex >= 0 && previous.completed.has(oldIndex)) receipt.completed.add(i);
+                }
+                capturedRecords.set(message, receipt);
             }
-        }
-
-        // 合成标记：同楼记录已落库 → 立刻弹窗询问是否现在下载，确认后构建并下载
-        if (manifest) {
-            await promptManifestChoice(manifest, stepId, manifestIdx);
-            return;
-        }
-
-        // 切换标记：创作者表示可以进入下一步（记录已先行落库）
-        if (switchMark) {
-            const target = switchMark.target || nextStepOf(stepId);
-            if (getStep(target)?.manualOnly) {
-                state.lastAction = `${stepId} 切换目标无效：${target}（特殊步骤只能手动进入）`;
-                notify('warning', 'RUBY写卡：该步骤是特殊步骤，只能在面板手动进入，已忽略切换标记');
-            } else if (target && getStep(target) && target !== 'Overview') {
-                await applyStepSwitch(target);
-            } else if (switchMark.target === 'Overview' || (!target && stepId === 'Step7')) {
-                // 主链终点：引导进入合成阶段
-                await applyStepSwitch('Overview');
-            } else if (!target) {
-                state.lastAction = `${stepId} 切换标记无效（已是主链最后一步），请手动进入合成角色卡`;
-                notify('warning', 'RUBY写卡：当前已是主流程最后一步，请在写卡页手动进入「合成角色卡」');
-            } else {
-                state.lastAction = `${stepId} 切换目标无效：${switchMark.target}`;
-                notify('warning', `RUBY写卡：切换目标无效（${switchMark.target}），已忽略`);
+            const stepId = receipt.stepId;
+            const records = receipt.records;
+            const attempts = text.match(/<ruby(?:新条目|更新条目)[^>]*>\s*(?:`{3,}|~{3,})/gi)?.length || 0;
+            if (attempts !== records.length) throw new Error('记录标记或YAML围栏不完整，请使用成对的ruby条目标签与yaml/yml围栏后重试');
+            const limit = stepId === 'Step7' ? 1 : 3;
+            if (records.length > limit) throw new Error(`${stepId} 每楼最多记录${limit}条，本楼有${records.length}条，请拆分后重试；尚未处理此楼`);
+            const parsedManifest = extractManifest(text);
+            if (!parsedManifest && /<ruby合成\s*>\s*(?:`{3,}|~{3,})/i.test(text)) throw new Error('合成清单JSON、围栏或ruby合成闭合标签不完整，请修正后重试');
+            const manifest = index > manifestWatermark() ? parsedManifest : null;
+            const switchMark = manifest ? null : extractSwitch(text);
+            const results = [];
+            for (let i = 0; i < records.length; i++) {
+                if (receipt.completed.has(i)) continue;
+                const r = await writeRecord(records[i], stepId, guard);
+                guard();
+                if (r) { receipt.completed.add(i); results.push(r); }
             }
+            if (results.length) {
+                state.lastAction = `${stepId} 已入库${results.length}条记录`;
+                await writeProgress({ stepId, stepName: getStep(stepId)?.name || '' });
+                guard();
+                for (const r of results) window.dispatchEvent(new CustomEvent('ruby:cardwriter-draft', { detail: { stepId, key: r.key, action: r.action } }));
+            } else if (!switchMark && !manifest) {
+                state.lastAction = `收到回复（${stepId} 无新记录标记，视为讨论）`;
+            }
+            if (manifest) {
+                await promptManifestChoice(manifest, stepId, index);
+                guard();
+                if (state.active) state.lastHandledMessage = index;
+                if (state.lastError) continue;
+            } else if (switchMark) {
+                const target = switchMark.target || nextStepOf(stepId);
+                if (getStep(target)?.manualOnly || !getStep(target)) {
+                    state.lastAction = `${stepId} 切换目标无效（特殊步骤只能手动进入）：${target || '主链已结束'}`;
+                    notify('warning', state.lastAction);
+                } else {
+                    await applyStepSwitch(target);
+                    guard();
+                }
+            }
+            if (state.active) state.lastHandledMessage = index;
+            state.lastError = null;
         }
     } catch (e) {
-        state.lastError = e.message;
-        warn(`[cardwriter] handleGenerationEnded failed: ${e.message}`);
-        notify('error', `RUBY写卡：处理记录失败（${e.message}）`);
+        if (guard.isCurrent()) {
+            state.lastError = e.message;
+            warn(`[cardwriter] handleGenerationEnded failed: ${e.message}`);
+            notify('error', `RUBY写卡：处理记录失败（${e.message}）`);
+        }
     } finally {
         state.busy = false;
         emitState();
+        if (capturePending && state.active) scheduleCapture();
     }
+}
+
+function scheduleCapture() {
+    capturePending = true;
+    if (captureTimer !== null) return;
+    captureTimer = setTimeout(() => {
+        captureTimer = null;
+        capturePending = false;
+        return handleGenerationEnded().catch((e) => warn(`[cardwriter] ${e.message}`));
+    }, 800);
 }
 
 // ---------- 初始化 ----------
 
 export function initCardWriter() {
     if (initialized) return;
-    initialized = true;
 
     const c = ctx();
     if (!c?.eventSource || !c?.eventTypes) {
         warn('[cardwriter] event system unavailable');
         return;
     }
+    initialized = true;
 
     c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => {
-        setTimeout(async () => {
+            cancelBuildConfirm?.();
+            if (captureTimer !== null) clearTimeout(captureTimer);
+            captureTimer = null;
+            capturePending = false;
             state.active = false;
             state.stepId = null;
             state.lastStepId = null;
@@ -1524,11 +1667,24 @@ export function initCardWriter() {
             }
             emitState();
             if (state.active) scanAndPromptManifest().catch(() => { });
-        }, 400);
     });
 
-    c.eventSource.on(c.eventTypes.GENERATION_ENDED, () => {
-        setTimeout(() => { handleGenerationEnded().catch((e) => warn(`[cardwriter] ${e.message}`)); }, 800);
+    for (const name of ['GENERATION_ENDED', 'MESSAGE_RECEIVED', 'CHARACTER_MESSAGE_RENDERED']) {
+        if (c.eventTypes[name]) c.eventSource.on(c.eventTypes[name], scheduleCapture);
+    }
+    for (const name of ['MESSAGE_UPDATED', 'MESSAGE_SWIPED']) {
+        if (c.eventTypes[name]) c.eventSource.on(c.eventTypes[name], (messageId) => {
+            const chat = ctx()?.chat;
+            const index = Number(messageId);
+            const receipt = capturedRecords.get(chat?.[index]);
+            if (index === chat?.length - 1 && receipt && !receipt.completed.size && !extractSwitch(receipt.text) && !extractManifest(receipt.text)) {
+                state.lastHandledMessage = Math.min(state.lastHandledMessage, index - 1);
+            }
+            scheduleCapture();
+        });
+    }
+    if (c.eventTypes.MESSAGE_DELETED) c.eventSource.on(c.eventTypes.MESSAGE_DELETED, () => {
+        state.lastHandledMessage = Math.min(state.lastHandledMessage, (ctx()?.chat?.length || 0) - 1);
     });
 
     log('[cardwriter] v2 record engine initialized, listening to generation events');

@@ -22,7 +22,7 @@ export function renderSexCombatContent(snapshot) {
     const userDistance = Math.max(0, userP - userPos);
     const userEx = num(user.ex);
     const opps = Array.isArray(state.opps) ? state.opps : [];
-    const active = opps.filter((opponent) => !opponent.exited);
+    const active = opps.filter((opponent) => !opponent.exited && opponent.present !== false);
     const pairBars = active.length ? active.map((opponent) => {
         const p = num(opponent.p, 0, 100);
         const position = num(opponent.pos, 0, 100);

@@ -9,6 +9,7 @@ const TAG = /^[A-Za-z][\w:-]{0,63}$/;
 const DEFAULTS = {
     enabled: false,
     defaultJudgment: true,
+    preSceneProtocol: false,
     trigger: { tag: 'SceneInfo', field: '场景类型', value: 'NSFWH' },
     roster: { tag: 'SceneInfo', field: '在场角色' },
     rosterFormat: 'yaml-list',
@@ -67,6 +68,7 @@ export function normalizeSexCombatConfig(input = {}) {
     return {
         enabled: source.enabled === true,
         defaultJudgment: typeof source.defaultJudgment === 'boolean' ? source.defaultJudgment : true,
+        preSceneProtocol: source.preSceneProtocol === true,
         trigger,
         roster,
         rosterFormat: ['yaml-list', 'json', 'loose'].includes(source.rosterFormat) ? source.rosterFormat : DEFAULTS.rosterFormat,
@@ -334,6 +336,8 @@ function buildConfigPanel(root, context, current, message = '') {
         <p class="tip">YAML 支持带或不带连字符的换行姓名，可加 |服装；JSON 支持字符串数组。重复或未闭合 XML 块不触发。</p>
         <div class="form-header blue">行动报告与显示标记</div>
         ${input('sc-action-tag', '行动 XML', config.actionTag)}${input('sc-marker', '标记名称', config.marker)}
+        <label class="form-row"><span class="form-label">首楼条件协议常驻</span><input id="sc-pre-scene-protocol" type="checkbox" ${config.preSceneProtocol ? 'checked' : ''}></label>
+        <p class="tip">默认关闭。开启后，在尚未进入场景时也注入条件申报提醒，帮助首楼输出行动报告；关闭时仅在当局进行中注入申报协议。独立于默认判断蓝灯，修改后保存脚本配置生效。</p>
         <label class="form-row"><span class="form-label">插入锚点</span><select id="sc-marker-anchor"><option value="report" ${config.markerAnchor === 'report' ? 'selected' : ''}>行动报告闭合后</option><option value="trigger" ${config.markerAnchor === 'trigger' ? 'selected' : ''}>启动 XML 闭合后</option></select></label>
         <p class="tip">标记独占一行，仅在所选完整锚点后插入；无锚点不插入、不回退。安装时同步隐藏场景、角色与行动 XML 的聊天显示，原文和 prompt 保留。改名后请更新 Regex。</p>
         <div class="form-header blue">默认经验与角色底账</div>
@@ -354,6 +358,7 @@ function buildConfigPanel(root, context, current, message = '') {
     function readForm() {
         return {
             ...config, enabled: checked('sc-enabled'), defaultJudgment: checked('sc-default-judgment'),
+            preSceneProtocol: checked('sc-pre-scene-protocol'),
             trigger: { tag: value('sc-trigger-tag'), field: value('sc-trigger-field'), value: value('sc-trigger-value') },
             roster: { tag: value('sc-roster-tag'), field: value('sc-roster-field') },
             rosterFormat: value('sc-roster-format'), actionTag: value('sc-action-tag'), marker: value('sc-marker'),

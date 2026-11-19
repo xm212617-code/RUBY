@@ -1115,7 +1115,6 @@ function wireGlobalInteractions() {
 async function renderStatus(layer, source) {
     const el = $('ra_status');
     if (!el) return;
-    const es = engine.getEngineState();
     const identity = config.getCharacterIdentity();
     const layerText = layer === 'character'
         ? (source === 'card' ? '角色卡内嵌配置 📇' : '角色绑定（本地旧版存储）')
@@ -1135,6 +1134,7 @@ async function renderStatus(layer, source) {
         try { chatBook = await worldbook.getChatBookName(); } catch (e) { chatBook = ''; }
     }
 
+    const es = engine.getEngineState();
     const engineLine = es.armed
         ? `<span class="status-ok">🟢 后台监听运行中</span>`
         : (layer === 'character'
@@ -1150,12 +1150,19 @@ async function renderStatus(layer, source) {
     el.innerHTML = `
         <span class="status-ok">✓ 系统就绪</span>（配置层：${layerText} · ${h(identity.name)}）<br>
         ${engineLine}${es.running ? ' · <span style="color:#1E4B8E;">⚙️ 正在执行分析…</span>' : ''}<br>
-        <span style="font-size:12px;color:#666;">AI回复：${es.aiCount} 层 · 周期位置：${es.position}/${es.cycleLength || '-'} ${es.lastRunSummary ? `· 上次执行：${h(es.lastRunSummary)}` : ''}</span><br>
+        <span id="ra_status_counter" style="font-size:12px;color:#666;"></span><br>
         ${bookLine}
         ${es.lastError ? `<br><span class="status-err">上次错误：${h(es.lastError)}</span>` : ''}`;
 
+    renderStatusCounter(es);
     const bookLink = el.querySelector('.ra-chat-book-link');
     if (bookLink) on(bookLink, 'click', () => openChatBook(chatBook));
+}
+
+function renderStatusCounter(es) {
+    const counter = $('ra_status_counter');
+    if (!counter) return;
+    counter.textContent = `AI回复：${es.aiCount} 层 · 周期位置：${es.position}/${es.cycleLength || '-'}${es.lastRunSummary ? ` · 上次执行：${es.lastRunSummary}` : ''}`;
 }
 
 /** 点击聊天世界书：关闭 RUBY 面板 → 打开世界/知识书抽屉 → 自动选中绑定的聊天世界书。
@@ -3376,7 +3383,8 @@ function wireDirectorControls() {
         pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 300))}px`;
         pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - 140)}px`;
     });
-    engine.onStateChange(() => {
+    engine.onStateChange((es) => {
+        renderStatusCounter(es);
         if (ui.directorViewActive) updateDirectorStatus();
         // 创作者时间线 + 玩家任务时间表都动态跟随导演计划
         renderCycleInfo();
