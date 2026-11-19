@@ -242,6 +242,8 @@ test('UI character CRUD preserves unsaved fields and displays levels immediately
     ui.root.querySelector('#sc-character-name').value = 'Alice';
     ui.root.querySelector('#sc-character-exp').value = '25';
     await ui.root.querySelector('#sc-character-add').fire('click');
+    assert.equal(ui.saved, undefined, 'adding rows does not persist or replace the outer panel');
+    await ui.root.querySelector('#sc-save').fire('click');
     assert.deepEqual(ui.saved.characters, [{ name: 'Alice', experience: 25 }]);
     assert.equal(ui.saved.trigger.value, 'custom-value');
     const row = ui.root.rows[0];
@@ -252,10 +254,34 @@ test('UI character CRUD preserves unsaved fields and displays levels immediately
     await ui.root.querySelector('#sc-save').fire('click');
     assert.deepEqual(ui.saved.characters, [{ name: 'Carol', experience: 50 }]);
     await ui.root.rows[0].querySelector('.sc-del').fire('click');
+    await ui.root.querySelector('#sc-save').fire('click');
     assert.deepEqual(ui.saved.characters, []);
     await ui.root.querySelector('#sc-judgment').fire('click');
     assert.equal(ui.saved.defaultJudgment, false);
     assert.deepEqual([0, 10, 25, 50, 100].map(level), ['处子', '新手', '经验', '老手', '魅魔']);
+});
+
+test('UI supports forty consecutive character additions, edits and deletion before a single save', async () => {
+    let saves = 0;
+    const ui = render({}, async () => { saves++; });
+    ui.root.querySelector('#sc-trigger-value').value = 'custom-trigger';
+    for (let index = 0; index < 40; index++) {
+        ui.root.querySelector('#sc-character-name').value = `角色${index}`;
+        ui.root.querySelector('#sc-character-exp').value = String(index);
+        await ui.root.querySelector('#sc-character-add').fire('click');
+        assert.equal(ui.root.rows.length, index + 1);
+    }
+    assert.equal(saves, 0);
+    assert.equal(ui.root.querySelector('#sc-trigger-value').value, 'custom-trigger');
+    ui.root.rows[2].querySelector('.sc-exp').value = '100';
+    await ui.root.rows[2].querySelector('.sc-exp').fire('input');
+    assert.equal(ui.root.rows[2].querySelector('.sc-level').textContent, '魅魔');
+    await ui.root.rows[1].querySelector('.sc-del').fire('click');
+    assert.equal(ui.root.rows.length, 39);
+    await ui.root.querySelector('#sc-save').fire('click');
+    assert.equal(saves, 1);
+    assert.equal(ui.saved.characters.length, 39);
+    assert.deepEqual(ui.saved.characters[1], { name: '角色2', experience: 100 });
 });
 
 test('UI validation and rejected saves show errors without throwing', async () => {
@@ -306,4 +332,17 @@ test('card switches during async config save cannot install Regex into the new c
     assert.match(ui.root.querySelector('#sc-feedback').textContent, /角色卡已切换/);
     assert.equal(characters[1].data.extensions.regex_scripts, undefined);
     delete globalThis.window;
+});
+
+test('reloading the same card object during save does not falsely report a card switch', async () => {
+    const first = { avatar: 'same-card.png', name: 'Same', data: { extensions: { regex_scripts: [] } } };
+    const cards = [first];
+    const writes = [];
+    const host = { character: first, characters: cards, extensionSettings: { character_allowed_regex: [] }, async writeExtensionField(...args) { writes.push(args); }, saveSettingsDebounced() {} };
+    const ui = render(config, async () => { cards[0] = structuredClone(cards[0]); }, host);
+    await ui.root.querySelector('#sc-install-regex').fire('click');
+    assert.equal(writes.length, 1, 'stable avatar identifies the card even if ST refreshes its object');
+    assert.equal(writes[0][0], 0);
+    assert.equal(cards[0].data.extensions.regex_scripts.length, 3);
+    assert.match(ui.root.innerHTML, /Regex 已更新/);
 });

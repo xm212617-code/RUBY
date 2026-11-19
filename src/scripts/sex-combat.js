@@ -292,7 +292,7 @@ async function installRegex(input, target) {
     if (characterId === undefined || characterId === null || !character || typeof c?.writeExtensionField !== 'function') {
         throw new Error('请在支持写回的角色卡聊天中安装 Regex。');
     }
-    if (target?.character !== character || String(target?.characterId) !== String(characterId)) {
+    if (!target?.avatar || target.avatar !== character.avatar) {
         throw new Error('角色卡已切换，请在目标角色卡重新安装 Regex。');
     }
     const settings = c.extensionSettings;
@@ -300,6 +300,10 @@ async function installRegex(input, target) {
     if (settings.disabledExtensions?.includes('regex')) throw new Error('Regex 扩展当前已全局禁用，请先在 ST 扩展设置中启用 Regex。');
     const scripts = buildSexCombatRegexScripts(character.data?.extensions?.regex_scripts, input);
     await c.writeExtensionField(characterId, 'regex_scripts', scripts);
+    const current = ctx();
+    if (current?.characters?.[current?.characterId]?.avatar !== target.avatar) {
+        throw new Error('角色卡在写入期间切换，Regex 已写入原角色卡；当前角色未授权，请切回原卡查看。');
+    }
     character.data ||= {};
     character.data.extensions ||= {};
     character.data.extensions.regex_scripts = scripts;
@@ -335,9 +339,9 @@ function buildConfigPanel(root, context, current, message = '') {
         <div class="form-header blue">默认经验与角色底账</div>
         ${input('sc-default-exp', '未登记经验', config.defaultExperience, 'number')}<span id="sc-default-level">${sexCombatLevelName(config.defaultExperience)}</span>
         <div id="sc-character-list">${config.characters.map((entry, index) => `<div class="form-row" data-character="${index}"><input class="sc-name w200" aria-label="角色名" value="${h(entry.name)}"><input class="sc-exp w120" aria-label="经验次数" type="number" min="0" step="any" value="${entry.experience}"><span class="sc-level">${sexCombatLevelName(entry.experience)}</span><button type="button" class="sc-del btn red small" data-index="${index}">删除</button></div>`).join('') || '<p class="tip">未登记角色默认经验 10，可调整。</p>'}</div>
-        <div class="form-row"><input id="sc-character-name" class="w200" aria-label="新增角色名" placeholder="角色名"><input id="sc-character-exp" class="w120" aria-label="新增经验" type="number" min="0" step="any" value="${config.defaultExperience}"><span id="sc-new-level">${sexCombatLevelName(config.defaultExperience)}</span><button type="button" id="sc-character-add" class="btn outline small">添加角色</button></div>
-        <div class="btn-row"><button type="button" id="sc-save" class="btn blue">保存脚本配置</button><button type="button" id="sc-install-regex" class="btn outline">保存并安装 / 更新卡片 Regex</button></div>
-        <div id="sc-feedback" class="status-box" role="status">${h(message || '配置保存后随卡片导出；角色经验修改时实时显示等级。')}</div>
+        <div class="form-row sc-character-add-row"><input id="sc-character-name" class="w200" aria-label="新增角色名" placeholder="角色名"><input id="sc-character-exp" class="w120" aria-label="新增经验" type="number" min="0" step="any" value="${config.defaultExperience}"><span id="sc-new-level">${sexCombatLevelName(config.defaultExperience)}</span><button type="button" id="sc-character-add" class="btn outline small">添加角色</button></div>
+        <div class="btn-row sc-save-row"><button type="button" id="sc-save" class="btn blue">保存脚本配置</button><button type="button" id="sc-install-regex" class="btn outline">保存并安装 / 更新卡片 Regex</button></div>
+        <div id="sc-feedback" class="status-box" role="status">${h(message || '可连续添加、修改或删除角色，数量不限；完成后点击保存。等级随经验实时显示。')}</div>
     </div></div>`;
 
     const value = (id) => root.querySelector(`#${id}`).value.trim();
@@ -365,7 +369,7 @@ function buildConfigPanel(root, context, current, message = '') {
         saving = true;
         try {
             const c = withRegex ? ctx() : null;
-            const target = { characterId: c?.characterId, character: c?.characters?.[c?.characterId] };
+            const target = { avatar: c?.characters?.[c?.characterId]?.avatar };
             const next = normalizeSexCombatConfig(draft);
             const result = await context.save((scriptConfig) => { Object.assign(scriptConfig, next); });
             if (result === false || result?.ok === false) throw new Error(result?.errors?.join('；') || result?.message || '配置保存失败');
@@ -387,12 +391,14 @@ function buildConfigPanel(root, context, current, message = '') {
     root.querySelector('#sc-character-add').addEventListener('click', () => {
         const draft = readForm();
         draft.characters.push({ name: value('sc-character-name'), experience: value('sc-character-exp') });
-        return saveDraft(draft);
+        const errors = validate(draft);
+        if (errors.length) { feedback(errors.join('；'), true); return; }
+        buildConfigPanel(root, context, draft, `已添加角色，共 ${draft.characters.length} 名；尚未保存，请完成编辑后点击保存。`);
     });
     root.querySelectorAll('.sc-del').forEach((button) => button.addEventListener('click', () => {
         const draft = readForm();
         draft.characters.splice(Number(button.dataset.index), 1);
-        return saveDraft(draft);
+        buildConfigPanel(root, context, draft, `已删除角色，剩余 ${draft.characters.length} 名；尚未保存。`);
     }));
     root.querySelectorAll('[data-character]').forEach((row) => row.querySelector('.sc-exp').addEventListener('input', (event) => {
         row.querySelector('.sc-level').textContent = experience(event.target.value, -1) < 0 ? '无效经验' : sexCombatLevelName(Number(event.target.value));

@@ -178,7 +178,7 @@ export function openPanel(mode) {
         const tab = root.querySelector(`.mode-tab[data-mode="${mode}"]`);
         if (tab) tab.click();
     }
-    refreshAll();
+    refreshAll({ refreshScripts: !mode && ui.mode === 'scripts' });
     if (mode === 'cardwriter') renderCardWriterTab();
     root.style.display = 'flex';
 }
@@ -199,7 +199,7 @@ function updateThemeButton() {
     if (btn) btn.textContent = isDarkMode() ? '☀️' : '🌙';
 }
 
-function refreshAll() {
+function refreshAll({ refreshScripts = false } = {}) {
     updateThemeButton();
     const { data, layer, source } = config.resolveConfig();
     if (!ui.editingPresetId || !data.presets.some((p) => p.id === ui.editingPresetId)) {
@@ -226,6 +226,7 @@ function refreshAll() {
     renderRefPool();
     renderBindingTab(layer);
     renderPresetSummary();
+    if (refreshScripts && ui.mode === 'scripts') renderScriptPanel();
 }
 
 function buildPanel() {
@@ -922,7 +923,6 @@ function wireTabs(root) {
         root.querySelectorAll('.mode-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
         root.querySelectorAll('.panel-content').forEach((p) => p.classList.toggle('active', p.dataset.panel === mode));
         saveUIState();
-        if (mode === 'scripts') renderScriptPanel(root);
     };
 
     const applySub = (panelEl, sub) => {
@@ -994,13 +994,15 @@ function renderScriptPanel(root = $(PANEL_ID)) {
         data,
         layer: cfg.layer,
         save(mutator) {
-            if (cfg.layer !== 'character') return Promise.resolve({ ok: false, message: '请先选择角色卡；脚本配置不会保存到全局设置。' });
-            const identity = config.getCharacterIdentity?.();
-            if (!identity) return Promise.resolve({ ok: false, message: '当前没有可保存的角色卡。' });
-            if (identity.avatar !== renderedIdentity?.avatar) return Promise.resolve({ ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' });
+            const identity = renderedIdentity;
+            if (!identity) return Promise.resolve({ ok: false, message: '请先选择角色卡；脚本配置不会保存到全局设置。' });
+            const currentIdentity = config.getCharacterIdentity?.();
+            if (!currentIdentity || currentIdentity.avatar !== identity.avatar) {
+                return Promise.resolve({ ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' });
+            }
             const fresh = config.resolveConfig().data;
             const latest = config.getCharacterIdentity?.();
-            if (latest && (identity.avatar !== latest.avatar || identity.name !== latest.name)) {
+            if (!latest || identity.avatar !== latest.avatar) {
                 return Promise.resolve({ ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' });
             }
             fresh.cardScripts ||= {};
@@ -1011,7 +1013,10 @@ function renderScriptPanel(root = $(PANEL_ID)) {
             fresh.cardScripts[registration.id] = current;
             config.saveConfigData(fresh);
             return config.flushCardPersistNow().then(() => {
-                renderScriptPanel(root);
+                const afterFlush = config.getCharacterIdentity?.();
+                if (!afterFlush || afterFlush.avatar !== identity.avatar) {
+                    return { ok: false, message: '角色卡已切换，请重新打开脚本面板后保存。' };
+                }
                 return { ok: true };
             }).catch((error) => ({ ok: false, message: error?.message || '写回角色卡失败' }));
         },
@@ -1021,6 +1026,16 @@ function renderScriptPanel(root = $(PANEL_ID)) {
 function wireGlobalInteractions() {
     if (interactionsBound) return;
     interactionsBound = true;
+
+    const c = ctx();
+    if (c?.eventSource && c?.eventTypes?.CHAT_CHANGED) {
+        c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => {
+            setTimeout(() => {
+                const root = $(PANEL_ID);
+                if (root && root.style.display !== 'none' && ui.mode === 'scripts') renderScriptPanel(root);
+            }, 0);
+        });
+    }
 
     document.addEventListener('click', (e) => {
         const refGroupHeader = e.target?.closest?.('.ref-group-header');
