@@ -63,12 +63,39 @@ export function createRequestLimiter({ now = Date.now, delay = abortableDelay } 
 export function parseAgentTurn(raw) {
     if (raw?.error) throw new Error(String(raw.error.message || raw.error));
     const choice = raw?.choices?.find((c) => c.index === 0) || raw?.choices?.[0];
+    const googleParts = raw?.responseContent?.parts || raw?.candidates?.[0]?.content?.parts;
     let text = '';
     let calls = [];
     if (choice?.message) {
         const message = choice.message;
         text = typeof message.content === 'string' ? message.content : (message.content || []).filter((p) => p.type === 'text').map((p) => p.text).join('\n');
-        calls = message.tool_calls || [];
+        calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+        if (calls.length && Array.isArray(googleParts)) {
+            const nativeCalls = googleParts.filter((part) => part.functionCall);
+            if (nativeCalls.length) {
+                // The ST 1.16 OpenAI-shaped content can be a text serialization of
+                // tool metadata; use the original Gemini parts as the authoritative turn.
+                text = googleParts.filter((part) => typeof part.text === 'string' && !part.thought).map((part) => part.text).join('\n');
+            }
+            calls = calls.map((call, index) => {
+                const native = nativeCalls.find((part) => part.functionCall.name === call.function?.name) || nativeCalls[index];
+                if (!native?.thoughtSignature) return call;
+                return { ...call, signature: call.signature || native.thoughtSignature };
+            });
+        }
+        // ST 1.16 wraps native Gemini candidates in choices[0].message, but leaves
+        // functionCall parts in responseContent instead of converting them to tool_calls.
+        if (!calls.length && Array.isArray(googleParts)) {
+            const nativeCalls = googleParts.filter((part) => part.functionCall);
+            if (nativeCalls.length) {
+                text = googleParts.filter((part) => typeof part.text === 'string' && !part.thought).map((part) => part.text).join('\n');
+                calls = nativeCalls.map((part) => ({
+                    type: 'function',
+                    function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) },
+                    ...(part.thoughtSignature ? { signature: part.thoughtSignature } : {}),
+                }));
+            }
+        }
         if (choice.finish_reason === 'length' || choice.finish_reason === 'max_tokens') throw new Error('Agent 回复达到输出长度上限，未执行本轮工具；请增加最大输出长度');
     } else if (Array.isArray(raw?.content)) {
         if (raw.stop_reason === 'max_tokens') throw new Error('Agent 回复达到输出长度上限，未执行本轮工具');
@@ -89,7 +116,13 @@ export function parseAgentTurn(raw) {
         const id = String(call.id || `${prefix}_${index}`);
         if (ids.has(id)) throw new Error('Agent 返回重复的工具调用编号');
         ids.add(id);
-        return { id, type: 'function', function: { name: call.function.name, arguments: typeof call.function.arguments === 'string' ? call.function.arguments : JSON.stringify(call.function.arguments || {}) }, ...(call.signature ? { signature: call.signature } : {}) };
+        const signature = call.signature || call.extra_content?.google?.thought_signature;
+        return {
+            id, type: 'function',
+            function: { name: call.function.name, arguments: typeof call.function.arguments === 'string' ? call.function.arguments : JSON.stringify(call.function.arguments || {}) },
+            ...(signature ? { signature } : {}),
+            ...(call.extra_content ? { extra_content: call.extra_content } : {}),
+        };
     });
     if (!text.trim() && !calls.length) throw new Error('模型未返回正文或工具调用，请检查模型是否支持工具及输出长度');
     const reasoning = choice?.message?.reasoning_content;
@@ -131,7 +164,10 @@ export async function runAgentLoop({ messages, tools, request, settings, signal,
         }
         const turn = parseAgentTurn(raw);
         if (turn.usage) onEvent({ kind: 'usage', usage: turn.usage });
-        const assistant = { role: 'assistant', content: turn.text || '', ...(turn.calls.length ? { tool_calls: turn.calls } : {}),
+        const assistant = { role: 'assistant', content: turn.text || '', ...(turn.calls.length ? { tool_calls: turn.calls.map((call) => ({
+            id: call.id, type: call.type, function: call.function,
+            ...(call.signature ? { signature: call.signature } : {}), ...(call.extra_content ? { extra_content: call.extra_content } : {}),
+        })) } : {}),
             ...(turn.reasoning !== undefined ? { reasoning_content: turn.reasoning } : {}) };
         messages.push(assistant);
         if (!turn.calls.length) return { text: turn.text, requestCount, toolCount };

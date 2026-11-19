@@ -85,6 +85,54 @@ test('truncated, duplicate and empty tool responses are rejected before any tool
     assert.equal(parseAgentTurn({ content: [{ type: 'tool_use', id: 'a', name: 'read', input: { uid: 0 } }] }).calls[0].function.arguments, '{"uid":0}');
 });
 
+test('SillyTavern Gemini wrapper preserves responseContent function calls beside choices.message', async () => {
+    let requests = 0, toolCount = 0;
+    const messages = [{ role: 'user', content: 'Edit the requested entry' }];
+    const hostGeminiTurn = {
+        choices: [{ message: { content: 'character 50 0\nchat 50 0' } }],
+        responseContent: { role: 'model', parts: [
+            { text: 'Inspecting the authorized books.' },
+            { functionCall: { name: 'list_books', args: {} }, thoughtSignature: 'gemini-thought-signature' },
+        ] },
+    };
+    const result = await runAgentLoop({ messages, settings,
+        tools: { definitions: [{ type: 'function', function: { name: 'list_books', parameters: { type: 'object' } } }],
+            execute: async () => { toolCount++; return { books: [{ id: 'character', name: 'Main', count: 50 }] }; } },
+        request: async ({ messages: current }) => {
+            requests++;
+            if (requests === 1) return hostGeminiTurn;
+            const assistant = current.find((message) => message.role === 'assistant' && message.tool_calls);
+            assert.equal(assistant.tool_calls[0].function.name, 'list_books');
+            assert.equal(assistant.tool_calls[0].signature, 'gemini-thought-signature');
+            assert.equal(assistant.content, 'Inspecting the authorized books.');
+            assert.doesNotMatch(assistant.content, /character 50 0|chat 50 0/);
+            assert.equal(current.at(-1).role, 'tool');
+            assert.match(current.at(-1).content, /Main/);
+            return answer('找到授权书了，我来修改墨涟条目。');
+        },
+    });
+    assert.equal(result.text, '找到授权书了，我来修改墨涟条目。');
+    assert.equal(requests, 2); assert.equal(toolCount, 1);
+});
+
+test('OpenRouter Gemini extra_content thought signatures survive assistant tool-call replay', async () => {
+    const messages = [];
+    let requests = 0;
+    await runAgentLoop({ messages, settings, tools: tools(async () => ({ ok: true })),
+        request: async ({ messages: current }) => requests++ === 0
+            ? calls({ ...call('read'), extra_content: { google: { thought_signature: 'router-signature' } } })
+            : (assert.deepEqual(current.find((m) => m.role === 'assistant').tool_calls[0].extra_content, { google: { thought_signature: 'router-signature' } }), answer('Done')) });
+    assert.equal(requests, 2);
+});
+
+test('standardized Gemini tool calls inherit thought signatures from adjacent native response parts', () => {
+    const turn = parseAgentTurn({
+        choices: [{ message: { content: '', tool_calls: [call('read')] } }],
+        responseContent: { parts: [{ functionCall: { name: 'read', args: {} }, thoughtSignature: 'native-signature' }] },
+    });
+    assert.equal(turn.calls[0].signature, 'native-signature');
+});
+
 test('runtime schema validation rejects malformed UIDs, unknown keys and prototype paths', () => {
     const schema = { type: 'object', properties: { uid: { type: 'integer', minimum: 0 }, patch: { type: 'object' } }, required: ['uid'], additionalProperties: false };
     assert.throws(() => validateAgentArguments({ uid: '__proto__' }, schema), /integer/);
