@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
-import { buildSexCombatRegexScripts, normalizeSexCombatConfig } from '../src/scripts/sex-combat.js';
+import { buildSexCombatRegexScripts, normalizeSexCombatConfig, parseSexCombatScene } from '../src/scripts/sex-combat.js';
 import { buildSexCombatDocument, renderSexCombatContent } from '../src/scripts/sex-combat-view.js';
 
 const root = new URL('../', import.meta.url);
@@ -419,3 +419,27 @@ test('default judgment starts before any eligible scene so the first prompt can 
     assert.equal(h.entries.get(KEY + '默认判断').constant, true);
     assert.equal(h.runtime.snapshot().state, null);
 });
+
+for (const rosterFormat of ['yaml-list', 'json', 'loose']) {
+    for (const separateTags of [false, true]) {
+        test(`judgment examples parse correctly for ${rosterFormat}, separate XML=${separateTags}`, async () => {
+            const settings = {
+                enabled: true, defaultJudgment: true, rosterFormat,
+                trigger: { tag: 'game', field: 'mode', value: 'sexhard' },
+                roster: { tag: separateTags ? 'cast' : 'game', field: 'names' },
+            };
+            const h = host({ config: settings, chat: [{ mes: 'ordinary opening' }] });
+            await h.runtime.tick();
+            const text = h.entries.get(KEY + '默认判断').content;
+            const inactive = text.split('【未达到启动条件的输出示例】\n')[1]?.split('\n【确实满足启动条件的输出示例】')[0];
+            const active = text.split('【确实满足启动条件的输出示例】\n')[1]?.split('\n每轮只输出')[0];
+            assert.ok(inactive && active, 'both complete examples are included');
+            assert.equal(parseSexCombatScene(inactive, settings).active, false);
+            const parsed = parseSexCombatScene(active, settings);
+            assert.equal(parsed.valid, true);
+            assert.equal(parsed.active, true);
+            assert.deepEqual(parsed.roster, ['角色甲', '角色乙']);
+            assert.doesNotMatch(active, /SceneInfo|在场角色|场景类型/, 'custom configuration replaces default fields in the examples');
+        });
+    }
+}

@@ -239,7 +239,7 @@ export function sexCombatLevelName(value) {
     return '处子';
 }
 
-/** Stable IDs replace only our two entries; unrelated card Regex are untouched. */
+/** Stable IDs replace only owned entries; unrelated card Regex are untouched. */
 export function buildSexCombatRegexScripts(existing, input = {}) {
     const config = normalizeSexCombatConfig(input);
     const common = {
@@ -252,9 +252,17 @@ export function buildSexCombatRegexScripts(existing, input = {}) {
         [PROMPT_REGEX_ID, { ...common, id: PROMPT_REGEX_ID, scriptName: 'RUBY 性斗标记（prompt 剥除）', replaceString: '', markdownOnly: false, promptOnly: true }],
         [RENDER_REGEX_ID, { ...common, id: RENDER_REGEX_ID, scriptName: 'RUBY 情潮面板（完整 HTML iframe）', replaceString: '```html\n' + panel.replace(/\$/g, '\\$') + '\n```', markdownOnly: true, promptOnly: false }],
     ]);
+    const hiddenTags = [...new Set([config.trigger.tag, config.roster.tag, config.actionTag].map((name) => escapeRegex(name)))];
+    owned.set('ruby-sex-combat-blocks-display-v1', {
+        ...common,
+        id: 'ruby-sex-combat-blocks-display-v1',
+        scriptName: 'RUBY 性斗场景与行动块（仅显示隐藏）',
+        findRegex: `/<(${hiddenTags.join('|')})(?=[\\s>])[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi`,
+        replaceString: '', markdownOnly: true, promptOnly: false,
+    });
     const result = [];
     for (const entry of Array.isArray(existing) ? existing : []) {
-        if (entry?.id === PROMPT_REGEX_ID || entry?.id === RENDER_REGEX_ID) {
+        if (owned.has(entry?.id) || [PROMPT_REGEX_ID, RENDER_REGEX_ID, 'ruby-sex-combat-blocks-display-v1'].includes(entry?.id)) {
             if (owned.has(entry.id)) { result.push(owned.get(entry.id)); owned.delete(entry.id); }
         } else result.push(structuredClone(entry));
     }
@@ -319,11 +327,11 @@ function buildConfigPanel(root, context, current, message = '') {
         <div class="form-header blue">当前角色解析</div>
         ${input('sc-roster-tag', 'XML 标签', config.roster.tag)}${input('sc-roster-field', '角色字段', config.roster.field)}
         <label class="form-row"><span class="form-label">列表格式</span><select id="sc-roster-format">${[['yaml-list', 'YAML 列表'], ['json', 'JSON 数组'], ['loose', '逗号 / 分号 / 换行']].map(([value, label]) => `<option value="${value}" ${config.rosterFormat === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-        <p class="tip">YAML 支持多行 - 角色名|服装；JSON 支持字段值为字符串数组。重复或未闭合 XML 块不触发。</p>
+        <p class="tip">YAML 支持带或不带连字符的换行姓名，可加 |服装；JSON 支持字符串数组。重复或未闭合 XML 块不触发。</p>
         <div class="form-header blue">行动报告与显示标记</div>
         ${input('sc-action-tag', '行动 XML', config.actionTag)}${input('sc-marker', '标记名称', config.marker)}
         <label class="form-row"><span class="form-label">插入锚点</span><select id="sc-marker-anchor"><option value="report" ${config.markerAnchor === 'report' ? 'selected' : ''}>行动报告闭合后</option><option value="trigger" ${config.markerAnchor === 'trigger' ? 'selected' : ''}>启动 XML 闭合后</option></select></label>
-        <p class="tip">仅在有效启动场景的完整锚点后插入 &lt;/${h(config.marker)}&gt;；无锚点不插入。改名后请更新 Regex。</p>
+        <p class="tip">标记独占一行，仅在所选完整锚点后插入；无锚点不插入、不回退。安装时同步隐藏场景、角色与行动 XML 的聊天显示，原文和 prompt 保留。改名后请更新 Regex。</p>
         <div class="form-header blue">默认经验与角色底账</div>
         ${input('sc-default-exp', '未登记经验', config.defaultExperience, 'number')}<span id="sc-default-level">${sexCombatLevelName(config.defaultExperience)}</span>
         <div id="sc-character-list">${config.characters.map((entry, index) => `<div class="form-row" data-character="${index}"><input class="sc-name w200" aria-label="角色名" value="${h(entry.name)}"><input class="sc-exp w120" aria-label="经验次数" type="number" min="0" step="any" value="${entry.experience}"><span class="sc-level">${sexCombatLevelName(entry.experience)}</span><button type="button" class="sc-del btn red small" data-index="${index}">删除</button></div>`).join('') || '<p class="tip">未登记角色默认经验 10，可调整。</p>'}</div>

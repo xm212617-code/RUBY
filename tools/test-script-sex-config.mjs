@@ -169,13 +169,13 @@ test('markers use exact closing offsets, never a missing-anchor tail, and are id
     assert.equal(sync(`\`\`\`xml\n</xingdou>\n\`\`\`\n${marked}`, config), `\`\`\`xml\n</xingdou>\n\`\`\`\n${marked}`);
 });
 
-test('Regex installation owns two stable entries and actually renders escaped HTML', () => {
+test('Regex installation updates three owned entries and actually renders escaped HTML', () => {
     const foreign = { id: 'foreign', findRegex: 'anything', extra: { keep: true } };
     const settings = { ...config, marker: 'x:mark', characters: [{ name: '<img src=x onerror=alert(1)>$&', experience: 25 }] };
     const entries = regexScripts([foreign, { id: 'ruby-sex-combat-v1', old: true }, { id: 'ruby-sex-combat-v1', duplicate: true }], settings);
     assert.deepEqual(entries[0], foreign);
     assert.notEqual(entries[0], foreign);
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, 4);
     assert.deepEqual(regexScripts(entries, settings), entries);
     const prompt = entries.find((entry) => entry.promptOnly);
     const display = entries.find((entry) => entry.markdownOnly);
@@ -195,6 +195,28 @@ test('Regex installation owns two stable entries and actually renders escaped HT
     assert.doesNotMatch(liveHtml, /<img\b/i);
     assert.equal(prompt.disabled, false);
     assert.equal(regexScripts([], {}).every((entry) => entry.disabled), true);
+});
+
+test('configured XML blocks are hidden only for display, preserving source and prompt fields', () => {
+    const custom = normalize({ enabled: true, trigger: { tag: 'game', field: 'mode', value: 'sexhard' }, roster: { tag: 'cast', field: 'names' }, rosterFormat: 'loose', actionTag: 'actions' });
+    const source = '<game>mode: sexhard</game>\n<cast>names: Alice,Bob</cast>\n正文\n<actions>user:\n  单向: 1\n</actions>\n</xingdou>\n<gameplay>keep</gameplay>';
+    const rules = regexScripts([], custom);
+    const hide = rules.find((entry) => entry.id === 'ruby-sex-combat-blocks-display-v1');
+    assert.equal(hide.markdownOnly, true);
+    assert.equal(hide.promptOnly, false);
+    const compile = (entry) => { const match = entry.findRegex.match(/^\/(.*)\/([a-z]*)$/); return new RegExp(match[1], match[2]); };
+    const visible = source.replace(compile(hide), hide.replaceString);
+    assert.equal(visible, '\n\n正文\n\n</xingdou>\n<gameplay>keep</gameplay>');
+    assert.equal(parse(source, custom).active, true, 'Ruby still parses the untouched raw message');
+    const prompt = rules.filter((entry) => entry.promptOnly).reduce((text, rule) => text.replace(compile(rule), rule.replaceString), source);
+    assert.ok(prompt.includes('<game>mode: sexhard</game>'));
+    assert.ok(prompt.includes('<cast>names: Alice,Bob</cast>'));
+    assert.ok(prompt.includes('<actions>'));
+    assert.ok(!prompt.includes('</xingdou>'));
+    const defaults = regexScripts([], config).find((entry) => entry.id === hide.id);
+    assert.equal('<SceneInfo>场景类型：NSFWH</SceneInfo>正文<report>data</report>'.replace(compile(defaults), ''), '正文');
+    const renamed = regexScripts(rules, config);
+    assert.equal(renamed.filter((entry) => entry.id === hide.id).length, 1, 'changing XML tags updates the owned rule in place');
 });
 
 test('UI registration uses current-config save contract and awaits Promise', async () => {
@@ -264,7 +286,7 @@ test('UI installs only owned card Regex and propagates write failures', async ()
     assert.equal(calls[0][1], 'regex_scripts');
     assert.deepEqual(calls[0][2][0], foreign);
     assert.equal(character.data.extensions.other, 'kept');
-    assert.equal(character.data.extensions.regex_scripts.length, 3);
+    assert.equal(character.data.extensions.regex_scripts.length, 4);
     assert.deepEqual(extensionSettings.character_allowed_regex, ['alice.png'], 'install explicitly authorizes this card scoped regex');
     context.extensionSettings = { character_allowed_regex: ['alice.png'] };
     context.writeExtensionField = async () => { throw new Error('no write'); };

@@ -315,13 +315,36 @@ export function createScriptRuntime(dependencies = {}) {
         }
         function judgmentText() {
             const config = s.config, trigger = config.trigger, roster = config.roster;
-            const format = config.rosterFormat === 'json' ? 'JSON 字符串数组，例如 ["角色名"]' : config.rosterFormat === 'loose' ? '逗号分隔的角色名字' : 'YAML 列表，每行「- 角色名」，可在名字后加 |服装';
+            const sameBlock = roster.tag.toLowerCase() === trigger.tag.toLowerCase();
+            const format = config.rosterFormat === 'json' ? 'JSON 字符串数组' : config.rosterFormat === 'loose' ? '逗号、分号或换行分隔的角色名字' : 'YAML 换行列表，建议每行「- 角色名」；也接受省略连字符，可在名字后加 |服装';
+            const example = (value) => {
+                const names = ['角色甲', '角色乙'];
+                if (config.rosterFormat === 'json') {
+                    const fields = { [trigger.field]: value };
+                    if (sameBlock) fields[roster.field] = names;
+                    const first = `<${trigger.tag}>\n${JSON.stringify(fields, null, 2)}\n</${trigger.tag}>`;
+                    return sameBlock ? first : first + `\n<${roster.tag}>\n${JSON.stringify({ [roster.field]: names }, null, 2)}\n</${roster.tag}>`;
+                }
+                const rosterLine = config.rosterFormat === 'loose'
+                    ? `${roster.field}：角色甲，角色乙`
+                    : `${roster.field}：\n- 角色甲\n- 角色乙`;
+                const first = `<${trigger.tag}>\n${trigger.field}：${value}${sameBlock ? '\n' + rosterLine : ''}\n</${trigger.tag}>`;
+                return sameBlock ? first : first + `\n<${roster.tag}>\n${rosterLine}\n</${roster.tag}>`;
+            };
+            const inactiveValue = trigger.value === 'SFW' ? 'NSFW' : 'SFW';
             return [
                 '<场景与角色判断>',
                 '每次回复在正文之外输出一个 <' + trigger.tag + '> 块，其中「' + trigger.field + '」字段记录当前场景类型。',
                 '只有真正发生性行为、性器接触时，该字段才可写为「' + trigger.value + '」；仅暧昧、裸露、准备、事后休息均不满足，应写为 SFW 或 NSFW 等非启动值。',
-                (roster.tag === trigger.tag ? '同一块内' : '另输出一个 <' + roster.tag + '> 块，') + '用「' + roster.field + '」字段列出当前实际在场角色，格式为' + format + '。',
+                (sameBlock ? '同一块内' : '另输出一个 <' + roster.tag + '> 块，') + '用「' + roster.field + '」字段列出当前实际在场角色，格式为' + format + '。',
                 '角色名单只列实际在场者，不把回忆、想象、提及但不在场的人加入。',
+                '严格参照以下完整格式输出，标签必须成对闭合、字段名保持不变。不要用 Markdown 代码围栏包裹实际输出。',
+                '示例姓名仅示范格式；实际输出请替换成当前在场角色的真实姓名，不要照抄“角色甲/角色乙”。这里只要求场景与角色字段，不要额外照搬其它卡的地点或时间字段。',
+                '【未达到启动条件的输出示例】',
+                example(inactiveValue),
+                '【确实满足启动条件的输出示例】',
+                example(trigger.value),
+                '每轮只输出当前真实状态对应的一组，禁止同时输出两种示例；启动值必须逐字写为「' + trigger.value + '」。',
                 '</场景与角色判断>',
             ].join('\n');
         }
