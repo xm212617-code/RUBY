@@ -15,6 +15,8 @@ assert.match(AGENT_SYSTEM_GUIDE, /已授权世界书.*关闭条目/);
 assert.match(AGENT_SYSTEM_GUIDE, /你是Ruby.*洪晓彤.*粉色长发/);
 assert.match(AGENT_SYSTEM_GUIDE, /樱花粉色长发.*玫瑰金/);
 assert.match(AGENT_SYSTEM_GUIDE, /人格中的聊天习惯不限制工具执行/);
+assert.match(AGENT_SYSTEM_GUIDE, /正则安装写入角色卡后不会热重载Regex engine.*刷新整个SillyTavern页面/);
+assert.match(readKnowledge('panel-host', { limit: Number.MAX_SAFE_INTEGER }).content, /不会热重载酒馆 Regex engine.*刷新整个 SillyTavern 页面/);
 assert.equal(readKnowledge('missing'), null);
 assert.equal(readKnowledge('__proto__'), null);
 assert.throws(() => readKnowledge('pipeline', { limit: 0 }), RangeError);

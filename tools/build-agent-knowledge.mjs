@@ -188,6 +188,7 @@ panel-snapshot 从对应楼层正文读取，重渲染同一楼仍显示该楼�
 ## 宿主行为
 SillyTavern Regex engine 的 runRegexScript 先把替换模板内的 {{match}}（不区分大小写）改为 $0，再展开 $0（整个匹配）、$1 等数字捕获和 $<name> 命名捕获。应用 trimStrings 后，最后对整个替换文本调用 substituteParams，宏可以在静态模板或捕获文本里发生展开。此流程没有 HTML、JavaScript 或属性转义，也不是 JS String.replace 的 $&、$$ 规则。substituteRegex:0 仅关闭查找表达式的宏替换，不影响替换文本末尾的宏展开。
 正则记录放 data.extensions.regex_scripts。placement:[2] 匹配 AI 输出；确需玩家消息才用 [1,2]。markdownOnly:true 配 promptOnly:false 做显示层替换，runOnEdit:true 才覆盖编辑路径。原始标记仍留在消息里。需要从 prompt 去掉标记时另做 promptOnly 规则，别把整段 HTML 注入 prompt。
+当前角色正则安装工具会写入角色卡并启用该卡的 scoped Regex 授权，但不会热重载酒馆 Regex engine 或重新处理现有聊天 DOM。安装、更新或删除角色正则后，必须提醒创作者刷新整个 SillyTavern 页面；刷新后新规则才会被加载，已有消息也会按新规则重新渲染。不要声称规则安装后立即生效，也不要把重新打开聊天说成等价于刷新酒馆。
 三个示例的 replaceString 是完整可导入的值。支持 HTML 代码块转 iframe 的 renderer 才会执行其中的 script，需安装、启用并实际验证。原生 ST/Regex 不承诺代码块转 iframe，也不提供通用 STscript；缺 renderer 时可能只显示代码块。活状态还需明确支持斜杠执行的适配器，性斗帧还需处在 runtime 认可的消息 DOM 中。
 
 ## 保留源码与边界
