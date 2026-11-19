@@ -1830,4 +1830,13 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
 /* Agent ownership indicator beside the native composer. */
 #ruby-agent-composer-badge { display:block; box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:0 0 4px; padding:4px 10px; border:1px solid #a64e59; border-radius:6px; background:#7a283226; color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; pointer-events:none; }
 #ruby-agent-composer-badge[hidden] { display:none; }
+.ruby-agent-prose { white-space:normal; line-height:1.7; overflow-wrap:anywhere; min-width:0; }
+.ruby-agent-prose p { margin:.65em 0; }
+.ruby-agent-prose ul,.ruby-agent-prose ol { padding-left:1.8em; margin:.65em 0; }
+.ruby-agent-prose li { margin:.25em 0; }
+.ruby-agent-prose pre { white-space:pre; overflow:auto; max-width:100%; padding:12px; border:1px solid var(--SmartThemeBorderColor,#555); border-radius:6px; background:rgba(127,127,127,.1); }
+.ruby-agent-prose pre.ruby-agent-plain { white-space:pre-wrap; }
+.ruby-agent-prose pre code { white-space:inherit; font-family:monospace; }
+.ruby-agent-prose table { display:block; overflow-x:auto; max-width:100%; border-collapse:collapse; margin:.8em 0; }
+.ruby-agent-prose th,.ruby-agent-prose td { border:1px solid var(--SmartThemeBorderColor,#555); padding:6px 10px; }
 #ra_panel .form-section[hidden] { display:none; }

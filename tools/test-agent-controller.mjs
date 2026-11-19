@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { runAgentLoop, createRequestLimiter } from '../src/agent-runner.js';
 import { extendAgentArtifacts } from '../src/agent-artifacts.js';
+import { renderAgentMarkdown, agentMessageSource } from '../src/agent-render.js';
 
 const source = await readFile(new URL('../src/agent-controller.js', import.meta.url), 'utf8');
 const answer = (text) => ({ choices: [{ message: { content: text } }] });
@@ -25,6 +26,7 @@ async function harness({ request = async () => answer('Done'), makeTools } = {})
         './agent-mode.js': { isAgentMode: (context = c) => context?.chatMetadata?.extensions?.RubyAnalyzer?.agent?.mode === 'agent' },
         './agent-regex-test.js': { testAgentRegex: async () => ({ matches: [] }) },
         './agent-artifacts.js': { extendAgentArtifacts },
+        './agent-render.js': { renderAgentMarkdown, agentMessageSource },
     };
     const context = vm.createContext({ console, AbortController, setTimeout, clearTimeout, CustomEvent: class {}, window: { dispatchEvent() {} } });
     const mod = new vm.SourceTextModule(source, { context });
@@ -65,7 +67,7 @@ test('ordinary roleplay history is never imported; generated HTML is visible tex
     h.c.chat.push({ is_user: false, mes: 'SECRET ROLEPLAY HISTORY' });
     await h.controller.setMode('agent'); await h.controller.submit('Create a panel');
     assert.doesNotMatch(JSON.stringify(sent), /SECRET ROLEPLAY/);
-    assert.doesNotMatch(h.c.chat.at(-1).mes, /<script>|```/);
+    assert.doesNotMatch(h.c.chat.at(-1).mes, /<script>/);
     assert.match(h.c.chat.at(-1).mes, /&lt;script&gt;/);
 });
 

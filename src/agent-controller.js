@@ -6,6 +6,7 @@ import { requestAgent } from './agent-api.js';
 import { isAgentMode } from './agent-mode.js';
 import { testAgentRegex } from './agent-regex-test.js';
 import { extendAgentArtifacts } from './agent-artifacts.js';
+import { renderAgentMarkdown, agentMessageSource } from './agent-render.js';
 
 const DEFAULTS = { connection: 'ruby', url: '', key: '', model: '', rpm: 10, minIntervalMs: 1000,
     maxRequests: 30, maxMinutes: 15, maxTokens: 4096, temperature: 0.6, retries: 2 };
@@ -146,13 +147,12 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
     };
     const appendChat = async (text, user, origin, guard) => {
         guard();
-        // Keep generated HTML/code as visible text, including after history re-rendering.
-        const displayText = String(text).replace(/[&<>`]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '`': '&#96;' }[c]));
+        const displayText = renderAgentMarkdown(String(text));
         const displayName = user ? (origin.name1 || 'User') : 'Ruby Agent';
         // ST only bypasses character/global regex for its own system identity.
         const message = { name: 'SillyTavern System', is_user: user, is_system: true,
             send_date: new Date().toISOString(), mes: displayText,
-            extra: { ruby_agent: true, ruby_agent_name: displayName, ruby_agent_role: user ? 'user' : 'assistant' } };
+            extra: { ruby_agent: true, ruby_agent_source: String(text), ruby_agent_name: displayName, ruby_agent_role: user ? 'user' : 'assistant' } };
         origin.chat.push(message);
         origin.addOneMessage?.(message);
         const label = globalThis.document?.querySelector?.(`#chat .mes[mesid="${origin.chat.length - 1}"] .name_text`);
@@ -238,6 +238,19 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
             runtime.running = false; runtime.waitUntil = 0; emit();
         }
     };
+    const restoreMessageLayout = () => {
+        for (const [index, message] of (getContext()?.chat || []).entries()) {
+            if (!message.extra?.ruby_agent) continue;
+            const raw = agentMessageSource(message);
+            message.extra.ruby_agent_source = raw;
+            message.mes = renderAgentMarkdown(raw);
+            const root = globalThis.document?.querySelector?.(`#chat .mes[mesid="${index}"]`);
+            const body = root?.querySelector?.('.mes_text');
+            if (body) body.innerHTML = message.mes;
+            const label = root?.querySelector?.('.name_text');
+            if (label) label.textContent = message.extra.ruby_agent_name || 'Ruby Agent';
+        }
+    };
     const init = () => {
         if (initialized) return;
         const c = getContext();
@@ -248,12 +261,9 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
             for (const item of runtime.artifacts || []) if (item.url) URL.revokeObjectURL(item.url);
             runtime = { ...runtime, artifacts: [], scope: [], error: '', phase: '聊天已切换', usage: {}, waitUntil: 0 };
             emit();
-            for (const [index, message] of (getContext()?.chat || []).entries()) {
-                if (!message.extra?.ruby_agent) continue;
-                const label = globalThis.document?.querySelector?.(`#chat .mes[mesid="${index}"] .name_text`);
-                if (label) label.textContent = message.extra.ruby_agent_name || 'Ruby Agent';
-            }
+            restoreMessageLayout();
         });
+        restoreMessageLayout();
     };
     return { getSettings, saveSettings, getState, setMode, stop, submit, refreshScope, resetConversation, init,
         onStateChange(fn) { listeners.add(fn); return () => listeners.delete(fn); } };

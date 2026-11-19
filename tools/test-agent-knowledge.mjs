@@ -12,6 +12,9 @@ for (const id of ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'f', 'n', 's', 'c']) {
 }
 assert.match(AGENT_SYSTEM_GUIDE, /Step1.*不是流水线 P1/);
 assert.match(AGENT_SYSTEM_GUIDE, /已授权世界书.*关闭条目/);
+assert.match(AGENT_SYSTEM_GUIDE, /你是Ruby.*洪晓彤.*粉色长发/);
+assert.match(AGENT_SYSTEM_GUIDE, /樱花粉色长发.*玫瑰金/);
+assert.match(AGENT_SYSTEM_GUIDE, /人格中的聊天习惯不限制工具执行/);
 assert.equal(readKnowledge('missing'), null);
 assert.equal(readKnowledge('__proto__'), null);
 assert.throws(() => readKnowledge('pipeline', { limit: 0 }), RangeError);

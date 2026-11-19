@@ -57,7 +57,7 @@ test('a normal chat task reads knowledge, reads and edits a bound book, verifies
     assert.equal(books.Main.custom, 'preserved');
     assert.deepEqual(books.Main.entries[0].keysecondary, ['Alias']);
     assert.equal(books.Main.entries[0].selectiveLogic, 2);
-    assert.equal(c.chat.at(-1).mes, 'Updated and checked.');
+    assert.equal(c.chat.at(-1).extra.ruby_agent_source, 'Updated and checked.');
     assert.equal(controller.getState().running, false);
     assert.equal(controller.getState().requestCount, 6);
     assert.equal(controller.getState().scope[0].name, 'Main');
