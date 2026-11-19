@@ -125,6 +125,20 @@ test('settings clamp invalid limits and cannot persist arbitrary unknown fields'
     const s = h.normalize({ rpm: 0, retries: 100, maxMinutes: -1, execute: 'bad', key: 9 });
     assert.equal(s.rpm, 1); assert.equal(s.retries, 5); assert.equal(s.maxMinutes, 1);
     assert.equal(s.execute, undefined); assert.equal(s.key, '');
+    assert.equal(h.normalize({}).maxTokens, 100000);
+    assert.equal(h.normalize({ maxTokens: 999999 }).maxTokens, 100000);
+    assert.equal(h.normalize({ maxTokens: 4096 }).maxTokens, 4096);
+});
+
+test('the previous persisted 4096 default upgrades once to 100k and explicit user limits survive', async () => {
+    const h = await harness();
+    h.c.extensionSettings.RubyAnalyzer = { agentConfig: { maxTokens: 4096 } };
+    assert.equal(h.controller.getSettings().maxTokens, 100000);
+    await h.controller.saveSettings({ rpm: 42 });
+    assert.equal(h.c.extensionSettings.RubyAnalyzer.agentConfig.maxTokens, 100000);
+    assert.equal(h.c.extensionSettings.RubyAnalyzer.agentConfig.version, 2);
+    await h.controller.saveSettings({ maxTokens: 4096 });
+    assert.equal(h.controller.getSettings().maxTokens, 4096);
 });
 
 test('unbinding a book clears prior tool history before the next model request', async () => {

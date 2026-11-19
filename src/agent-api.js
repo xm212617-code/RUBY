@@ -2,17 +2,33 @@ import { ctx } from './env.js';
 import { getApiConfig } from './config.js';
 import { normalizeBaseUrl } from './ai.js';
 
+function normalizeAgentBaseUrl(raw) {
+    const url = new URL(raw);
+    if (url.hostname.toLowerCase() !== 'generativelanguage.googleapis.com') return normalizeBaseUrl(raw);
+    let path = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+    if (!path || path === '/') path = '/v1beta/openai';
+    else if (path === '/v1beta' || path === '/v1') path += '/openai';
+    else if (/^\/v1beta\/openai(?:\/v1)?$/i.test(path)) path = '/v1beta/openai';
+    else throw new Error('Google Gemini OpenAI-compatible API 地址应以 /v1beta/openai 结尾');
+    url.pathname = path;
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+}
+
 /** Payload generation uses local connection settings; no role card/history/other tools are included. */
 export async function buildAgentPayload(settings, messages, definitions, { getContext = ctx, getRubyApi = getApiConfig, loadMain = () => import('/scripts/openai.js') } = {}) {
     const c = getContext();
     const ruby = settings.connection === 'ruby' ? getRubyApi() : null;
     const viaMain = settings.connection === 'main' || (ruby && ruby.provider !== 'custom');
     let payload;
+    let modelName = '';
     if (viaMain) {
         if (c?.mainApi !== 'openai') throw new Error('Agent 需要支持工具调用的聊天补全连接；请使用酒馆 Chat Completion 或配置 Agent 专用 API');
         const main = await loadMain();
         const model = main.getChatCompletionModel?.(main.oai_settings);
         if (!model) throw new Error('酒馆当前聊天补全连接尚未选择模型');
+        modelName = model;
         const result = await main.createGenerationParameters(main.oai_settings, model, 'quiet', structuredClone(messages));
         payload = { ...result.generate_data };
         // User custom bodies can replace messages or invoke provider features outside the contract.
@@ -28,12 +44,15 @@ export async function buildAgentPayload(settings, messages, definitions, { getCo
         const key = ruby ? ruby.key : settings.key;
         const model = ruby ? ruby.model : settings.model;
         if (!url?.trim() || !model?.trim()) throw new Error('请填写 Agent API 地址与模型名称，或选择已配置的连接');
+        modelName = model;
         const parsed = new URL(url);
         if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('API地址必须是无内嵌凭据的HTTP(S)地址');
-        payload = { chat_completion_source: 'openai', reverse_proxy: normalizeBaseUrl(url), proxy_password: key || '', model };
+        payload = { chat_completion_source: 'openai', reverse_proxy: normalizeAgentBaseUrl(url), proxy_password: key || '', model };
     }
+    const isGemini4 = /gemini-4-/i.test(modelName);
     return { ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
-        stream: false, n: 1, max_tokens: settings.maxTokens, temperature: settings.temperature };
+        stream: false, n: 1, max_tokens: isGemini4 ? Math.max(settings.maxTokens, 16384) : settings.maxTokens,
+        temperature: settings.temperature, ...(isGemini4 ? { reasoning_effort: 'medium' } : {}) };
 }
 
 export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies }) {

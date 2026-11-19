@@ -1828,8 +1828,10 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
 }
 #ruby_analyzer_ext_settings .ra-cb-remove:hover { opacity: 1; }
 /* Agent ownership indicator beside the native composer. */
-#ruby-agent-composer-badge { display:block; box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:0 0 4px; padding:4px 10px; border:1px solid #a64e59; border-radius:6px; background:#7a283226; color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; pointer-events:none; }
+#ruby-agent-composer-badge { display:block; box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:0 0 4px; padding:4px 10px; border:1px solid #489b63; border-radius:6px; background:rgba(52,168,83,.16); color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; pointer-events:none; transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
 #ruby-agent-composer-badge[hidden] { display:none; }
+#ruby-agent-composer-badge[data-agent-state="busy"] { border-color:#c74646; background:rgba(207,61,61,.18); }
+#ruby-agent-composer-badge[data-agent-state="idle"] { border-color:#489b63; background:rgba(52,168,83,.16); }
 .ruby-agent-prose { white-space:normal; line-height:1.7; overflow-wrap:anywhere; min-width:0; }
 .ruby-agent-prose p { margin:.65em 0; }
 .ruby-agent-prose ul,.ruby-agent-prose ol { padding-left:1.8em; margin:.65em 0; }

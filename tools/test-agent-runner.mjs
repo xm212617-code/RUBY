@@ -150,6 +150,23 @@ test('dedicated API payload contains only supplied agent messages and tools', as
     await assert.rejects(buildAgentPayload({ connection: 'custom', url: 'file:///bad', model: 'model' }, [], [], { getContext: () => ({}) }), /HTTP/);
 });
 
+test('Gemini 4 official OpenAI endpoint path, reasoning and output-token floor are adapted', async () => {
+    const messages = [{ role: 'user', content: 'Use tools' }], definitions = tools().definitions;
+    for (const url of ['https://generativelanguage.googleapis.com', 'https://generativelanguage.googleapis.com/v1beta/openai/',
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions']) {
+        const payload = await buildAgentPayload({ connection: 'custom', url, key: 'local', model: 'gemini-4-hydrogen', maxTokens: 4096, temperature: 0.6 }, messages, definitions, { getContext: () => ({}) });
+        assert.equal(payload.reverse_proxy, 'https://generativelanguage.googleapis.com/v1beta/openai');
+        assert.equal(payload.reasoning_effort, 'medium');
+        assert.equal(payload.max_tokens, 16384);
+    }
+    const userLimit = await buildAgentPayload({ connection: 'custom', url: 'https://generativelanguage.googleapis.com/v1beta/openai', key: 'local', model: 'gemini-4-neon', maxTokens: 32768, temperature: 0.5 }, messages, definitions, { getContext: () => ({}) });
+    assert.equal(userLimit.max_tokens, 32768);
+    assert.equal(userLimit.reasoning_effort, 'medium');
+    await assert.rejects(buildAgentPayload({ connection: 'custom', url: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-4-hydrogen' }, [], [], { getContext: () => ({}) }), /v1beta\/openai/);
+    const other = await buildAgentPayload({ connection: 'custom', url: 'https://api.example.com', model: 'gemini-3.6-flash', maxTokens: 4096 }, messages, definitions, { getContext: () => ({}) });
+    assert.equal(other.reasoning_effort, undefined); assert.equal(other.max_tokens, 4096);
+});
+
 test('main connection cannot inject role cards, global tool definitions or body overrides', async () => {
     const messages = [{ role: 'user', content: 'Only this' }], definitions = tools().definitions;
     const payload = await buildAgentPayload({ connection: 'main', maxTokens: 2000, temperature: 0.5 }, messages, definitions,

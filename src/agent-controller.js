@@ -9,7 +9,8 @@ import { extendAgentArtifacts } from './agent-artifacts.js';
 import { renderAgentMarkdown, agentMessageSource } from './agent-render.js';
 
 const DEFAULTS = { connection: 'ruby', url: '', key: '', model: '', rpm: 10, minIntervalMs: 1000,
-    maxRequests: 30, maxMinutes: 15, maxTokens: 4096, temperature: 0.6, retries: 2 };
+    maxRequests: 30, maxMinutes: 15, maxTokens: 100000, temperature: 0.6, retries: 2 };
+const AGENT_SETTINGS_VERSION = 2;
 const bounded = (value, min, max, fallback, integer = true) => {
     const n = Number(value);
     return Number.isFinite(n) ? Math.min(max, Math.max(min, integer ? Math.round(n) : n)) : fallback;
@@ -23,7 +24,7 @@ export function normalizeAgentSettings(input = {}) {
         model: typeof input.model === 'string' ? input.model.trim() : '',
         rpm: bounded(input.rpm, 1, 600, DEFAULTS.rpm), minIntervalMs: bounded(input.minIntervalMs, 0, 60000, DEFAULTS.minIntervalMs),
         maxRequests: bounded(input.maxRequests, 1, 200, DEFAULTS.maxRequests), maxMinutes: bounded(input.maxMinutes, 1, 120, DEFAULTS.maxMinutes),
-        maxTokens: bounded(input.maxTokens, 256, 65536, DEFAULTS.maxTokens), temperature: bounded(input.temperature, 0, 2, DEFAULTS.temperature, false),
+        maxTokens: bounded(input.maxTokens, 256, 100000, DEFAULTS.maxTokens), temperature: bounded(input.temperature, 0, 2, DEFAULTS.temperature, false),
         retries: bounded(input.retries, 0, 5, DEFAULTS.retries),
     };
 }
@@ -64,7 +65,13 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
         const ns = ((c.chatMetadata.extensions ||= {}).RubyAnalyzer ||= {});
         return (ns.agent ||= { mode: 'steps', history: [], logs: [] });
     };
-    const getSettings = () => normalizeAgentSettings(getContext()?.extensionSettings?.RubyAnalyzer?.agentConfig);
+    const getSettings = () => {
+        const stored = getContext()?.extensionSettings?.RubyAnalyzer?.agentConfig;
+        const settings = normalizeAgentSettings(stored);
+        // Upgrade the previous default once while preserving future explicit user choices.
+        if (stored?.version !== AGENT_SETTINGS_VERSION && stored?.maxTokens === 4096) settings.maxTokens = DEFAULTS.maxTokens;
+        return settings;
+    };
     const getState = () => ({ ...runtime, switching, mode: isAgentMode(getContext()) ? 'agent' : 'steps', logs: data()?.logs || [] });
     const emit = () => {
         for (const fn of listeners) { try { fn(getState()); } catch (error) { warn('Agent UI:', error.message); } }
@@ -119,7 +126,7 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
         const c = getContext();
         if (!c?.extensionSettings) throw new Error('酒馆设置不可用');
         const store = (c.extensionSettings.RubyAnalyzer ||= {});
-        store.agentConfig = normalizeAgentSettings({ ...getSettings(), ...patch });
+        store.agentConfig = { ...normalizeAgentSettings({ ...getSettings(), ...patch }), version: AGENT_SETTINGS_VERSION };
         c.saveSettingsDebounced?.();
         emit(); return getSettings();
     };

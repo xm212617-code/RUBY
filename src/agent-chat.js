@@ -2,6 +2,17 @@ import { ctx } from './env.js';
 import { agentController } from './agent-controller.js';
 import { isAgentMode } from './agent-mode.js';
 
+export function getAgentComposerStatus(state = {}) {
+    if (state.mode !== 'agent') return { tone: 'off', text: '' };
+    if (state.switching) return { tone: 'busy', text: 'RUBY Agent：正在切换模式，请稍候' };
+    if (state.running) {
+        const phase = state.phase || '正在处理';
+        const waiting = ['请求模型', '等待限流'].includes(phase) || phase.startsWith('等待');
+        return { tone: 'busy', text: `RUBY Agent：${waiting ? '等待回复' : phase} · 正在工作，新输入会保留` };
+    }
+    return { tone: 'idle', text: 'RUBY Agent：空闲，可在此输入并发送' };
+}
+
 export function agentKeyAction(event, { composer = false, inputFocus = composer, popup = false, editing = false, sendOnEnter = false, hasText = false } = {}) {
     if (popup) return null;
     if (['ArrowLeft', 'ArrowRight'].includes(event.key) && !inputFocus && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && !hasText) return 'blocked';
@@ -70,8 +81,11 @@ export function installAgentChat({ document: doc = globalThis.document, getConte
         // The native textarea lives in a non-wrapping flex row. Never add siblings there.
         if (badge.parentElement !== form.parentElement) form.parentElement.insertBefore(badge, form);
         const state = controller.getState();
-        badge.hidden = state.mode !== 'agent';
-        badge.textContent = state.running ? `RUBY Agent：${state.phase} · 新输入会保留，完成或停止后发送` : 'RUBY Agent 写卡接管中 · 直接在此输入需求并发送';
+        const status = getAgentComposerStatus(state);
+        badge.hidden = status.tone === 'off';
+        badge.dataset.agentState = status.tone;
+        badge.setAttribute('aria-label', status.text);
+        badge.textContent = status.text;
     };
     doc.addEventListener('click', onClick, true);
     doc.addEventListener('keydown', onKey, true);

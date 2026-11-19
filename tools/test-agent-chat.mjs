@@ -20,7 +20,7 @@ async function fixture() {
         removeEventListener: (type) => handlers.delete(type),
         querySelector: (selector) => selector === '#send_textarea' ? textarea : selector === '#send_form' ? form : null,
         querySelectorAll: () => [], getElementById: (id) => nodes.get(id),
-        createElement: () => ({ setAttribute() {}, remove() {} }),
+        createElement: () => ({ dataset: {}, setAttribute() {}, remove() {} }),
     };
     const controller = { getState: () => ({ mode: mode ? 'agent' : 'steps', running: busy, phase: 'Read' }),
         submit: async (text) => sent.push(text), stop: () => stops++, onStateChange: () => () => {} };
@@ -46,6 +46,17 @@ test('Agent indicator is outside the native textarea row and never consumes its 
     assert.equal(badge.parentElement, h.form.parentElement);
     assert.notEqual(badge.parentElement, h.textarea.parentElement);
     assert.equal(badge.hidden, false);
+});
+
+test('composer indicator is red and says waiting while busy, green and says ready when idle', async () => {
+    const h = await fixture();
+    const busy = h.api.getAgentComposerStatus({ mode: 'agent', running: true, phase: '请求模型' });
+    assert.equal(busy.tone, 'busy'); assert.match(busy.text, /等待回复/);
+    const reading = h.api.getAgentComposerStatus({ mode: 'agent', running: true, phase: '读取操作范围' });
+    assert.equal(reading.tone, 'busy'); assert.match(reading.text, /读取操作范围/);
+    const idle = h.api.getAgentComposerStatus({ mode: 'agent', running: false, phase: '已完成' });
+    assert.equal(idle.tone, 'idle'); assert.match(idle.text, /空闲.*输入并发送/);
+    assert.equal(h.api.getAgentComposerStatus({ mode: 'steps' }).tone, 'off');
 });
 
 test('native send button is intercepted before roleplay even for slash text, empty input or busy state', async () => {

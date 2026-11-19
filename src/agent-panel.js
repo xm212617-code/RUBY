@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS = {
     minIntervalMs: 1000,
     maxRequests: 30,
     maxMinutes: 15,
-    maxTokens: 4096,
+    maxTokens: 100000,
     temperature: 0.6,
     retries: 2,
 };
@@ -23,7 +23,7 @@ const SETTINGS_FIELDS = [
     { key: 'minIntervalMs', label: '最小请求间隔 (ms)', type: 'number', min: 0, step: 100 },
     { key: 'maxRequests', label: '最大请求数', type: 'number', min: 1, step: 1 },
     { key: 'maxMinutes', label: '最长运行时间 (分钟)', type: 'number', min: 1, step: 1 },
-    { key: 'maxTokens', label: '最大输出 tokens', type: 'number', min: 1, step: 1 },
+    { key: 'maxTokens', label: '最大输出 tokens', type: 'number', min: 256, max: 100000, step: 1 },
     { key: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1 },
     { key: 'retries', label: '重试次数', type: 'number', min: 0, step: 1 },
 ];
@@ -86,7 +86,7 @@ function settingsMarkup(settings) {
                 <label class="agent-field"><span>配置来源</span><select data-agent-setting="connection">${connectionOptions}</select></label>
                 ${fields}
             </div>
-            <p class="agent-settings-note">地址、密钥和模型仅在“自定义”连接时使用；其他选项继承已配置的连接。密钥只保存在本地扩展设置，不写入角色卡或Agent对话。设置修改后自动保存。</p>
+            <p class="agent-settings-note">地址、密钥和模型仅在“自定义”连接时使用；其他选项继承已配置的连接。Google Gemini 4 使用官方 OpenAI 兼容地址时，Agent 自动设 medium 推理并至少保留 16k 输出空间，避免思考 token 挤掉工具调用。密钥只保存在本地扩展设置，不写入角色卡或Agent对话。设置修改后自动保存。</p>
         </details>`;
 }
 
