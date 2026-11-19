@@ -157,6 +157,21 @@ test('missing report starts round zero, publishes protocol and supports same-flo
     assert.equal(h.runtime.snapshot().state.opps[0].pos, 100, 'severe miss does not push');
 });
 
+test('Agent writing pauses combat processing and its messages are ignored after returning to roleplay', async () => {
+    const h = host({ chat: [{ mes: scene() }] });
+    await h.runtime.tick();
+    h.c.chatMetadata.extensions = { RubyAnalyzer: { agent: { mode: 'agent' } } };
+    const beforeWrites = h.writes.length;
+    h.c.chat.push({ is_user: false, mes: scene(action), extra: { ruby_agent: true } });
+    await h.runtime.tick();
+    assert.equal(h.writes.length, beforeWrites);
+    assert.equal(h.runtime.snapshot().state.round, 0);
+    h.c.chatMetadata.extensions.RubyAnalyzer.agent.mode = 'steps';
+    await h.runtime.tick();
+    assert.equal(h.runtime.snapshot().state.round, 0);
+    assert.equal(h.runtime.snapshot().state.active, true);
+});
+
 test('conditional report protocol is injected before the first active scene independently of scene judgment', async () => {
     const h = host({ config: { defaultJudgment: false, preSceneProtocol: true }, chat: [{ mes: 'Ordinary opening' }] });
     await h.runtime.before('normal', {}, false);

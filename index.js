@@ -9,6 +9,8 @@ import * as config from './src/config.js';
 import * as worldbook from './src/worldbook.js';
 import { initScriptRuntime } from './src/scripts/sex-combat-runtime.js';
 import './src/scripts/sex-combat.js';
+import { agentController } from './src/agent-controller.js';
+import { installAgentChat } from './src/agent-chat.js';
 
 let commandRegistered = false;
 
@@ -424,9 +426,12 @@ function bootstrap() {
         return;
     }
     registerRubyCommand();
+    agentController.init();
+    installAgentChat();
     initEngine();
     initScriptRuntime();
     initCardWriter();
+    window.addEventListener('ruby:agent-mode-changed', () => reinit());
     ensureOrb();
     ensureQrBar();
     initSettingsDrawer();

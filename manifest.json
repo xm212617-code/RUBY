@@ -5,6 +5,7 @@
     "optional": [],
     "js": "index.js",
     "css": "style.css",
+    "generate_interceptor": "rubyAgentGenerationInterceptor",
     "author": "RUBY Project",
     "version": "3.1.1",
     "homePage": "",

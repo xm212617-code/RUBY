@@ -43,12 +43,14 @@ export function isSystemHiddenMsg(m) {
 
 export function isAiReplyMsg(m) {
     if (!m) return false;
+    if (m.extra?.ruby_agent) return false;
     if (m.is_user) return false;
     if (!m.is_system) return true;
     return isSystemHiddenMsg(m);
 }
 
 export function isUserMsg(m) {
+    if (m?.extra?.ruby_agent) return false;
     if (!m) return false;
     return !!m.is_user;
 }

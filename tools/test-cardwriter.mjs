@@ -52,6 +52,7 @@ async function host() {
         './env.js': { ctx: () => c, st, q: JSON.stringify, log() {}, warn() {} },
         './config.js': { getUi: () => ui, saveUi: (patch) => Object.assign(ui, patch) },
         './cardwriter-data.js': { CARDWRITER_DATA },
+        './agent-mode.js': { isAgentMode: () => c.chatMetadata?.extensions?.RubyAnalyzer?.agent?.mode === 'agent' },
     };
     const mod = new vm.SourceTextModule(source + '\nexport { buildCharacterCardFromManifest as buildCard, handleGenerationEnded as capture, buildInventoryContent as inventory };', { context });
     await mod.link((specifier) => {

@@ -1,0 +1,118 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { runAgentLoop, parseAgentTurn, createRequestLimiter, abortableDelay, validateAgentArguments } from '../src/agent-runner.js';
+import { buildAgentPayload } from '../src/agent-api.js';
+
+const settings = { rpm: 60, minIntervalMs: 0, maxRequests: 5, maxMinutes: 2, retries: 1 };
+const answer = (content) => ({ choices: [{ message: { content } }] });
+const call = (name, args = {}, id = 'c1') => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+const calls = (...tool_calls) => ({ choices: [{ message: { content: '', tool_calls } }] });
+const tools = (execute) => ({ definitions: [{ type: 'function', function: { name: 'read' } }], execute });
+
+test('a user task executes tools, observes results, then returns the final response', async () => {
+    const messages = [{ role: 'user', content: 'Check' }], seen = [];
+    let requests = 0;
+    const result = await runAgentLoop({ messages, settings, tools: tools(async (name, args) => { seen.push([name, args]); return { content: 'Facts' }; }),
+        request: async ({ messages: current }) => {
+            if (!requests++) return calls(call('read', { uid: 0 }));
+            assert.equal(current.at(-1).role, 'tool'); assert.match(current.at(-1).content, /Facts/);
+            return answer('Done');
+        },
+    });
+    assert.equal(result.text, 'Done'); assert.equal(result.requestCount, 2); assert.equal(result.toolCount, 1);
+    assert.deepEqual(seen, [['read', { uid: 0 }]]);
+});
+
+test('unknown tools and invalid arguments never reach the executor', async () => {
+    let requests = 0, executions = 0;
+    const bad = call('read', {}, 'c2'); bad.function.arguments = '{bad';
+    const messages = [];
+    await runAgentLoop({ messages, settings, tools: tools(async () => executions++),
+        request: async () => requests++ ? answer('Corrected') : calls(call('fetch'), bad) });
+    assert.equal(executions, 0);
+    assert.equal(messages.filter((m) => m.role === 'tool').length, 2);
+    assert.match(messages[1].content, /未授权/);
+});
+
+test('tool failures are observed, not automatically executed twice', async () => {
+    let requests = 0, mutations = 0;
+    const messages = [];
+    await runAgentLoop({ messages, settings, tools: tools(async () => { mutations++; throw Error('Conflict'); }),
+        request: async () => requests++ ? answer('Conflict reported') : calls(call('read')) });
+    assert.equal(mutations, 1); assert.match(messages[1].content, /Conflict/);
+});
+
+test('abort completes the tool result group without executing remaining calls', async () => {
+    const controller = new AbortController();
+    let mutations = 0;
+    const messages = [];
+    await assert.rejects(runAgentLoop({ messages, settings, signal: controller.signal,
+        tools: tools(async () => { mutations++; controller.abort(); return { ok: true }; }),
+        request: async () => calls(call('read', {}, 'c1'), call('read', {}, 'c2')) }), /已停止/);
+    assert.equal(mutations, 1);
+    assert.equal(messages.filter((m) => m.role === 'tool').length, 2);
+    assert.match(messages.at(-1).content, /未执行/);
+});
+
+test('429 retry counts against the request budget and honors Retry-After', async () => {
+    let requests = 0;
+    const waits = [];
+    const result = await runAgentLoop({ messages: [], settings, tools: tools(() => {}),
+        delay: async (ms) => waits.push(ms), request: async () => {
+            if (!requests++) throw Object.assign(Error('HTTP 429'), { retryAfterMs: 7000 });
+            return answer('Done');
+        } });
+    assert.equal(result.requestCount, 2); assert.deepEqual(waits, [7000]);
+    await assert.rejects(runAgentLoop({ messages: [], settings: { ...settings, maxRequests: 1 }, tools: tools(() => {}),
+        delay: async () => {}, request: async () => { throw Error('HTTP 429'); } }), /次数上限/);
+});
+
+test('limiter enforces a rolling minute across tasks and retry attempts', async () => {
+    let now = 0;
+    const waits = [];
+    const limiter = createRequestLimiter({ now: () => now, delay: async (ms) => { waits.push(ms); now += ms; } });
+    for (let i = 0; i < 3; i++) await limiter.acquire({ rpm: 2, minIntervalMs: 1000 });
+    assert.deepEqual(waits, [1000, 59000]);
+    const aborted = new AbortController(); aborted.abort();
+    await assert.rejects(limiter.acquire({ rpm: 2 }, aborted.signal), /已停止/);
+    await assert.rejects(abortableDelay(1000, aborted.signal), /已停止/);
+});
+
+test('truncated, duplicate and empty tool responses are rejected before any tools run', () => {
+    assert.throws(() => parseAgentTurn({ choices: [{ finish_reason: 'length', message: { tool_calls: [call('read')] } }] }), /长度上限/);
+    assert.throws(() => parseAgentTurn(calls(call('read'), call('read'))), /重复/);
+    assert.throws(() => parseAgentTurn(answer('')), /未返回/);
+    assert.equal(parseAgentTurn({ content: [{ type: 'tool_use', id: 'a', name: 'read', input: { uid: 0 } }] }).calls[0].function.arguments, '{"uid":0}');
+});
+
+test('runtime schema validation rejects malformed UIDs, unknown keys and prototype paths', () => {
+    const schema = { type: 'object', properties: { uid: { type: 'integer', minimum: 0 }, patch: { type: 'object' } }, required: ['uid'], additionalProperties: false };
+    assert.throws(() => validateAgentArguments({ uid: '__proto__' }, schema), /integer/);
+    assert.throws(() => validateAgentArguments({ uid: 0, fetch: '/secrets' }, schema), /未定义/);
+    assert.throws(() => validateAgentArguments(JSON.parse('{"uid":0,"patch":{"__proto__":{"admin":true}}}'), schema), /禁止/);
+    validateAgentArguments({ uid: 0, patch: { content: 'Valid' } }, schema);
+});
+
+test('dedicated API payload contains only supplied agent messages and tools', async () => {
+    const messages = [{ role: 'user', content: 'Task' }], definitions = tools().definitions;
+    const payload = await buildAgentPayload({ connection: 'custom', url: 'https://api.example.com', key: 'local-secret', model: 'model', maxTokens: 4096, temperature: 0.6 }, messages, definitions, { getContext: () => ({}) });
+    assert.equal(payload.reverse_proxy, 'https://api.example.com/v1');
+    assert.equal(payload.proxy_password, 'local-secret'); assert.equal(payload.stream, false);
+    assert.deepEqual(payload.messages, messages); assert.deepEqual(payload.tools, definitions);
+    await assert.rejects(buildAgentPayload({ connection: 'custom', url: 'file:///bad', model: 'model' }, [], [], { getContext: () => ({}) }), /HTTP/);
+});
+
+test('main connection cannot inject role cards, global tool definitions or body overrides', async () => {
+    const messages = [{ role: 'user', content: 'Only this' }], definitions = tools().definitions;
+    const payload = await buildAgentPayload({ connection: 'main', maxTokens: 2000, temperature: 0.5 }, messages, definitions,
+        { getContext: () => ({ mainApi: 'openai' }), loadMain: async () => ({ oai_settings: {}, getChatCompletionModel: () => 'Current model', createGenerationParameters: async (_settings, model) => ({ generate_data: {
+            model, stop: ['</report>'], char_name: 'Role name', user_name: 'Persona name', assistant_prefill: 'Hidden text', enable_web_search: true,
+            messages: [{ role: 'system', content: 'Role card' }], tools: [{ function: { name: 'exec' } }],
+            custom_include_body: 'messages: secret', custom_exclude_body: 'tools', custom_include_headers: 'X: secret',
+        } }) }) });
+    assert.deepEqual(payload.messages, messages); assert.deepEqual(payload.tools, definitions);
+    assert.equal(payload.custom_include_body, undefined); assert.equal(payload.custom_include_headers, undefined);
+    assert.equal(payload.model, 'Current model'); assert.equal(payload.stop, undefined); assert.equal(payload.char_name, undefined);
+    assert.equal(payload.assistant_prefill, undefined); assert.equal(payload.enable_web_search, false);
+    await assert.rejects(buildAgentPayload({ connection: 'main' }, [], [], { getContext: () => ({ mainApi: 'textgenerationwebui' }) }), /Chat Completion/);
+});

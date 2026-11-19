@@ -3,6 +3,7 @@
 // <ruby合成> 触发合成角色卡：整理干净条目 + 生成 RubyAnalyzer 方案 + 下载 v3 JSON。
 // 完全不干预生成——创作者用自己的预设/API 对话，RUBY 只监听并操作世界书。
 import { ctx, st, q, log, warn } from './env.js';
+import { isAgentMode } from './agent-mode.js';
 import * as config from './config.js';
 import { CARDWRITER_DATA } from './cardwriter-data.js';
 
@@ -808,6 +809,7 @@ export async function switchStep(stepId, { manual = false } = {}) {
 }
 
 export async function startSession(stepId = 'StepW') {
+    if (isAgentMode()) { state.lastError = '请先切换到步骤写卡模式'; emitState(); return false; }
     if (state.busy) return false;
     if (!getStep(stepId)) { state.lastError = `未知步骤: ${stepId}`; emitState(); return false; }
     if (!ctx()?.chat) {
@@ -1536,6 +1538,7 @@ export async function composeFromChat() {
 // ---------- 消息监听 ----------
 
 async function handleGenerationEnded() {
+    if (isAgentMode()) return;
     if (!state.active) return;
     if (state.busy) { capturePending = true; return; }
     const c = ctx();
@@ -1548,7 +1551,7 @@ async function handleGenerationEnded() {
             guard();
             state.lastError = null;
             const message = chat[index];
-            if (message?.is_user !== false || message.is_system || !String(message.mes || '').trim()) continue;
+            if (message?.is_user !== false || message.is_system || message.extra?.ruby_agent || !String(message.mes || '').trim()) continue;
             const text = String(message.mes);
             let receipt = capturedRecords.get(message);
             if (!receipt || receipt.text !== text) {

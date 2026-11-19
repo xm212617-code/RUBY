@@ -1,4 +1,5 @@
 import { ctx, warn } from '../env.js';
+import { isAgentMode } from '../agent-mode.js';
 import { resolveConfig } from '../config.js';
 import { readVerifiedEntries, writeVerifiedEntry } from '../worldbook.js';
 import { isSexCombatRegexMetadataReady, normalizeSexCombatConfig, parseSexCombatScene, syncSexCombatMarkers } from './sex-combat.js';
@@ -418,6 +419,7 @@ export function createScriptRuntime(dependencies = {}) {
             if (resetLedger) { s.receipts = {}; s.lockedThrough = -1; }
         }
         async function tick(config, preparing = false) {
+            if (isAgentMode(getContext())) return;
             guard(); s.config = config;
             if (!s.ready) await restore();
             if (!config.enabled) {
@@ -440,7 +442,7 @@ export function createScriptRuntime(dependencies = {}) {
             const c = getContext();
             if (!Array.isArray(c.chat) || (!preparing && (s.generating || (c.streamingProcessor && !c.streamingProcessor.isFinished)))) return;
             let last = c.chat.length - 1;
-            while (last >= 0 && (c.chat[last]?.is_user || c.chat[last]?.is_system)) last--;
+            while (last >= 0 && (c.chat[last]?.is_user || c.chat[last]?.is_system || c.chat[last]?.extra?.ruby_agent)) last--;
             if (last < 0) { if (s.state || s.lockedThrough >= 0) { clear(true); await persist(); } else await publish(new Map()); return; }
             const sceneFor = (text) => {
                 const scene = parseSexCombatScene(text, config);
@@ -455,7 +457,7 @@ export function createScriptRuntime(dependencies = {}) {
             const start = s.state ? Math.min(s.scan, last) : last;
             for (let floor = start; floor <= last; floor++) {
                 const message = c.chat[floor];
-                if (!message || message.is_user || message.is_system || floor <= s.lockedThrough) continue;
+                if (!message || message.is_user || message.is_system || message.extra?.ruby_agent || floor <= s.lockedThrough) continue;
                 const signature = JSON.stringify([floor, message.swipe_id, message.mes]);
                 if (signature === s.failedReply) continue;
                 const scene = sceneFor(message.mes);

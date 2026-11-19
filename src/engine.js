@@ -1,4 +1,5 @@
 import { ctx, log, warn } from './env.js';
+import { isAgentMode } from './agent-mode.js';
 import * as config from './config.js';
 import * as scheduler from './scheduler.js';
 import * as reader from './reader.js';
@@ -561,6 +562,7 @@ function applySummaryReplacement(c, inc, providerSummary, customTags = []) {
 }
 
 async function tick() {
+    if (isAgentMode()) return;
     if (!state.armed) return;
     if (state.running) {
         state.needTick = true;

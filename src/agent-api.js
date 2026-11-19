@@ -1,0 +1,55 @@
+import { ctx } from './env.js';
+import { getApiConfig } from './config.js';
+import { normalizeBaseUrl } from './ai.js';
+
+/** Payload generation uses local connection settings; no role card/history/other tools are included. */
+export async function buildAgentPayload(settings, messages, definitions, { getContext = ctx, getRubyApi = getApiConfig, loadMain = () => import('/scripts/openai.js') } = {}) {
+    const c = getContext();
+    const ruby = settings.connection === 'ruby' ? getRubyApi() : null;
+    const viaMain = settings.connection === 'main' || (ruby && ruby.provider !== 'custom');
+    let payload;
+    if (viaMain) {
+        if (c?.mainApi !== 'openai') throw new Error('Agent 需要支持工具调用的聊天补全连接；请使用酒馆 Chat Completion 或配置 Agent 专用 API');
+        const main = await loadMain();
+        const model = main.getChatCompletionModel?.(main.oai_settings);
+        if (!model) throw new Error('酒馆当前聊天补全连接尚未选择模型');
+        const result = await main.createGenerationParameters(main.oai_settings, model, 'quiet', structuredClone(messages));
+        payload = { ...result.generate_data };
+        // User custom bodies can replace messages or invoke provider features outside the contract.
+        delete payload.custom_include_body;
+        delete payload.custom_exclude_body;
+        delete payload.custom_include_headers;
+        for (const field of ['assistant_prefill', 'assistant_impersonation', 'stop', 'logit_bias', 'user_name', 'char_name', 'group_names']) delete payload[field];
+        payload.custom_prompt_post_processing = '';
+        payload.enable_web_search = false;
+        payload.request_images = false;
+    } else {
+        const url = ruby ? ruby.url : settings.url;
+        const key = ruby ? ruby.key : settings.key;
+        const model = ruby ? ruby.model : settings.model;
+        if (!url?.trim() || !model?.trim()) throw new Error('请填写 Agent API 地址与模型名称，或选择已配置的连接');
+        const parsed = new URL(url);
+        if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('API地址必须是无内嵌凭据的HTTP(S)地址');
+        payload = { chat_completion_source: 'openai', reverse_proxy: normalizeBaseUrl(url), proxy_password: key || '', model };
+    }
+    return { ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
+        stream: false, n: 1, max_tokens: settings.maxTokens, temperature: settings.temperature };
+}
+
+export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies }) {
+    const payload = await buildAgentPayload(settings, messages, definitions, { getContext, ...payloadDependencies });
+    if (signal?.aborted) throw Object.assign(new Error('Agent 已停止'), { name: 'AbortError' });
+    const c = getContext();
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST', headers: { ...c.getRequestHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || data?.error) {
+        const error = new Error(`Agent API HTTP ${response.status}：${String(data?.error?.message || data?.message || '请求失败')}`);
+        const retryAfter = response.headers.get('Retry-After');
+        if (retryAfter) error.retryAfterMs = /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
+        throw error;
+    }
+    return data;
+}

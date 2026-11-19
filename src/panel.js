@@ -6,6 +6,8 @@ import * as engine from './engine.js';
 import * as ai from './ai.js';
 import * as worldbook from './worldbook.js';
 import * as cardwriter from './cardwriter.js';
+import { agentController } from './agent-controller.js';
+import { renderAgentControls } from './agent-panel.js';
 import { countAiReplies, getLittleWhiteBoxSummary, getShujukuBoundary, getYuzukiStatus, getBaibaibookStatus, ordinalForIndex, getLastOutputSnapshot } from './reader.js';
 import { isDarkMode } from './settings.js';
 import { BUILTIN_REFERENCES, findShadowingKey } from './builtin-refs.js';
@@ -13,6 +15,8 @@ import * as director from './director.js';
 import { getCardScripts, getCardScript } from './script-registry.js';
 
 const PANEL_ID = 'ra_panel';
+let agentPanelCleanup = null;
+let agentModeCleanup = null;
 const UI_STATE_KEY = 'ruby_analyzer_ui_state';
 
 const $ = (id) => document.getElementById(id);
@@ -231,6 +235,8 @@ function refreshAll({ refreshScripts = false } = {}) {
 
 function buildPanel() {
     if (panelBuilt && $(PANEL_ID)) return;
+    agentPanelCleanup?.();
+    agentModeCleanup?.();
     if ($(PANEL_ID)) $(PANEL_ID).remove();
 
     const root = document.createElement('div');
@@ -828,6 +834,7 @@ function buildShellHtml() {
                         <div class="sub-tab active" data-sub="cw-main">🖊️ 写卡控制台</div>
                     </div>
                     <div class="sub-content active" data-subcontent="cw-main" style="padding:16px;">
+                        <div id="ra_agent_controls"></div>
                         <div class="form-section">
                             <div class="form-header blue">■ 写卡模式状态</div>
                             <div class="form-body"><div id="ra_cw_status" class="status-box">加载中...</div></div>
@@ -3895,6 +3902,15 @@ function renderCardWriterTab() {
 }
 
 function wireCardWriterControls() {
+    const agentRoot = $('ra_agent_controls');
+    agentPanelCleanup = renderAgentControls(agentRoot, agentController);
+    const toggleStepControls = (state) => {
+        for (const section of agentRoot?.parentElement?.children || []) {
+            if (section !== agentRoot && section.classList.contains('form-section')) section.hidden = state.mode === 'agent';
+        }
+    };
+    toggleStepControls(agentController.getState());
+    agentModeCleanup = agentController.onStateChange(toggleStepControls);
     const settings = cardwriter.getSettings();
     const draftEl = $('ra_cw_draft');
     const guideEl = $('ra_cw_guide');

@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { buildDirectorPrompt, parseDirectorSchedule, validateSchedule } from '../src/director.js';
+import { countAiReplies } from '../src/reader.js';
 
 const taskList = [{ id: 9, name: 'Scene check', priority: 0, brief: '' }];
 const schedule = '```yaml\n周期安排:\n- 位置: 2\n  任务: task9\n```';
 let scenario = 0;
+
+test('Agent conversation never advances roleplay AI cycles', () => {
+    assert.equal(countAiReplies([{ is_user: false, mes: 'Normal' },
+        { is_user: false, is_system: true, name: 'SillyTavern System', mes: 'Agent', extra: { ruby_agent: true } },
+        { is_user: true, mes: 'Task', extra: { ruby_agent: true } }]), 1);
+});
 
 test('schedule parsing accepts presentation variants without reading reasoning examples', () => {
     for (const text of [schedule, schedule.replace('yaml', 'YAML'), schedule.replace('yaml', 'yml'),

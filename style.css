@@ -1403,6 +1403,107 @@ body.ruby-dark #ra_panel .task-delete-btn:hover { background: var(--ra-brand-sof
 body.ruby-dark #ra_panel .task-card.collapsed .task-card-header { border-bottom: none; }
 body.ruby-dark #ra_panel .sub-tab.active { background: var(--ra-surface); }
 
+/* Agent 控制区：使用面板主题令牌，可独立挂载在任意面板容器中 */
+.ra-agent-panel {
+    --agent-surface: var(--ra-panel, #fff);
+    --agent-subtle: var(--ra-panel-2, #fbfaf7);
+    --agent-line: var(--ra-border, #dcd8cd);
+    --agent-text: var(--ra-text, #23262b);
+    --agent-muted: var(--ra-text-2, #5d6269);
+    --agent-accent: var(--ra-brand, #b82138);
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 760px;
+    padding: 16px;
+    color: var(--agent-text);
+    background: var(--agent-surface);
+    border: 1px solid var(--agent-line);
+    border-radius: var(--ra-radius-m, 10px);
+    box-shadow: var(--ra-shadow-1, 0 1px 6px rgba(0, 0, 0, .08));
+}
+.ra-agent-panel *, .ra-agent-panel *::before, .ra-agent-panel *::after { box-sizing: border-box; }
+.agent-heading, .agent-section-heading, .agent-actions, .agent-log-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.agent-heading { margin-bottom: 12px; }
+.agent-heading h2, .agent-section-heading h3 { margin: 0; color: var(--agent-text); }
+.agent-heading h2 { font-size: 20px; line-height: 1.2; }
+.agent-eyebrow { color: var(--agent-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.agent-status { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 10px; color: var(--agent-muted); background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: 999px; font-size: 12px; font-weight: 700; }
+.agent-status[data-state="running"] { color: var(--ra-green-deep, #1e4a2e); background: var(--ra-green-soft, #e9f3ec); border-color: var(--ra-green, #2f6b45); }
+.agent-status[data-state="error"] { color: var(--agent-accent); background: var(--ra-brand-soft, #fbedef); border-color: var(--agent-accent); }
+.agent-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-m, 10px); }
+.agent-mode-switch button, .agent-button { min-height: var(--ra-hit, 32px); padding: 6px 11px; color: var(--agent-text); background: var(--agent-surface); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); font: inherit; font-weight: 600; cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease; }
+.agent-mode-switch button:hover, .agent-button:hover:not(:disabled) { border-color: var(--agent-accent); transform: translateY(-1px); }
+.agent-mode-switch button.active { color: #fff; background: var(--agent-accent); border-color: var(--agent-accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--agent-accent) 24%, transparent); }
+.agent-run-note { margin: 12px 0; padding: 10px 12px; color: var(--agent-muted); background: var(--agent-subtle); border-left: 3px solid var(--agent-accent); border-radius: 0 var(--ra-radius-s, 6px) var(--ra-radius-s, 6px) 0; font-size: 13px; }
+.agent-actions { justify-content: flex-start; flex-wrap: wrap; }
+.agent-button-stop { color: #fff; background: var(--agent-accent); border-color: var(--agent-accent); }
+.agent-button:disabled { opacity: .55; cursor: wait; }
+.agent-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 14px 0 8px; }
+.agent-metrics > div { min-width: 0; padding: 9px; background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); }
+.agent-metrics span, .agent-metrics strong { display: block; overflow-wrap: anywhere; }
+.agent-metrics span { margin-bottom: 3px; color: var(--agent-muted); font-size: 11px; }
+.agent-metrics strong { color: var(--agent-text); font-size: 13px; font-weight: 650; }
+.agent-error, .agent-feedback { min-height: 20px; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.agent-error { padding: 8px 10px; color: var(--agent-accent); background: var(--ra-brand-soft, #fbedef); border: 1px solid var(--agent-accent); border-radius: var(--ra-radius-s, 6px); }
+.agent-feedback[data-kind="success"] { color: var(--ra-green-deep, #1e4a2e); }
+.agent-feedback[data-kind="error"] { color: var(--agent-accent); }
+.agent-scope-section, .agent-log-section { margin-top: 16px; }
+.agent-section-heading { margin-bottom: 7px; }
+.agent-section-heading h3 { font-size: 14px; }
+.agent-section-heading > span { color: var(--agent-muted); font-size: 11px; text-align: right; }
+.agent-scope-list, .agent-log-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.agent-scope-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; padding: 8px 10px; background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); }
+.agent-scope-list strong { font-size: 12px; }
+.agent-scope-list li span { color: var(--agent-muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+.agent-scope-empty, .agent-log-empty { color: var(--agent-muted); font-size: 12px; }
+.agent-settings { margin-top: 16px; border: 1px solid var(--agent-line); border-radius: var(--ra-radius-m, 10px); background: var(--agent-subtle); }
+.agent-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding: 8px 11px; font-weight: 650; cursor: pointer; }
+.agent-save-status { color: var(--agent-muted); font-size: 11px; font-weight: 400; text-align: right; overflow-wrap: anywhere; }
+.agent-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 11px 10px; }
+.agent-field { display: grid; gap: 4px; min-width: 0; color: var(--agent-muted); font-size: 11px; }
+.agent-field input, .agent-field select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; color: var(--agent-text); background: var(--agent-surface); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); font: inherit; font-size: 13px; }
+.agent-field input:focus, .agent-field select:focus, .agent-mode-switch button:focus-visible, .agent-button:focus-visible { outline: 2px solid var(--agent-accent); outline-offset: 2px; }
+.agent-settings-note { margin: 0; padding: 0 11px 10px; color: var(--agent-muted); font-size: 11px; }
+.agent-log-entry { padding: 8px 10px; background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); }
+.agent-log-meta { justify-content: flex-start; color: var(--agent-muted); font-size: 10px; }
+.agent-log-meta time { font-variant-numeric: tabular-nums; }
+.agent-log-text { margin-top: 3px; color: var(--agent-text); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-log-entry details { margin-top: 5px; color: var(--agent-muted); font-size: 11px; }
+.agent-log-entry details summary { cursor: pointer; }
+.agent-log-entry pre { max-height: 220px; margin: 5px 0 0; padding: 8px; overflow: auto; color: var(--agent-text); background: var(--agent-surface); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+#ra_panel .form-body .ra-agent-panel .agent-eyebrow,
+#ra_panel .form-body .ra-agent-panel .agent-run-note,
+#ra_panel .form-body .ra-agent-panel .agent-metrics span,
+#ra_panel .form-body .ra-agent-panel .agent-section-heading > span,
+#ra_panel .form-body .ra-agent-panel .agent-scope-list li span,
+#ra_panel .form-body .ra-agent-panel .agent-field,
+#ra_panel .form-body .ra-agent-panel .agent-settings-note,
+#ra_panel .form-body .ra-agent-panel .agent-save-status,
+#ra_panel .form-body .ra-agent-panel .agent-log-meta,
+#ra_panel .form-body .ra-agent-panel .agent-log-entry details { color: var(--agent-muted) !important; }
+#ra_panel .form-body .ra-agent-panel .agent-mode-switch button.active,
+#ra_panel .form-body .ra-agent-panel .agent-button-stop { color: #fff !important; }
+#ra_panel .form-body .ra-agent-panel .agent-status[data-state="running"],
+#ra_panel .form-body .ra-agent-panel .agent-feedback[data-kind="success"] { color: var(--ra-green-deep, #1e4a2e) !important; }
+#ra_panel .form-body .ra-agent-panel .agent-status[data-state="error"],
+#ra_panel .form-body .ra-agent-panel .agent-error,
+#ra_panel .form-body .ra-agent-panel .agent-feedback[data-kind="error"] { color: var(--agent-accent) !important; }
+body.ruby-dark .ra-agent-panel .agent-status[data-state="running"] { color: #8de2a2; }
+body.ruby-dark .ra-agent-panel .agent-feedback[data-kind="success"] { color: #8de2a2; }
+body.ruby-dark #ra_panel .form-body .ra-agent-panel .agent-status[data-state="running"],
+body.ruby-dark #ra_panel .form-body .ra-agent-panel .agent-feedback[data-kind="success"] { color: #8de2a2 !important; }
+
+@media (max-width: 600px) {
+    .ra-agent-panel { padding: 12px; }
+    .agent-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .agent-metrics > div:last-child { grid-column: 1 / -1; }
+    .agent-settings-grid { grid-template-columns: 1fr; }
+    .agent-actions { display: grid; grid-template-columns: 1fr; }
+    .agent-button { width: 100%; }
+    .agent-scope-list li { align-items: flex-start; flex-direction: column; gap: 3px; }
+    .agent-scope-list li span { text-align: left; }
+}
+
 /* 面板右上角主题切换按钮 */
 #ra_theme_toggle { min-width: 42px; font-size: 16px; }
 
@@ -1726,3 +1827,7 @@ body.ruby-dark #ra_cycle_timeline .marker-dot.director {
     transition: opacity .15s ease;
 }
 #ruby_analyzer_ext_settings .ra-cb-remove:hover { opacity: 1; }
+/* Agent ownership indicator beside the native composer. */
+#ruby-agent-composer-badge { flex-basis:100%; padding:6px 12px; border:1px solid #a64e59; border-radius:6px; background:#7a283226; color:var(--SmartThemeBodyColor,inherit); font-size:12px; line-height:1.6; }
+#ruby-agent-composer-badge[hidden] { display:none; }
+#ra_panel .form-section[hidden] { display:none; }
