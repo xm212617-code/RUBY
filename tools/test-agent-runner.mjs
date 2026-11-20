@@ -167,6 +167,19 @@ test('Gemini 4 official OpenAI endpoint path, reasoning and output-token floor a
     assert.equal(other.reasoning_effort, undefined); assert.equal(other.max_tokens, 4096);
 });
 
+test('Gemini unicode routing metadata includes the user floor only for Gemini models', async () => {
+    const messages = [{ role: 'user', content: '请查询条目' }], definitions = tools().definitions;
+    const gemini = await buildAgentPayload({ connection: 'custom', url: 'https://router.example/api', model: 'gemini-3.8-flash', maxTokens: 8000 }, messages, definitions,
+        { getContext: () => ({}), routerUnicodeInput: { user_floor: 42 } });
+    assert.deepEqual(gemini.router_unicode_input, { user_floor: 42 });
+    const openai = await buildAgentPayload({ connection: 'custom', url: 'https://router.example/api', model: 'gpt-6.1', maxTokens: 8000 }, messages, definitions,
+        { getContext: () => ({}), routerUnicodeInput: { user_floor: 42 } });
+    assert.equal(openai.router_unicode_input, undefined);
+    const invalid = await buildAgentPayload({ connection: 'custom', url: 'https://router.example/api', model: 'gemini-pro', maxTokens: 8000 }, messages, definitions,
+        { getContext: () => ({}), routerUnicodeInput: { user_floor: -1 } });
+    assert.equal(invalid.router_unicode_input, undefined);
+});
+
 test('main connection cannot inject role cards, global tool definitions or body overrides', async () => {
     const messages = [{ role: 'user', content: 'Only this' }], definitions = tools().definitions;
     const payload = await buildAgentPayload({ connection: 'main', maxTokens: 2000, temperature: 0.5 }, messages, definitions,

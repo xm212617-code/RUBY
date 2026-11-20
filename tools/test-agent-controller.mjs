@@ -152,3 +152,19 @@ test('unbinding a book clears prior tool history before the next model request',
     assert.doesNotMatch(sent, /Old authorized facts|OldBook/);
     assert.match(sent, /NewBook/);
 });
+
+test('Unicode Agent turns pass their real SillyTavern user floor to Gemini main routing', async () => {
+    const seen = [];
+    const h = await harness({ request: async (args) => { seen.push(args.routerUnicodeInput); return answer('已完成'); } });
+    await h.controller.setMode('agent');
+    await h.controller.submit('请检查墨涟条目');
+    assert.equal(seen[0].user_floor, 0);
+    assert.equal(h.c.chat[0].is_user, true);
+    assert.equal(h.c.chat[0].extra.ruby_agent, true);
+    await h.controller.submit('Check the entry');
+    assert.equal(seen[1].user_floor, 2, 'Prior Unicode user turns in Agent history still need their latest real chat floor');
+    const asciiOnly = await harness({ request: async (args) => { seen.push(args.routerUnicodeInput); return answer('Done'); } });
+    await asciiOnly.controller.setMode('agent');
+    await asciiOnly.controller.submit('Check the entry');
+    assert.equal(seen[2], undefined, 'ASCII-only Agent histories do not send router-specific metadata');
+});

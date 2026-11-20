@@ -17,7 +17,7 @@ function normalizeAgentBaseUrl(raw) {
 }
 
 /** Payload generation uses local connection settings; no role card/history/other tools are included. */
-export async function buildAgentPayload(settings, messages, definitions, { getContext = ctx, getRubyApi = getApiConfig, loadMain = () => import('/scripts/openai.js') } = {}) {
+export async function buildAgentPayload(settings, messages, definitions, { getContext = ctx, getRubyApi = getApiConfig, loadMain = () => import('/scripts/openai.js'), routerUnicodeInput } = {}) {
     const c = getContext();
     const ruby = settings.connection === 'ruby' ? getRubyApi() : null;
     const viaMain = settings.connection === 'main' || (ruby && ruby.provider !== 'custom');
@@ -52,11 +52,13 @@ export async function buildAgentPayload(settings, messages, definitions, { getCo
     const isGemini4 = /gemini-4-/i.test(modelName);
     return { ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
         stream: false, n: 1, max_tokens: isGemini4 ? Math.max(settings.maxTokens, 16384) : settings.maxTokens,
-        temperature: settings.temperature, ...(isGemini4 ? { reasoning_effort: 'medium' } : {}) };
+        temperature: settings.temperature, ...(isGemini4 ? { reasoning_effort: 'medium' } : {}),
+        ...(/gemini/i.test(modelName) && Number.isSafeInteger(routerUnicodeInput?.user_floor) && routerUnicodeInput.user_floor >= 0
+            ? { router_unicode_input: routerUnicodeInput } : {}) };
 }
 
-export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies }) {
-    const payload = await buildAgentPayload(settings, messages, definitions, { getContext, ...payloadDependencies });
+export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies, routerUnicodeInput }) {
+    const payload = await buildAgentPayload(settings, messages, definitions, { getContext, routerUnicodeInput, ...payloadDependencies });
     if (signal?.aborted) throw Object.assign(new Error('Agent 已停止'), { name: 'AbortError' });
     const c = getContext();
     const response = await fetch('/api/backends/chat-completions/generate', {

@@ -161,12 +161,14 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
             send_date: new Date().toISOString(), mes: displayText,
             extra: { ruby_agent: true, ruby_agent_source: String(text), ruby_agent_name: displayName, ruby_agent_role: user ? 'user' : 'assistant' } };
         origin.chat.push(message);
+        const floor = origin.chat.length - 1;
         origin.addOneMessage?.(message);
         const label = globalThis.document?.querySelector?.(`#chat .mes[mesid="${origin.chat.length - 1}"] .name_text`);
         if (label) label.textContent = displayName;
         await origin.saveChat?.();
         guard();
         // Agent messages deliberately do not emit roleplay MESSAGE_RECEIVED/GENERATION_ENDED.
+        return floor;
     };
     const submit = async (text) => {
         if (!isAgentMode(getContext())) throw new Error('当前未开启Agent写卡');
@@ -184,7 +186,7 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
         emit();
         let messages;
         try {
-            await appendChat(String(text).trim(), true, origin, guard);
+            const userFloor = await appendChat(String(text).trim(), true, origin, guard);
             userRecorded = true;
             guard();
             const tools = await createTools(signal);
@@ -201,7 +203,10 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
             d.history = history;
             await persist(origin);
             const result = await runAgentLoop({ messages, tools, settings, signal, limiter, guard,
-                request: (args) => request({ ...args, settings, getContext }),
+                request: (args) => request({ ...args, settings, getContext,
+                    routerUnicodeInput: args.messages.some((message) => message.role === 'user' && /[^\x00-\x7F]/.test(message.content || ''))
+                        ? { user_floor: userFloor } : undefined,
+                }),
                 onEvent: (event) => {
                     guard();
                     if (event.kind === 'waiting') { runtime.waitUntil = event.until; runtime.phase = event.until ? '等待限流' : '请求模型'; }
