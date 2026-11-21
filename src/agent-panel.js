@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
     maxRequests: 30,
     maxMinutes: 15,
     maxTokens: 100000,
+    contextChars: 240000,
     temperature: 0.6,
     retries: 2,
 };
@@ -24,6 +25,7 @@ const SETTINGS_FIELDS = [
     { key: 'maxRequests', label: '最大请求数', type: 'number', min: 1, step: 1 },
     { key: 'maxMinutes', label: '最长运行时间 (分钟)', type: 'number', min: 1, step: 1 },
     { key: 'maxTokens', label: '最大输出 tokens', type: 'number', min: 256, max: 100000, step: 1 },
+    { key: 'contextChars', label: '自动整理阈值（字符，0=关闭主动整理）', type: 'number', min: 0, step: 10000 },
     { key: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.1 },
     { key: 'retries', label: '重试次数', type: 'number', min: 0, step: 1 },
 ];
@@ -86,7 +88,8 @@ function settingsMarkup(settings) {
                 <label class="agent-field"><span>配置来源</span><select data-agent-setting="connection">${connectionOptions}</select></label>
                 ${fields}
             </div>
-            <p class="agent-settings-note">地址、密钥和模型仅在“自定义”连接时使用；其他选项继承已配置的连接。Google Gemini 4 使用官方 OpenAI 兼容地址时，Agent 自动设 medium 推理并至少保留 16k 输出空间，避免思考 token 挤掉工具调用。密钥只保存在本地扩展设置，不写入角色卡或Agent对话。设置修改后自动保存。</p>
+            <p class="agent-settings-note">自动整理阈值按请求消息JSON的字符数计算，不是token数，也不是输入硬上限；可自行提高或设0。设0后不主动整理，仅在API明确报告上下文超长时尝试整理恢复。它与“最大输出tokens”独立，不能扩大模型实际上下文窗口。</p>
+            <p class="agent-settings-note">地址、密钥和模型仅在“自定义”连接时使用；其他选项继承已配置的连接。Google Gemini 4 使用官方 OpenAI 兼容地址时，Agent 自动设 medium 推理并至少保留 16k 输出空间，避免思考 token 挤掉工具调用。长会话会自动整理工作摘要并继续，旧原文保存在当前聊天元数据，可由Agent分页查回；整理请求同样计入RPM和请求预算。清除上下文会一并删除这些历史归档，不改变世界书。密钥只保存在本地扩展设置，不写入角色卡或Agent对话。设置修改后自动保存。</p>
         </details>`;
 }
 

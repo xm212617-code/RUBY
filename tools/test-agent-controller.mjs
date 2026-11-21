@@ -3,6 +3,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { runAgentLoop, createRequestLimiter } from '../src/agent-runner.js';
+import { normalizeAgentHistory } from '../src/agent-context.js';
 import { extendAgentArtifacts } from '../src/agent-artifacts.js';
 import { renderAgentMarkdown, agentMessageSource } from '../src/agent-render.js';
 
@@ -18,6 +19,7 @@ async function harness({ request = async () => answer('Done'), makeTools } = {})
     const scope = [{ id: 'character', name: 'Main', sources: ['主书'] }];
     const defaultTools = async () => ({ scope, definitions: [{ type: 'function', function: { name: 'read' } }], execute: async () => ({ content: 'Facts' }) });
     const dependencies = {
+        './agent-context.js': { normalizeAgentHistory },
         './env.js': { ctx: () => c, warn() {} },
         './agent-tools.js': { createAgentTools: defaultTools },
         './agent-knowledge.js': { AGENT_SYSTEM_GUIDE: 'Agent guide', getKnowledgeIndex: () => [], readKnowledge: () => null },
@@ -128,6 +130,9 @@ test('settings clamp invalid limits and cannot persist arbitrary unknown fields'
     assert.equal(h.normalize({}).maxTokens, 100000);
     assert.equal(h.normalize({ maxTokens: 999999 }).maxTokens, 100000);
     assert.equal(h.normalize({ maxTokens: 4096 }).maxTokens, 4096);
+    assert.equal(h.normalize({}).contextChars, 240000);
+    assert.equal(h.normalize({ contextChars: 0 }).contextChars, 0);
+    assert.equal(h.normalize({ contextChars: 2000000 }).contextChars, 2000000);
 });
 
 test('the previous persisted 4096 default upgrades once to 100k and explicit user limits survive', async () => {
@@ -167,4 +172,34 @@ test('Unicode Agent turns pass their real SillyTavern user floor to Gemini main 
     await asciiOnly.controller.setMode('agent');
     await asciiOnly.controller.submit('Check the entry');
     assert.equal(seen[2], undefined, 'ASCII-only Agent histories do not send router-specific metadata');
+});
+
+test('long writing history is summarized, persisted, and recoverable through a paged archive tool', async () => {
+    let taskCalls = 0;
+    const h = await harness({ request: async ({ purpose, messages, definitions }) => {
+        if (purpose === 'compaction') return answer('Creator-confirmed facts and the pending revision.');
+        taskCalls++;
+        assert.ok(definitions.some((d) => d.function.name === 'read_compacted_history'));
+        if (taskCalls === 1) {
+            const memory = messages.find((m) => m.content?.startsWith('[RUBY_CONTEXT_MEMORY]'));
+            assert.ok(memory);
+            const archiveId = memory.content.match(/归档ID: ([^，]+)/)[1];
+            return { choices: [{ message: { tool_calls: [{ id: 'archive', type: 'function', function: {
+                name: 'read_compacted_history', arguments: JSON.stringify({ archiveId, limit: 1000 }),
+            } }] } }] };
+        }
+        assert.match(messages.at(-1).content, /Original confirmed biography/);
+        return answer('Recovered exact details and continued.');
+    } });
+    await h.controller.setMode('agent');
+    const d = h.c.chatMetadata.extensions.RubyAnalyzer.agent;
+    d.history = [{ role: 'user', content: 'Original confirmed biography ' + 'detail '.repeat(40000) },
+        { role: 'assistant', content: 'Confirmed' }, { role: 'user', content: 'Next step' }, { role: 'assistant', content: 'Ready' }];
+    const result = await h.controller.submit('Continue from the confirmed facts');
+    assert.equal(result.text, 'Recovered exact details and continued.');
+    assert.equal(d.contextArchives.length, 1);
+    assert.match(d.contextArchives[0].messages[0].content, /Original confirmed biography/);
+    assert.ok(d.logs.some((log) => log.kind === 'compaction'));
+    await h.controller.resetConversation();
+    assert.equal(d.contextArchives.length, 0);
 });
