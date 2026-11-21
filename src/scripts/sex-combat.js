@@ -110,17 +110,28 @@ function validate(config) {
 function maskExamples(source) {
     return source.replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)[\s\S]*?(?:^[ \t]*\1[ \t]*(?=\r?$)|(?![\s\S]))/gm,
         (match) => match.replace(/[^\r\n]/g, ' '))
+        .replace(/<(think|thinking|analysis|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, (match) => match.replace(/[^\r\n]/g, ' '))
         .replace(/<!--[^]*?-->|(`+)[^\r\n]*?\1/g, (match) => match.replace(/[^\r\n]/g, ' '));
 }
 
-function blocks(source, name) {
+export function extractSexCombatBlocks(source, name) {
     const pattern = escapeRegex(name);
     const view = maskExamples(source);
-    const starts = [...view.matchAll(new RegExp(`<${pattern}(?=[\\s>])[^>]*>`, 'gi'))];
-    const ends = [...view.matchAll(new RegExp(`<\\/${pattern}\\s*>`, 'gi'))];
-    if (starts.length !== 1 || ends.length !== 1 || ends[0].index < starts[0].index + starts[0][0].length) return null;
-    const start = starts[0].index + starts[0][0].length;
-    return { content: source.slice(start, ends[0].index), end: ends[0].index + ends[0][0].length };
+    const token = new RegExp(`<(${pattern})(?=[\\s>])[^>]*>|<\\/${pattern}\\s*>`, 'gi');
+    const result = [];
+    let start = null;
+    for (const match of view.matchAll(token)) {
+        if (match[1]) start = match.index + match[0].length;
+        else if (start !== null) {
+            result.push({ content: source.slice(start, match.index), end: match.index + match[0].length });
+            start = null;
+        }
+    }
+    return result;
+}
+
+function blocks(source, name, accept = (block) => Boolean(block.content.trim())) {
+    return extractSexCombatBlocks(source, name).reverse().find(accept) || null;
 }
 
 function scalar(value) {
@@ -194,9 +205,18 @@ function rosterNames(value, format) {
 export function parseSexCombatScene(text, input = {}) {
     const config = normalizeSexCombatConfig(input);
     const source = String(text ?? '');
-    const triggerBlock = blocks(source, config.trigger.tag);
+    const triggerBlock = blocks(source, config.trigger.tag, (block) => {
+        const trigger = field(block, config.trigger.field);
+        if (!trigger.found || typeof trigger.value !== 'string') return false;
+        if (config.roster.tag.toLowerCase() !== config.trigger.tag.toLowerCase()) return true;
+        const roster = field(block, config.roster.field);
+        return roster.found && rosterNames(roster.value, config.rosterFormat) !== null;
+    });
     const trigger = field(triggerBlock, config.trigger.field);
-    const roster = field(config.roster.tag.toLowerCase() === config.trigger.tag.toLowerCase() ? triggerBlock : blocks(source, config.roster.tag), config.roster.field);
+    const roster = field(config.roster.tag.toLowerCase() === config.trigger.tag.toLowerCase() ? triggerBlock : blocks(source, config.roster.tag, (block) => {
+        const value = field(block, config.roster.field);
+        return value.found && rosterNames(value.value, config.rosterFormat) !== null;
+    }), config.roster.field);
     const names = roster.found ? rosterNames(roster.value, config.rosterFormat) : null;
     const report = blocks(source, config.actionTag);
     const errors = [];

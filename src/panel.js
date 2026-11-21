@@ -513,7 +513,7 @@ function buildShellHtml() {
                                 </span>
                             </div>
                             <div id="ra_tags_list" style="display:flex;flex-wrap:wrap;gap:8px;min-height:40px;padding:10px;background:#f8f8f5;border:1px solid #999;border-radius:3px;margin-top:10px;"></div>
-                            <div class="tip">💡 自定义标签会优先于默认标签（content、maintext 等）被匹配。添加后需点击"保存标签"生效。</div>
+                            <div class="tip">内置正文标签：game、content、maintext、text、body、message。遇到完整的 &lt;game&gt; 块时优先只提取块内正文，无需手动添加；其余情况自定义标签优先于其他默认标签。添加后需点击"保存标签"生效。</div>
                         </div>
                     </div>
                     <div class="btn-row"><button id="ra_tags_save" class="btn red">💾 保存标签设置</button></div>

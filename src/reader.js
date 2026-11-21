@@ -80,9 +80,10 @@ export function findAiReplyIndexByOrdinal(chatArr, ord) {
 export function extractContent(mes, customTags = []) {
     if (!mes) return '';
     const defaultTags = ['content', 'maintext', 'text', 'body', 'message'];
-    const contentTags = [...customTags, ...defaultTags];
+    const contentTags = ['game', ...customTags, ...defaultTags];
     for (const tag of contentTags) {
-        const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+        const escaped = String(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`<${escaped}(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${escaped}\\s*>`, 'i');
         const match = String(mes).match(regex);
         if (match) return stripFormatMarks(match[1].trim());
     }

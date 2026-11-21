@@ -143,11 +143,13 @@ test('JSON and separated rosters support custom tags and multiline values', () =
 });
 
 test('ambiguous, incomplete and example XML do not trigger', () => {
-    for (const invalid of [scene + scene, scene + '</SceneInfo>', scene.replace('</SceneInfo>', ''), scene.replace('场景类型: NSFWH', '场景类型: SFW\n场景类型: NSFWH'),
+    for (const invalid of [scene.replace('</SceneInfo>', ''), scene.replace('场景类型: NSFWH', '场景类型: SFW\n场景类型: NSFWH'),
         `\`\`\`xml\n${scene}\n\`\`\``, `~~~xml\n${scene}\n~~~`, `<!--${scene}-->`, `\`${scene.replaceAll('\n', ' ')}\``]) {
         assert.equal(parse(invalid, config).active, false, invalid);
     }
     assert.equal(parse(`\`\`\`xml\n${scene}\n\`\`\`\n${scene}`, config).active, true);
+    assert.equal(parse(scene + scene, config).active, true);
+    assert.equal(parse(scene + '</SceneInfo>', config).active, true);
     assert.equal(parse('<SceneInfo>{"场景类型":"SFW","场景类型":"NSFWH","在场角色":[]}</SceneInfo>', config).active, false);
     assert.deepEqual(parse(scene.replace('  - Alice|coat\n  - Bob', 'Plain Name'), config).roster, ['Plain Name']);
     assert.equal(parse('<SceneInfo>\n<!--\n场景类型: NSFWH\n在场角色:\n- Alice\nother: value\n-->\n</SceneInfo>', config).active, false);
@@ -161,7 +163,7 @@ test('markers use exact closing offsets, never a missing-anchor tail, and are id
     assert.equal(sync(`${marked}</xingdou>`, config), marked);
     assert.equal(sync(scene, config), scene);
     assert.equal(sync(scene + '<report>partial', config), scene + '<report>partial');
-    assert.equal(sync(scene + report + report, config), scene + report + report);
+    assert.equal(sync(scene + report + report, config), scene + report + report + '\n</xingdou>');
     assert.equal(sync(full, { ...config, marker: 'custom', markerAnchor: 'trigger' }), `${scene}\n</custom>\nprefix${report}suffix`);
     assert.match(sync(scene, { ...config, actionTag: 'report', markerAnchor: 'trigger' }), /<\/SceneInfo>\n<\/xingdou>$/);
     const expectedUnmarked = full.replace('</report>suffix', '</report>\n\nsuffix');

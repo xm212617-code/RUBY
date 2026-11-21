@@ -108,10 +108,20 @@ function host(options = {}) {
 
 test('report parser rejects duplicate keys, duplicate actors, fenced examples and caps actions', () => {
     assert.equal(parseSexCombatReport('```xml\n' + action + '\n```'), null);
-    assert.equal(parseSexCombatReport(action + action), null);
+    assert.equal(parseSexCombatReport(action + action).user.单向, 1);
     assert.equal(parseSexCombatReport('<report>\nuser:\n  单向: 1\n  单向: 2\n</report>'), null);
     assert.equal(parseSexCombatReport('<report>\nuser:\n  单向: 1\nuser:\n  双向: 1\n</report>'), null);
     assert.equal(parseSexCombatReport('<x>\nuser:\n  双向: 99\n</x>', 'x').user.双向, 2);
+});
+
+test('reasoning XML reminders and repeated complete reports settle only one selected report', async () => {
+    const h = host({ chat: [{ mes: '<custom>记得<report>，还有<SceneInfo>。</custom>\n' + scene(action + action) }] });
+    await h.runtime.tick();
+    assert.equal(h.runtime.snapshot().state.round, 1);
+    const settled = h.runtime.snapshot().state.opps[0].pos;
+    await h.runtime.tick();
+    assert.equal(h.runtime.snapshot().state.round, 1);
+    assert.equal(h.runtime.snapshot().state.opps[0].pos, settled);
 });
 
 test('card config is required; missing card does not touch county state or worldbooks', async () => {

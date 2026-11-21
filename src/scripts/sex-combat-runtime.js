@@ -2,7 +2,7 @@ import { ctx, warn } from '../env.js';
 import { isAgentMode } from '../agent-mode.js';
 import { resolveConfig } from '../config.js';
 import { readVerifiedEntries, writeVerifiedEntry } from '../worldbook.js';
-import { isSexCombatRegexMetadataReady, normalizeSexCombatConfig, parseSexCombatScene, syncSexCombatMarkers } from './sex-combat.js';
+import { extractSexCombatBlocks, isSexCombatRegexMetadataReady, normalizeSexCombatConfig, parseSexCombatScene, syncSexCombatMarkers } from './sex-combat.js';
 import { renderSexCombatContent } from './sex-combat-view.js';
 
 const PREFIX = 'RUBY_UniversalSexCombat_';
@@ -31,17 +31,21 @@ const nameEq = (a, b) => nameKey(a) === nameKey(b);
 const isPlayerName = (name, aliases = []) => ['user', '{{user}}', ...aliases].some((alias) => nameKey(alias) && nameEq(name, alias));
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const stripFences = (text) => String(text || '').replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?(?:^[ \t]*\1[ \t]*\r?$|(?![\s\S]))/gm, '');
 
 /** Same bounded YAML action grammar as the repaired county implementation. */
 export function parseSexCombatReport(text, tag = 'report', playerNames = []) {
-    const escaped = String(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const source = stripFences(text);
-    const blocks = [...source.matchAll(new RegExp(`<${escaped}>([\\s\\S]*?)<\\/${escaped}>`, 'gi'))];
-    if (blocks.length !== 1 || (source.match(new RegExp(`<\\/?${escaped}>`, 'gi')) || []).length !== 2) return null;
+    for (const block of extractSexCombatBlocks(String(text || ''), tag).reverse()) {
+        const report = parseReportBody(block.content, playerNames);
+        if (report) return report;
+    }
+    return null;
+}
+
+function parseReportBody(body, playerNames) {
     const out = Object.create(null);
     let current, seen;
-    for (const raw of blocks[0][1].split(/\r?\n/)) {
+    let actions = 0;
+    for (const raw of body.split(/\r?\n/)) {
         if (!raw.trim() || /^\s*#/.test(raw)) continue;
         const indent = raw.length - raw.trimStart().length;
         const pair = raw.trim().match(/^([^:：]+)[:：]\s*(.*)$/);
@@ -56,6 +60,7 @@ export function parseSexCombatReport(text, tag = 'report', playerNames = []) {
             if (!current || indent < 2 || !/^\d+$/.test(pair[2])) return null;
             const action = pair[1].trim().match(/^(单向|双向)(?:\s*->\s*(.+))?$/);
             if (!action) return null;
+            actions++;
             const target = isPlayerName(action[2], playerNames) ? 'user' : action[2]?.trim();
             const key = action[1] + ':' + nameKey(target);
             if (seen.has(key)) return null;
@@ -65,7 +70,7 @@ export function parseSexCombatReport(text, tag = 'report', playerNames = []) {
             else out[current][action[1]] = count;
         }
     }
-    return Object.keys(out).length ? out : null;
+    return actions && Object.keys(out).length ? out : null;
 }
 
 /** Dependency injection keeps the real host lifecycle testable without iframe/UI. */
