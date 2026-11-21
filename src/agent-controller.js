@@ -204,6 +204,7 @@ export function createAgentController({ getContext = ctx, makeTools = createAgen
             await persist(origin);
             const result = await runAgentLoop({ messages, tools, settings, signal, limiter, guard,
                 request: (args) => request({ ...args, settings: args.purpose === 'compaction' ? { ...settings, maxTokens: Math.min(settings.maxTokens, 8192) } : settings, getContext,
+                    onConnection: (connection) => { guard(); addLog('connection', `实际连接：${connection.selection} → ${connection.source} / ${connection.model}`, connection); },
                     routerUnicodeInput: args.messages.some((message) => message.role === 'user' && /[^\x00-\x7F]/.test(message.content || ''))
                         ? { user_floor: userFloor } : undefined,
                 }),

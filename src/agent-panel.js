@@ -316,6 +316,8 @@ function bindControls(root, controller, settings) {
             updateAgentControls(root, controller.getState());
             if (status) status.textContent = '已保存';
         } catch (error) {
+            input.value = String(settings[key] ?? '');
+            updateAgentControls(root, controller.getState());
             if (status) status.textContent = `保存失败：${asText(error?.message || error)}`;
         }
     };

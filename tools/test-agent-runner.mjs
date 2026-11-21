@@ -1,13 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runAgentLoop, parseAgentTurn, createRequestLimiter, abortableDelay, validateAgentArguments } from '../src/agent-runner.js';
-import { buildAgentPayload } from '../src/agent-api.js';
+import { buildAgentPayload, requestAgent } from '../src/agent-api.js';
 
 const settings = { rpm: 60, minIntervalMs: 0, maxRequests: 5, maxMinutes: 2, retries: 1 };
 const answer = (content) => ({ choices: [{ message: { content } }] });
 const call = (name, args = {}, id = 'c1') => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 const calls = (...tool_calls) => ({ choices: [{ message: { content: '', tool_calls } }] });
 const tools = (execute) => ({ definitions: [{ type: 'function', function: { name: 'read' } }], execute });
+
+test('switching custom DeepSeek to main Gemini ignores saved custom fields and reads the live main model', async () => {
+    let model = 'gemini-test';
+    const dependencies = { getContext: () => ({ mainApi: 'openai' }), getRubyApi: () => ({ provider: 'custom', url: 'https://old.example', model: 'deepseek-chat' }),
+        loadMain: async () => ({ oai_settings: {}, getChatCompletionModel: () => model,
+            createGenerationParameters: async (_s, current) => ({ generate_data: { model: current, chat_completion_source: 'makersuite' } }) }) };
+    const config = { connection: 'custom', url: 'https://old.example', key: 'OLD_SECRET', model: 'deepseek-chat', maxTokens: 8000 };
+    assert.equal((await buildAgentPayload(config, [], [], dependencies)).model, 'deepseek-chat');
+    const main = await buildAgentPayload({ ...config, connection: 'main' }, [], [], dependencies);
+    assert.equal(main.model, 'gemini-test'); assert.equal(main.chat_completion_source, 'makersuite');
+    assert.equal(main.proxy_password, undefined); assert.equal(main.reverse_proxy, undefined);
+    model = 'gemini-another';
+    assert.equal((await buildAgentPayload({ ...config, connection: 'main' }, [], [], dependencies)).model, model);
+});
+
+test('third-party Gemini compatible paths do not get a spurious v1 suffix', async () => {
+    for (const url of ['https://gateway.example/v1beta/openai', 'https://gateway.example/v1beta/openai/chat/completions']) {
+        const payload = await buildAgentPayload({ connection: 'custom', url, model: 'gemini-test', maxTokens: 8000 }, [], [], { getContext: () => ({}) });
+        assert.equal(payload.reverse_proxy, 'https://gateway.example/v1beta/openai');
+    }
+    await assert.rejects(requestAgent({ settings: { connection: 'custom', url: '', model: '' }, messages: [], definitions: [], getContext: () => ({}) }), /请求准备失败.*尚未发送到酒馆后端/);
+});
+
+test('connection diagnostics identify the effective endpoint without leaking credentials and retain backend errors', async (t) => {
+    const previous = globalThis.fetch;
+    t.after(() => { globalThis.fetch = previous; });
+    let connection, sent;
+    globalThis.fetch = async (_url, options) => {
+        sent = JSON.parse(options.body);
+        return { ok: false, status: 400, headers: { get: () => null }, json: async () => ({ error: 'Gateway rejected model' }) };
+    };
+    await assert.rejects(requestAgent({
+        settings: { connection: 'custom', url: 'https://gateway.example/v1beta/openai?key=URL_SECRET', key: 'API_SECRET', model: 'gemini-test', maxTokens: 8000 },
+        messages: [], definitions: [], getContext: () => ({ getRequestHeaders: () => ({}) }),
+        onConnection: (value) => { connection = value; },
+    }), /HTTP 400.*gemini-test.*Gateway rejected model/);
+    assert.equal(connection.endpoint, 'https://gateway.example/v1beta/openai');
+    assert.doesNotMatch(JSON.stringify(connection), /SECRET/);
+    assert.equal(sent.model, 'gemini-test');
+});
 
 test('a user task executes tools, observes results, then returns the final response', async () => {
     const messages = [{ role: 'user', content: 'Check' }], seen = [];

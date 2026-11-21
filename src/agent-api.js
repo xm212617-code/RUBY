@@ -4,7 +4,18 @@ import { normalizeBaseUrl } from './ai.js';
 
 function normalizeAgentBaseUrl(raw) {
     const url = new URL(raw);
-    if (url.hostname.toLowerCase() !== 'generativelanguage.googleapis.com') return normalizeBaseUrl(raw);
+    if (url.hostname.toLowerCase() !== 'generativelanguage.googleapis.com') {
+        const path = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+        if (/\/v\d+(?:beta\d*)?\/openai$/i.test(path) || /\/chat\/completions\/?$/i.test(url.pathname)) {
+            url.pathname = path;
+            url.search = ''; url.hash = '';
+            return url.toString().replace(/\/$/, '');
+        }
+        if (/\/models\/[^/]+:(?:streamGenerateContent|generateContent)/i.test(path)) {
+            throw new Error('Agent自定义连接使用OpenAI兼容协议，不能填写Gemini原生generateContent地址；请选酒馆主API或网关的OpenAI兼容地址');
+        }
+        return normalizeBaseUrl(raw);
+    }
     let path = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
     if (!path || path === '/') path = '/v1beta/openai';
     else if (path === '/v1beta' || path === '/v1') path += '/openai';
@@ -57,9 +68,17 @@ export async function buildAgentPayload(settings, messages, definitions, { getCo
             ? { router_unicode_input: routerUnicodeInput } : {}) };
 }
 
-export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies, routerUnicodeInput }) {
-    const payload = await buildAgentPayload(settings, messages, definitions, { getContext, routerUnicodeInput, ...payloadDependencies });
+export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies, routerUnicodeInput, onConnection = () => {} }) {
+    let payload;
+    try {
+        payload = await buildAgentPayload(settings, messages, definitions, { getContext, routerUnicodeInput, ...payloadDependencies });
+    } catch (error) {
+        throw new Error(`Agent请求准备失败（来源：${settings.connection}，尚未发送到酒馆后端）：${error.message}`);
+    }
     if (signal?.aborted) throw Object.assign(new Error('Agent 已停止'), { name: 'AbortError' });
+    let endpoint = '';
+    try { const parsed = new URL(payload.reverse_proxy || payload.custom_url); endpoint = parsed.origin + parsed.pathname; } catch { endpoint = '酒馆供应商默认端点'; }
+    onConnection({ selection: settings.connection, source: payload.chat_completion_source, model: payload.model, endpoint });
     const c = getContext();
     const response = await fetch('/api/backends/chat-completions/generate', {
         method: 'POST', headers: { ...c.getRequestHeaders(), 'Content-Type': 'application/json' },
@@ -67,7 +86,8 @@ export async function requestAgent({ settings, messages, definitions, signal, ge
     });
     const data = await response.json().catch(() => null);
     if (!response.ok || data?.error) {
-        const error = new Error(`Agent API HTTP ${response.status}：${String(data?.error?.message || data?.message || '请求失败')}`);
+        const detail = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '请求失败';
+        const error = new Error(`酒馆请求返回 HTTP ${response.status}（来源：${payload.chat_completion_source}，模型：${payload.model}；上游是否收到需查酒馆日志）：${String(detail)}`);
         const retryAfter = response.headers.get('Retry-After');
         if (retryAfter) error.retryAfterMs = /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
         throw error;

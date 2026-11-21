@@ -1532,6 +1532,7 @@ function loadApiTab(data) {
         if (providerSel.value === 'custom' && !$('ra_api_url').value.trim()) {
             $('ra_api_url').value = 'https://api.openai.com/v1';
         }
+        config.saveApiConfig({ provider: providerSel.value });
     };
     modelSelect.onchange = () => {
         const chosen = modelSelect.value || '';
