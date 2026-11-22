@@ -32,6 +32,21 @@ const isPlayerName = (name, aliases = []) => ['user', '{{user}}', ...aliases].so
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+/** ST 的 emitter 会 await 监听器、Generate 又 await emit；emit 内的等待加上限，
+ *  超时后不再等（队列任务仍在后台继续，结算与存档不丢），绝不中止宿主生成。 */
+const EMIT_TIMEOUT_MS = 10000;
+function withTimeout(task, ms, label) {
+    let timer;
+    const bounded = new Promise((resolve) => {
+        timer = setTimeout(() => {
+            warn(`script runtime: ${label} 超过 ${ms}ms，不再等待（不阻断发送，后台继续）`);
+            Promise.resolve(task).catch((e) => warn(`script runtime: ${label} 后台完成失败（不影响宿主）:`, e?.message || e));
+            resolve(null);
+        }, ms);
+    });
+    return Promise.race([Promise.resolve(task).finally(() => clearTimeout(timer)), bounded]);
+}
+
 /** Same bounded YAML action grammar as the repaired county implementation. */
 export function parseSexCombatReport(text, tag = 'report', playerNames = []) {
     for (const block of extractSexCombatBlocks(String(text || ''), tag).reverse()) {
@@ -564,14 +579,18 @@ export function createScriptRuntime(dependencies = {}) {
         const c = getContext(), card = configForCard();
         if (!canRun(c, card) || !identity(c)) return;
         try {
-            await enqueue(async () => {
+            await withTimeout(enqueue(async () => {
                 if (identity(getContext()) !== identity(c) || getContext()?.chatMetadata !== c.chatMetadata) throw new Error('chat or character changed');
                 await tick(true);
                 const session = sessionFor(c); session.guard();
                 session.epoch++; session.generating = true; session.built = false; session.signal = options?.signal;
                 session.prompt = session.state?.endEntries?.length ? { state: session.state, entries: session.state.endEntries } : null;
-            });
-        } catch (error) { if (identity(getContext()) === identity(c)) c.stopGeneration?.(); reportError(error); throw error; }
+            }), EMIT_TIMEOUT_MS, '生成前状态同步');
+        } catch (error) {
+            // 存档失败只记录，不掐宿主生成：emitter 会吞掉异常，生成照常进行，后台队列稍后自愈。
+            reportError(error);
+            throw error;
+        }
     }
     async function received(id, type) {
         const c = getContext(), session = sessions.get(identity(c));
@@ -581,14 +600,14 @@ export function createScriptRuntime(dependencies = {}) {
         if (session?.generating && session.built && message && !message.is_user && !message.is_system && String(message.mes || '').trim()) {
             const delivery = session.prompt;
             session.generating = false; session.prompt = null; session.built = false; session.failedReply = null;
-            await enqueue(async () => {
+            await withTimeout(enqueue(async () => {
                 session.guard();
                 if (delivery && session.state === delivery.state && session.state.endEntries === delivery.entries) { session.state.endConsumed = Boolean(session.state.ended); session.state.endEntries = []; session.dirty = true; await session.persist(); }
-            });
+            }), EMIT_TIMEOUT_MS, '收场条目落账');
         }
         if (identity(getContext()) !== identity(c) || getContext()?.chatMetadata !== c?.chatMetadata) return;
         syncMarkers(id);
-        await enqueue(() => tick());
+        await withTimeout(enqueue(() => tick()), EMIT_TIMEOUT_MS, '战后状态同步');
     }
     function init() {
         if (initialized) return;
