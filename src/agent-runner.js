@@ -62,6 +62,25 @@ export function createRequestLimiter({ now = Date.now, delay = abortableDelay } 
     };
 }
 
+/**
+ * 某些 OpenAI 兼容链路会把工具/授权范围元数据（bookId、uid、条目数）序列化成纯文本，
+ * 既不带 tool_calls 也不带可恢复的原生 Gemini parts。这种载荷必须显式报错，
+ * 绝不能当成 Ruby 的最终回答吐给创作者。适用于全部连接：主 API、RUBY API、自定义网关。
+ */
+function looksLikeSerializedToolMetadata(value) {
+    const raw = String(value || '').trim();
+    if (!raw || raw.length > 500) return false;
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (tokens.length < 4 || tokens.length > 80) return false;
+    const bookIdRe = /^(?:character|chat|global:\d+)$/i;
+    const bookIds = tokens.filter((token) => bookIdRe.test(token)).length;
+    const numbers = tokens.filter((token) => /^\d+$/.test(token)).length;
+    if (bookIds < 2 || (bookIds + numbers) / tokens.length < 0.6) return false;
+    // 正常回答几乎必带标点；标点检查须剥离 bookId 自带的冒号（global:0）
+    const prose = tokens.filter((token) => !bookIdRe.test(token) && !/^\d+$/.test(token)).join(' ');
+    return !/[。！？!?.,;:：；、]/.test(prose);
+}
+
 export function parseAgentTurn(raw) {
     if (raw?.error) throw new Error(String(raw.error.message || raw.error));
     const choice = raw?.choices?.find((c) => c.index === 0) || raw?.choices?.[0];
@@ -127,6 +146,9 @@ export function parseAgentTurn(raw) {
         };
     });
     if (!text.trim() && !calls.length) throw new Error('模型未返回正文或工具调用，请检查模型是否支持工具及输出长度');
+    if (!calls.length && looksLikeSerializedToolMetadata(text)) {
+        throw new Error('模型回复疑似连接层把工具元数据（书ID/编号）序列化成了正文，且未附带可恢复的工具调用；请更换Agent连接或网关后重试');
+    }
     const reasoning = choice?.message?.reasoning_content;
     return { text, calls, usage: raw?.usage || raw?.usageMetadata || null,
         ...(typeof reasoning === 'string' ? { reasoning } : {}) };

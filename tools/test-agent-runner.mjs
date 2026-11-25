@@ -125,6 +125,20 @@ test('truncated, duplicate and empty tool responses are rejected before any tool
     assert.equal(parseAgentTurn({ content: [{ type: 'tool_use', id: 'a', name: 'read', input: { uid: 0 } }] }).calls[0].function.arguments, '{"uid":0}');
 });
 
+test('gateways that serialize tool metadata as text fail loudly instead of echoing book IDs', async () => {
+    const incident = '100 0 character 墨涟 character 50 character 50 妖修九境 仙器 character 50 global:0 墨涟';
+    assert.throws(() => parseAgentTurn(answer(incident)), /工具元数据/);
+    assert.throws(() => parseAgentTurn(answer('character 50 0\nchat 50 0')), /工具元数据/);
+    // Prose answers pass even without punctuation.
+    assert.equal(parseAgentTurn(answer('已读取墨涟条目')).text, '已读取墨涟条目');
+    assert.equal(parseAgentTurn(answer('已读取墨涟条目，内容核对完毕。')).text, '已读取墨涟条目，内容核对完毕。');
+    // Metadata-looking text beside real tool calls keeps the tools and never throws.
+    const withCalls = parseAgentTurn({ choices: [{ message: { content: 'character 50 0\nchat 50 0', tool_calls: [call('list_books')] } }] });
+    assert.equal(withCalls.calls.length, 1);
+    await assert.rejects(runAgentLoop({ messages: [], settings, tools: tools(() => {}),
+        request: async () => answer(incident) }), /工具元数据/);
+});
+
 test('SillyTavern Gemini wrapper preserves responseContent function calls beside choices.message', async () => {
     let requests = 0, toolCount = 0;
     const messages = [{ role: 'user', content: 'Edit the requested entry' }];

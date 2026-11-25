@@ -7,7 +7,7 @@
     "css": "style.css",
     "generate_interceptor": "rubyAgentGenerationInterceptor",
     "author": "RUBY Project",
-    "version": "3.1.1",
+    "version": "3.1.2",
     "homePage": "",
     "auto_update": true
 }
