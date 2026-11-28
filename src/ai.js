@@ -16,6 +16,25 @@ export function isDeepSeekUrl(raw) {
     try { return new URL(raw).hostname.toLowerCase() === 'api.deepseek.com'; } catch { return false; }
 }
 
+export function prepareDeepSeekPayload(payload) {
+    const isDeepSeek = payload.chat_completion_source === 'deepseek'
+        || isDeepSeekUrl(payload.custom_url) || isDeepSeekUrl(payload.reverse_proxy)
+        || /deepseek/i.test(String(payload.model || ''));
+    if (!isDeepSeek || !Array.isArray(payload.messages)) return payload;
+    return {
+        ...payload,
+        messages: payload.messages.map((message) => {
+            if (message?.role !== 'assistant') return message;
+            // Preserve returned reasoning verbatim; prefills and non-thinking history have none.
+            const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content
+                : typeof message.reasoning === 'string' ? message.reasoning : '';
+            return { ...message, reasoning_content: reasoning };
+        }),
+        // Merging assistant messages would discard reasoning and tool-call fields.
+        custom_prompt_post_processing: '',
+    };
+}
+
 export function isOpenCodeGoUrl(raw) {
     try {
         const url = new URL(raw);
@@ -112,7 +131,7 @@ export function buildGenerationPayload({ apiCfg, genParams, messages }) {
         customBody.reasoning_effort = gen.reasoning_effort;
     }
     if (Object.keys(customBody).length) payload.custom_include_body = JSON.stringify(customBody);
-    return payload;
+    return prepareDeepSeekPayload(payload);
 }
 
 /**
@@ -288,12 +307,13 @@ async function callMainApi({ genParams, messages }) {
     };
 
     const isChatCompletion = c.mainApi === 'openai';
-    if (Object.keys(patchable).length > 0 && isChatCompletion && c.eventSource && c.eventTypes?.CHAT_COMPLETION_SETTINGS_READY) {
+    if (isChatCompletion && c.eventSource && c.eventTypes?.CHAT_COMPLETION_SETTINGS_READY) {
         const marker = messages[0];
         hook = (generateData) => {
             // 引用比对：createRawPrompt/createGenerationParameters 均不替换消息对象，引用不变
             if (!Array.isArray(generateData?.messages) || !generateData.messages.includes(marker)) return;
             Object.assign(generateData, patchable);
+            Object.assign(generateData, prepareDeepSeekPayload(generateData));
             detach();
         };
         c.eventSource.on(c.eventTypes.CHAT_COMPLETION_SETTINGS_READY, hook);

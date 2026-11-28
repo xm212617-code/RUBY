@@ -1,6 +1,6 @@
 import { ctx } from './env.js';
 import { getApiConfig } from './config.js';
-import { isDeepSeekUrl, isOpenCodeGoUrl, makeOpenCodeHeaders, normalizeBaseUrl, normalizeOpenCodeGoBaseUrl } from './ai.js';
+import { isDeepSeekUrl, isOpenCodeGoUrl, makeOpenCodeHeaders, normalizeBaseUrl, normalizeOpenCodeGoBaseUrl, prepareDeepSeekPayload } from './ai.js';
 
 function normalizeAgentBaseUrl(raw) {
     const url = new URL(raw);
@@ -77,11 +77,11 @@ export async function buildAgentPayload(settings, messages, definitions, { getCo
         }
     }
     const isGemini4 = /gemini-4-/i.test(modelName);
-    return { ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
+    return prepareDeepSeekPayload({ ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
         stream: false, n: 1, max_tokens: isGemini4 ? Math.max(settings.maxTokens, 16384) : settings.maxTokens,
         temperature: settings.temperature, ...(isGemini4 ? { reasoning_effort: 'medium' } : {}),
         ...(/gemini/i.test(modelName) && Number.isSafeInteger(routerUnicodeInput?.user_floor) && routerUnicodeInput.user_floor >= 0
-            ? { router_unicode_input: routerUnicodeInput } : {}) };
+            ? { router_unicode_input: routerUnicodeInput } : {}) });
 }
 
 export async function requestAgent({ settings, messages, definitions, signal, getContext = ctx, payloadDependencies, routerUnicodeInput, onConnection = () => {} }) {

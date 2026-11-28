@@ -149,7 +149,8 @@ export function parseAgentTurn(raw) {
     if (!calls.length && looksLikeSerializedToolMetadata(text)) {
         throw new Error('模型回复疑似连接层把工具元数据（书ID/编号）序列化成了正文，且未附带可恢复的工具调用；请更换Agent连接或网关后重试');
     }
-    const reasoning = choice?.message?.reasoning_content;
+    const reasoning = typeof choice?.message?.reasoning_content === 'string' ? choice.message.reasoning_content
+        : choice?.message?.reasoning;
     return { text, calls, usage: raw?.usage || raw?.usageMetadata || null,
         ...(typeof reasoning === 'string' ? { reasoning } : {}) };
 }

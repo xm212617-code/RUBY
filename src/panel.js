@@ -407,7 +407,7 @@ function buildShellHtml() {
                                 <span class="form-label">选项</span>
                                 <span class="form-value" style="display:flex;gap:16px;flex-wrap:wrap;">
                                     <label class="inline" id="ra_api_stream_label" title="此开关仅控制自定义端点的请求方式；主API的流式与否由酒馆自身机制按当前后端决定，RUBY 不干预"><input type="checkbox" id="ra_api_stream" checked> 流式传输</label>
-                                    <label class="inline" id="ra_api_thinking_label" title="对应酒馆的「请求模型推理」选项，默认关闭。DeepSeek 官方 API 会明确发送 thinking.type=disabled；启用后发送 enabled。DeepSeek 未指定 thinking 时默认开启推理；其他端点忽略此项。"><input type="checkbox" id="ra_api_thinking"> 请求模型推理（DeepSeek）</label>
+                                    <label class="inline" id="ra_api_thinking_label" title="只控制 DeepSeek 官方 API 的推理模式，默认关闭（thinking.type=disabled），勾选后启用（enabled）。与 reasoning_content 回传是两件事；RUBY 会自动保留并回传助手推理字段，无需打开此开关来修复缺失字段错误。"><input type="checkbox" id="ra_api_thinking"> 启用推理模式（DeepSeek）</label>
                                     <label class="inline"><input type="checkbox" id="ra_notify" checked> 分析进度提示</label>
                                     <label class="inline" title="控制悬浮球显隐；若玩家页「入口样式」选了 QR 栏，则入口由 QR 栏按钮行接管，此开关不生效"><input type="checkbox" id="ra_orb_show" checked> 显示悬浮球</label>
                                 </span>
