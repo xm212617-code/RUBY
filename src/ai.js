@@ -1,7 +1,8 @@
 import { ctx, log, warn } from './env.js';
-import { sanitizeGenParams } from './config.js';
+import { getSettings, persist, sanitizeGenParams } from './config.js';
 
 const REQUEST_TIMEOUT_MS = 600000;
+const OPENCODE_GO_MODELS_URL = 'https://opencode.ai/inference/go/v1';
 
 export function normalizeBaseUrl(raw) {
     const base = String(raw || '').trim().replace(/\/+$/, '');
@@ -9,6 +10,60 @@ export function normalizeBaseUrl(raw) {
     const url = base.replace(/\/chat\/completions$/i, '');
     if (/\/(v\d+|beta)$/i.test(url)) return url;
     return url + '/v1';
+}
+
+export function isDeepSeekUrl(raw) {
+    try { return new URL(raw).hostname.toLowerCase() === 'api.deepseek.com'; } catch { return false; }
+}
+
+export function isOpenCodeGoUrl(raw) {
+    try {
+        const url = new URL(raw);
+        return url.hostname.toLowerCase() === 'opencode.ai' && /^\/inference\/go(?:\/|$)/i.test(url.pathname);
+    } catch { return false; }
+}
+
+export function normalizeOpenCodeGoBaseUrl(raw) {
+    const url = new URL(raw);
+    if (!isOpenCodeGoUrl(url.toString())) return normalizeBaseUrl(raw);
+    let path = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+    if (path === '/inference/go' || path === '/inference/go/v1') path = '/inference/go/openai/v1';
+    else if (path === '/inference/go/openai') path += '/v1';
+    url.pathname = path;
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+}
+
+function createOpenCodeSessionId() {
+    const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '')
+        || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+    return `ses_${random}`;
+}
+
+export function getOpenCodeSessionId(c = ctx()) {
+    const store = getSettings();
+    if (!store) return createOpenCodeSessionId();
+    let conversationId = '';
+    try { conversationId = String(c?.getCurrentChatId?.() || c?.chatId || c?.chatMetadata?.chat_id || c?.chatMetadata?.id || ''); } catch { /* use fallback */ }
+    const character = c?.characters?.[c?.characterId]?.avatar || c?.character?.avatar || c?.characterAvatar || (c?.characterId ?? 'none');
+    const scope = c?.groupId !== undefined && c?.groupId !== null ? `group:${c.groupId}` : `character:${character}`;
+    const key = `chat:${scope}:${conversationId || 'unknown'}`.slice(0, 240);
+    const sessions = store.api.openCodeSessions;
+    if (Object.hasOwn(sessions, key)) return sessions[key];
+    sessions[key] = createOpenCodeSessionId();
+    const entries = Object.entries(sessions);
+    if (entries.length > 100) store.api.openCodeSessions = Object.fromEntries(entries.slice(-100));
+    persist();
+    return store.api.openCodeSessions[key] || sessions[key];
+}
+
+export function makeOpenCodeHeaders(apiKey, c = ctx()) {
+    return {
+        Authorization: `Bearer ${apiKey || ''}`,
+        'User-Agent': 'RubyAnalyzer/1.0',
+        'x-opencode-session': getOpenCodeSessionId(c),
+    };
 }
 
 function friendlyError(err) {
@@ -22,24 +77,41 @@ function friendlyError(err) {
     return msg || '未知错误';
 }
 
-function buildGenerationPayload({ apiCfg, genParams, messages }) {
+export function buildGenerationPayload({ apiCfg, genParams, messages }) {
+    const isDeepSeek = isDeepSeekUrl(apiCfg.url);
+    const isOpenCodeGo = isOpenCodeGoUrl(apiCfg.url);
+    const gen = sanitizeGenParams(genParams);
+    const customUrl = isOpenCodeGo ? normalizeOpenCodeGoBaseUrl(apiCfg.url) : normalizeBaseUrl(apiCfg.url);
     const payload = {
         messages,
         model: apiCfg.model,
-        chat_completion_source: 'openai',
-        reverse_proxy: normalizeBaseUrl(apiCfg.url),
-        proxy_password: apiCfg.key || '',
+        chat_completion_source: isDeepSeek || isOpenCodeGo ? 'custom' : 'openai',
+        ...(isDeepSeek || isOpenCodeGo
+            ? {
+                custom_url: customUrl,
+                custom_include_headers: JSON.stringify(isOpenCodeGo
+                    ? makeOpenCodeHeaders(apiCfg.key)
+                    : { Authorization: `Bearer ${apiCfg.key || ''}` }),
+            }
+            : { reverse_proxy: customUrl, proxy_password: apiCfg.key || '' }),
         stream: apiCfg.stream !== false,
     };
     // 仅发送玩家显式启用且通过合法性清洗的参数；其余不进入请求体，
     // 由上游使用默认值（杜绝 top_k=0 之类的非法值抵达供应商）
-    const gen = sanitizeGenParams(genParams);
     for (const key of ['temperature', 'top_p', 'top_k', 'presence_penalty', 'frequency_penalty', 'max_tokens']) {
         if (gen[key] !== undefined) payload[key] = gen[key];
     }
-    if (gen.reasoning_effort) {
+    if (gen.reasoning_effort && (!isDeepSeek || apiCfg.thinkingEnabled === true)) {
         payload.reasoning_effort = gen.reasoning_effort;
     }
+    const customBody = {};
+    if (isDeepSeek) {
+        customBody.thinking = { type: apiCfg.thinkingEnabled === true ? 'enabled' : 'disabled' };
+        if (apiCfg.thinkingEnabled === true && gen.reasoning_effort) customBody.reasoning_effort = gen.reasoning_effort;
+    } else if (isOpenCodeGo && gen.reasoning_effort) {
+        customBody.reasoning_effort = gen.reasoning_effort;
+    }
+    if (Object.keys(customBody).length) payload.custom_include_body = JSON.stringify(customBody);
     return payload;
 }
 
@@ -110,7 +182,7 @@ async function callViaBackendEndpoint({ apiCfg, genParams, messages, forceNonStr
     if (!c || typeof c.getRequestHeaders !== 'function') throw new Error('SillyTavern context unavailable');
     const payload = buildGenerationPayload({ apiCfg, genParams, messages });
     if (forceNonStream) payload.stream = false;
-    if (!payload.reverse_proxy) throw new Error('未配置API地址');
+    if (!payload.reverse_proxy && !payload.custom_url) throw new Error('未配置API地址');
     if (!payload.model) throw new Error('未配置模型名称');
 
     const controller = new AbortController();
@@ -296,6 +368,26 @@ export async function callModel({ apiCfg, genParams, messages, taskLabel }) {
 
 export async function fetchModelList(baseUrl, apiKey) {
     const c = ctx();
+    if (isOpenCodeGoUrl(baseUrl)) {
+        if (typeof c?.getRequestHeaders !== 'function') throw new Error('SillyTavern context unavailable');
+        const headers = { Authorization: `Bearer ${apiKey || ''}`, 'User-Agent': 'RubyAnalyzer/1.0' };
+        const res = await fetch('/api/backends/chat-completions/status', {
+            method: 'POST',
+            headers: c.getRequestHeaders(),
+            body: JSON.stringify({
+                chat_completion_source: 'custom',
+                custom_url: OPENCODE_GO_MODELS_URL,
+                custom_include_headers: JSON.stringify(headers),
+            }),
+        });
+        const data = await res.json().catch(() => null);
+        const models = Array.isArray(data?.data)
+            ? data.data.filter((m) => !m?.type || m.type === 'chat').map((m) => m?.id).filter(Boolean)
+            : [];
+        if (res.ok && models.length) return [...new Set(models)];
+        const message = data?.message || data?.error?.message || `${res.status} ${res.statusText || ''}`.trim();
+        throw new Error(`OpenCode Go 模型列表获取失败（${message}）`);
+    }
     const cleanBase = String(baseUrl || '').trim()
         .replace(/\/+$/, '')
         .replace(/\/(?:v\d+|beta)\/chat\/completions$/i, '')

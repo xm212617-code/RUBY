@@ -382,6 +382,8 @@ function buildShellHtml() {
                                 <span class="form-label">渠道选择</span>
                                 <select id="ra_api_provider" class="w200">
                                     <option value="main">酒馆主API（沿用当前连接）</option>
+                                    <option value="deepseek">DeepSeek 官方 API（只需填写 API Key）</option>
+                                    <option value="opencode-go">OpenCode Go 官方套餐</option>
                                     <option value="custom">自定义 OpenAI 兼容端点</option>
                                 </select>
                             </div>
@@ -405,6 +407,7 @@ function buildShellHtml() {
                                 <span class="form-label">选项</span>
                                 <span class="form-value" style="display:flex;gap:16px;flex-wrap:wrap;">
                                     <label class="inline" id="ra_api_stream_label" title="此开关仅控制自定义端点的请求方式；主API的流式与否由酒馆自身机制按当前后端决定，RUBY 不干预"><input type="checkbox" id="ra_api_stream" checked> 流式传输</label>
+                                    <label class="inline" id="ra_api_thinking_label" title="对应酒馆的「请求模型推理」选项，默认关闭。DeepSeek 官方 API 会明确发送 thinking.type=disabled；启用后发送 enabled。DeepSeek 未指定 thinking 时默认开启推理；其他端点忽略此项。"><input type="checkbox" id="ra_api_thinking"> 请求模型推理（DeepSeek）</label>
                                     <label class="inline"><input type="checkbox" id="ra_notify" checked> 分析进度提示</label>
                                     <label class="inline" title="控制悬浮球显隐；若玩家页「入口样式」选了 QR 栏，则入口由 QR 栏按钮行接管，此开关不生效"><input type="checkbox" id="ra_orb_show" checked> 显示悬浮球</label>
                                 </span>
@@ -438,7 +441,7 @@ function buildShellHtml() {
                             </div>
                             <div class="tip" style="margin-top:8px;">
                                 💡 <strong>主API</strong>：通过酒馆原生 <code>generateRaw</code> 走当前连接的模型，仅借用通道——<u>不注入预设的提示词</u>（主提示词/越狱/角色卡/聊天记录一概不进上下文），发送的只有 RUBY 自己组装的破限消息与任务提示词，与酒馆自身静默提示词同一机制；RUBY 生成参数会按官方事件钩子覆写到本次请求。<br>
-                                💡 <strong>自定义端点</strong>：OpenAI 兼容接口（DeepSeek、OpenRouter、GLM 等），通过酒馆官方 <code>ChatCompletionService</code> 请求服务发出。地址填到版本段即可（如 <code>/v1</code>、<code>/beta</code>），由酒馆服务端拼接 <code>/chat/completions</code> 并转发。<br>
+                                💡 <strong>DeepSeek 官方</strong>：选择官方渠道后只需填写 API Key，默认使用 <code>deepseek-flash</code>；<strong>OpenCode Go</strong>：选择套餐渠道并拉取可用模型，RUBY 自动附加官方要求的会话标识。自定义端点仍支持 OpenAI 兼容接口（OpenRouter、GLM 等），地址填到版本段即可（如 <code>/v1</code>、<code>/beta</code>）。<br>
                                 🔒 两条通道均为酒馆原生请求形态、异步后台执行；密钥只保存在本机扩展设置中，不进入角色卡、世界书或配置模板。
                             </div>
                         </div>
@@ -1473,8 +1476,21 @@ function renderPresetDetail(data, presetId) {
     el.innerHTML = html;
 }
 
+function apiPresetForConfig(apiCfg) {
+    if (apiCfg.provider !== 'custom') return 'main';
+    if (ai.isDeepSeekUrl(apiCfg.url)) return 'deepseek';
+    if (ai.isOpenCodeGoUrl(apiCfg.url)) return 'opencode-go';
+    return 'custom';
+}
+
+function storedApiProvider(selection) {
+    return selection === 'main' ? 'main' : 'custom';
+}
+
 function apiProfileSummary(profile) {
     if (profile.provider === 'main') return '酒馆主 API（跟随当前连接）';
+    if (ai.isDeepSeekUrl(profile.url)) return `DeepSeek 官方 · ${profile.model || 'deepseek-flash'}`;
+    if (ai.isOpenCodeGoUrl(profile.url)) return `OpenCode Go · ${profile.model || '未选择模型'}`;
     const endpoint = profile.url || '未填写地址';
     return `${endpoint}${profile.model ? ` · ${profile.model}` : ''}`;
 }
@@ -1490,7 +1506,8 @@ function renderApiProfiles() {
     const current = config.getApiConfig();
     const same = (p, target) => p.provider === target.provider
         && p.url === String(target.url || '').trim().replace(/\/+$/, '')
-        && p.model === String(target.model || '').trim();
+        && p.model === String(target.model || '').trim()
+        && p.thinkingEnabled === (target.thinkingEnabled === true);
     el.innerHTML = profiles.map((p) => `
         <div class="api-profile-row" data-api-profile-id="${h(p.id)}">
             <div class="api-profile-main">
@@ -1513,7 +1530,7 @@ export function applyApiProfile(profile, target) {
         return;
     }
     if (target === 'director') {
-        config.saveDirectorApiConfig({ enabled: true, provider: profile.provider, url: profile.provider === 'custom' ? profile.url : '', key: profile.provider === 'custom' ? profile.key : '', model: profile.provider === 'custom' ? profile.model : '' });
+        config.saveDirectorApiConfig({ enabled: true, provider: profile.provider, url: profile.provider === 'custom' ? profile.url : '', key: profile.provider === 'custom' ? profile.key : '', model: profile.provider === 'custom' ? profile.model : '', thinkingEnabled: profile.thinkingEnabled === true });
         loadApiTab(config.resolveConfig().data);
         window.toastr?.success?.(`已将「${profile.name}」应用到导演 API`);
         return;
@@ -1524,6 +1541,7 @@ export function applyApiProfile(profile, target) {
         key: profile.key,
         model: profile.model,
         stream: profile.stream !== false,
+        thinkingEnabled: profile.thinkingEnabled === true,
         cache: [],
     });
     loadApiTab(config.resolveConfig().data);
@@ -1541,11 +1559,12 @@ export function saveCurrentApiProfile() {
         return;
     }
     const current = {
-        provider: $('ra_api_provider')?.value === 'custom' ? 'custom' : 'main',
+        provider: storedApiProvider($('ra_api_provider')?.value || 'main'),
         url: $('ra_api_url')?.value.trim() || '',
         key: $('ra_api_key')?.value.trim() || '',
         model: $('ra_api_model_text')?.value.trim() || '',
         stream: !!$('ra_api_stream')?.checked,
+        thinkingEnabled: !!$('ra_api_thinking')?.checked,
     };
     if (current.provider === 'custom' && !current.url) {
         window.toastr?.warning?.('请先填写 API 地址再保存方案');
@@ -1582,10 +1601,11 @@ function loadApiTab(data) {
     const providerSel = $('ra_api_provider');
     if (!providerSel) return;
 
-    providerSel.value = apiCfg.provider === 'custom' ? 'custom' : 'main';
+    providerSel.value = apiPresetForConfig(apiCfg);
     $('ra_api_url').value = apiCfg.url || '';
     $('ra_api_key').value = apiCfg.key || '';
     $('ra_api_stream').checked = apiCfg.stream !== false;
+    $('ra_api_thinking').checked = apiCfg.thinkingEnabled === true;
     $('ra_notify').checked = uiCfg.notify !== false;
     $('ra_orb_show').checked = !uiCfg.orbHidden;
 
@@ -1612,6 +1632,10 @@ function loadApiTab(data) {
         syncModelSelectValue(modelSelect, apiCfg.cache, apiCfg.model || '');
     }
     modelText.value = apiCfg.model || '';
+    if (providerSel.value === 'deepseek' && !modelText.value) {
+        modelText.value = 'deepseek-flash';
+        config.saveApiConfig({ model: modelText.value });
+    }
 
     const gen = data.gen || {};
     $('ra_gen_temp').value = gen.temperature ?? '';
@@ -1631,34 +1655,71 @@ function loadApiTab(data) {
     $('ra_gen_enable').onchange = syncGenEnabled;
 
     const syncProviderUi = () => {
-        const isCustom = providerSel.value === 'custom';
-        $('ra_api_url_wrap').classList.toggle('hidden', !isCustom);
+        const isCustom = providerSel.value !== 'main';
+        const hasFixedUrl = providerSel.value === 'deepseek' || providerSel.value === 'opencode-go';
+        $('ra_api_url_wrap').classList.toggle('hidden', !isCustom || hasFixedUrl);
         $('ra_api_key_wrap').classList.toggle('hidden', !isCustom);
         $('ra_api_connect').classList.toggle('hidden', !isCustom);
         $('ra_api_stream_label')?.classList.toggle('hidden', !isCustom);
+        $('ra_api_thinking_label')?.classList.toggle('hidden', !isCustom);
         // 输入框常驻（模型名真值来源，可自由填写）；下拉仅在已拉取到列表时作为快捷选择出现
         modelText.classList.toggle('hidden', !isCustom);
         modelSelect.classList.toggle('hidden', !isCustom || !modelSelect.options.length);
     };
+    let activeApiPreset = providerSel.value;
     syncProviderUi();
     providerSel.onchange = () => {
+        const previous = activeApiPreset;
+        const selection = providerSel.value;
+        if (selection === 'deepseek') {
+            $('ra_api_url').value = 'https://api.deepseek.com/v1';
+            modelText.value = 'deepseek-flash';
+            modelSelect.innerHTML = '';
+            if (previous !== 'deepseek') $('ra_api_key').value = '';
+        } else if (selection === 'opencode-go') {
+            $('ra_api_url').value = 'https://opencode.ai/inference/go/openai/v1';
+            if (previous !== 'opencode-go') {
+                modelText.value = '';
+                $('ra_api_key').value = '';
+            }
+            modelSelect.innerHTML = '';
+        } else if (selection === 'custom' && (previous === 'deepseek' || previous === 'opencode-go')) {
+            $('ra_api_url').value = 'https://api.openai.com/v1';
+            modelText.value = '';
+            $('ra_api_key').value = '';
+            modelSelect.innerHTML = '';
+        }
+        activeApiPreset = selection;
         syncProviderUi();
-        if (providerSel.value === 'custom' && !$('ra_api_url').value.trim()) {
+        if (selection === 'custom' && !$('ra_api_url').value.trim()) {
             $('ra_api_url').value = 'https://api.openai.com/v1';
         }
-        config.saveApiConfig({ provider: providerSel.value });
+        config.saveApiConfig({
+            provider: storedApiProvider(selection),
+            ...(selection !== 'main' ? { url: $('ra_api_url').value.trim(), key: $('ra_api_key').value, model: modelText.value.trim(), cache: [] } : {}),
+        });
+    };
+    $('ra_api_url').onchange = () => {
+        providerSel.value = 'custom';
+        activeApiPreset = 'custom';
+        syncProviderUi();
+        config.saveApiConfig({ provider: 'custom', url: $('ra_api_url').value.trim() });
+    };
+    $('ra_api_thinking').onchange = () => {
+        config.saveApiConfig({ thinkingEnabled: $('ra_api_thinking').checked });
+        renderApiProfiles();
     };
     modelSelect.onchange = () => {
         const chosen = modelSelect.value || '';
         if (!chosen) return; // 头部占位项：不动输入框的自定义值
         modelText.value = chosen;
-        config.saveApiConfig({ provider: providerSel.value, model: chosen });
+        config.saveApiConfig({ provider: storedApiProvider(providerSel.value), model: chosen });
         window.toastr?.success?.('已选择模型');
     };
     modelText.onchange = () => {
         // 自由填写：失焦/回车即保存；若恰好在已拉取列表中，同步下拉选中态
         const value = modelText.value.trim();
-        config.saveApiConfig({ provider: providerSel.value, model: value });
+        config.saveApiConfig({ provider: storedApiProvider(providerSel.value), model: value });
         if (Array.isArray(config.getApiConfig().cache)) {
             syncModelSelectValue(modelSelect, config.getApiConfig().cache, value);
         }
@@ -1770,6 +1831,7 @@ function wirePlayerSections() {
             const apiCfg = config.getApiConfig();
             if (!$('ra_dir_api_url').value.trim()) $('ra_dir_api_url').value = apiCfg.url || '';
             if (!$('ra_dir_api_key').value) $('ra_dir_api_key').value = apiCfg.key || '';
+            if (!config.getDirectorApiConfig().enabled) config.saveDirectorApiConfig({ thinkingEnabled: apiCfg.thinkingEnabled === true });
             if (!$('ra_dir_api_model_text').value.trim() && !$('ra_dir_api_model_select').value) {
                 $('ra_dir_api_model_text').value = apiCfg.model || '';
             }
@@ -1780,6 +1842,7 @@ function wirePlayerSections() {
             url: $('ra_dir_api_url').value.trim(),
             key: $('ra_dir_api_key').value,
             model: $('ra_dir_api_model_text').value.trim(),
+            thinkingEnabled: config.getDirectorApiConfig().thinkingEnabled === true,
         });
         syncDirectorApiUi();
         updateDirectorApiHighlight();
@@ -1885,16 +1948,17 @@ function wirePlayerSections() {
     on($('ra_api_save'), 'click', () => {
         try {
             const providerSel = $('ra_api_provider');
-            const isCustom = providerSel.value === 'custom';
+            const isCustom = providerSel.value !== 'main';
             // 模型名一律以输入框为准（下拉只是快捷选择，选择时会写回输入框）
             const modelValue = isCustom ? $('ra_api_model_text').value.trim() : '';
 
             config.saveApiConfig({
-                provider: providerSel.value,
-                url: $('ra_api_url').value.trim(),
-                key: $('ra_api_key').value.trim(),
+                provider: storedApiProvider(providerSel.value),
+                url: isCustom ? $('ra_api_url').value.trim() : '',
+                key: isCustom ? $('ra_api_key').value.trim() : '',
                 model: modelValue,
                 stream: !!$('ra_api_stream').checked,
+                thinkingEnabled: !!$('ra_api_thinking').checked,
             });
             config.saveUi({
                 notify: !!$('ra_notify').checked,
@@ -1918,6 +1982,7 @@ function wirePlayerSections() {
                     reasoning_effort: $('ra_gen_effort').value || undefined,
                 };
             });
+            renderApiProfiles();
             window.toastr?.success?.('API设置已保存');
         } catch (e) {
             window.toastr?.error?.('保存失败: ' + e.message);

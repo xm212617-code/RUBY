@@ -50,6 +50,7 @@ const makeDefaultDirectorApi = () => ({
     url: '',                // 空=跟随RUBY分析API地址
     key: '',                // 空=跟随RUBY分析API密钥
     model: '',              // 空=跟随RUBY分析API模型
+    thinkingEnabled: false,
 });
 
 export const makeDefaultPreset = () => ({
@@ -86,6 +87,8 @@ const makeDefaultApi = () => ({
     stream: true,
     cache: [],
     reasoningEffort: '',
+    thinkingEnabled: false,
+    openCodeSessions: {},
 });
 
 export function normalizeApiProfile(raw) {
@@ -100,6 +103,7 @@ export function normalizeApiProfile(raw) {
         key: provider === 'custom' ? (typeof p.key === 'string' ? p.key : String(p.key || '')) : '',
         model: provider === 'custom' ? String(p.model || '').trim() : '',
         stream: p.stream !== false,
+        thinkingEnabled: p.thinkingEnabled === true,
     };
 }
 
@@ -175,6 +179,10 @@ export function getSettings() {
     const store = (c.extensionSettings[SETTINGS_KEY] ||= {});
     store.api = { ...makeDefaultApi(), ...(store.api || {}) };
     store.api.cache = Array.isArray(store.api.cache) ? store.api.cache : [];
+    store.api.thinkingEnabled = store.api.thinkingEnabled === true;
+    store.api.openCodeSessions = store.api.openCodeSessions && typeof store.api.openCodeSessions === 'object' && !Array.isArray(store.api.openCodeSessions)
+        ? store.api.openCodeSessions
+        : {};
     store.apiProfiles = normalizeApiProfiles(store.apiProfiles);
     const rawProvider = String(store.api.provider || '');
     if (rawProvider !== 'main' && rawProvider !== 'custom') {
@@ -185,6 +193,7 @@ export function getSettings() {
     store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
     if (!['', 'main', 'custom'].includes(store.directorApi.provider)) store.directorApi.provider = '';
     store.directorApi.enabled = !!store.directorApi.enabled;
+    store.directorApi.thinkingEnabled = store.directorApi.thinkingEnabled === true;
     store.ui = { ...makeDefaultUi(), ...(store.ui || {}) };
     // 生成的角色分析聊天书登记簿：全局（跨角色/跨聊天），key 为 chatId（缺失时回退书名）。
     // 在「聊天世界书」级别登记——只记录书名与所属角色，绝不给条目打标签、不靠条目 UID 识别。

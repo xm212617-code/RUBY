@@ -1,6 +1,6 @@
 import { ctx } from './env.js';
 import { getApiConfig } from './config.js';
-import { normalizeBaseUrl } from './ai.js';
+import { isDeepSeekUrl, isOpenCodeGoUrl, makeOpenCodeHeaders, normalizeBaseUrl, normalizeOpenCodeGoBaseUrl } from './ai.js';
 
 function normalizeAgentBaseUrl(raw) {
     const url = new URL(raw);
@@ -58,7 +58,23 @@ export async function buildAgentPayload(settings, messages, definitions, { getCo
         modelName = model;
         const parsed = new URL(url);
         if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('API地址必须是无内嵌凭据的HTTP(S)地址');
-        payload = { chat_completion_source: 'openai', reverse_proxy: normalizeAgentBaseUrl(url), proxy_password: key || '', model };
+        const isDeepSeek = isDeepSeekUrl(url);
+        const isOpenCodeGo = isOpenCodeGoUrl(url);
+        if (isDeepSeek || isOpenCodeGo) {
+            payload = {
+                chat_completion_source: 'custom',
+                custom_url: isOpenCodeGo ? normalizeOpenCodeGoBaseUrl(url) : normalizeAgentBaseUrl(url),
+                custom_include_headers: JSON.stringify(isOpenCodeGo
+                    ? makeOpenCodeHeaders(key, c)
+                    : { Authorization: `Bearer ${key || ''}` }),
+                ...(isDeepSeek ? {
+                    custom_include_body: JSON.stringify({ thinking: { type: (ruby?.thinkingEnabled ?? settings.thinkingEnabled) === true ? 'enabled' : 'disabled' } }),
+                } : {}),
+                model,
+            };
+        } else {
+            payload = { chat_completion_source: 'openai', reverse_proxy: normalizeAgentBaseUrl(url), proxy_password: key || '', model };
+        }
     }
     const isGemini4 = /gemini-4-/i.test(modelName);
     return { ...payload, messages: structuredClone(messages), tools: structuredClone(definitions), tool_choice: 'auto',
