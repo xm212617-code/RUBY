@@ -445,7 +445,23 @@ function buildShellHtml() {
                     </div>
 
                     <div class="form-section">
-                        <div class="form-header red">■ 生成参数</div>
+                        <div class="form-header red">■ API 方案快切</div>
+                         <div class="form-body">
+                             <div class="tip" style="margin-top:0;margin-bottom:10px;">
+                                 保存一套常用的地址 / 密钥 / 模型后，可在本页、导演 API 和 Agent API 中直接应用。方案只存本机，不会写入角色卡；切换方案不会改动酒馆原生连接。<br>
+                                 列表中的 <strong>✔ 使用中</strong> 只是状态标记：表示该方案的渠道 / 地址 / 模型与 RUBY 基础 API 当前生效的设置一致，不是按钮；真正执行切换的是右侧「应用到 RUBY」。
+                             </div>
+                             <div class="form-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+                                 <span class="form-label">方案名称</span>
+                                 <input id="ra_api_profile_name" class="w250" placeholder="例如：DeepSeek 主力 / OpenRouter">
+                                 <button id="ra_api_profile_save" class="btn red small">💾 保存当前为方案</button>
+                             </div>
+                             <div id="ra_api_profiles" class="api-profile-list"></div>
+                         </div>
+                     </div>
+
+                     <div class="form-section">
+                         <div class="form-header red">■ 生成参数</div>
                         <div class="form-body">
                             <div class="tip" style="margin-top:0;margin-bottom:10px;">
                                 💡 <strong>默认不发送任何生成参数</strong>：主API沿用酒馆当前预设的采样设置，自定义端点沿用服务商默认值。<br>
@@ -1034,6 +1050,10 @@ function wireGlobalInteractions() {
     if (interactionsBound) return;
     interactionsBound = true;
 
+    window.addEventListener('ruby:api-profiles-changed', () => {
+        if ($(PANEL_ID)) renderApiProfiles();
+    });
+
     const c = ctx();
     if (c?.eventSource && c?.eventTypes?.CHAT_CHANGED) {
         c.eventSource.on(c.eventTypes.CHAT_CHANGED, () => {
@@ -1453,6 +1473,97 @@ function renderPresetDetail(data, presetId) {
     el.innerHTML = html;
 }
 
+function apiProfileSummary(profile) {
+    if (profile.provider === 'main') return '酒馆主 API（跟随当前连接）';
+    const endpoint = profile.url || '未填写地址';
+    return `${endpoint}${profile.model ? ` · ${profile.model}` : ''}`;
+}
+
+function renderApiProfiles() {
+    const el = $('ra_api_profiles');
+    if (!el) return;
+    const profiles = config.getApiProfiles();
+    if (!profiles.length) {
+        el.innerHTML = '<div class="api-profile-empty">还没有保存的 API 方案。先填写上方连接信息，再点「保存当前为方案」。</div>';
+        return;
+    }
+    const current = config.getApiConfig();
+    const same = (p, target) => p.provider === target.provider
+        && p.url === String(target.url || '').trim().replace(/\/+$/, '')
+        && p.model === String(target.model || '').trim();
+    el.innerHTML = profiles.map((p) => `
+        <div class="api-profile-row" data-api-profile-id="${h(p.id)}">
+            <div class="api-profile-main">
+                <strong>${h(p.name)}</strong>
+                <span>${h(apiProfileSummary(p))}</span>
+            </div>
+            <div class="api-profile-actions">
+                ${same(p, current) ? '<span class="api-profile-active" title="该方案的渠道、地址与模型，和 RUBY 基础 API 当前生效的设置完全一致">✔ 使用中</span>' : ''}
+                <button type="button" class="btn outline small" data-api-profile-action="base" data-api-profile-id="${h(p.id)}">应用到 RUBY</button>
+                <button type="button" class="btn outline small" data-api-profile-action="director" data-api-profile-id="${h(p.id)}">应用到导演</button>
+                <button type="button" class="btn red small" data-api-profile-action="delete" data-api-profile-id="${h(p.id)}">删除</button>
+            </div>
+        </div>`).join('');
+}
+
+export function applyApiProfile(profile, target) {
+    if (!profile) return;
+    if (profile.provider === 'custom' && !profile.url) {
+        window.toastr?.warning?.(`方案「${profile.name}」缺少 API 地址，未应用`);
+        return;
+    }
+    if (target === 'director') {
+        config.saveDirectorApiConfig({ enabled: true, provider: profile.provider, url: profile.provider === 'custom' ? profile.url : '', key: profile.provider === 'custom' ? profile.key : '', model: profile.provider === 'custom' ? profile.model : '' });
+        loadApiTab(config.resolveConfig().data);
+        window.toastr?.success?.(`已将「${profile.name}」应用到导演 API`);
+        return;
+    }
+    config.saveApiConfig({
+        provider: profile.provider,
+        url: profile.url,
+        key: profile.key,
+        model: profile.model,
+        stream: profile.stream !== false,
+        cache: [],
+    });
+    loadApiTab(config.resolveConfig().data);
+    window.dispatchEvent(new CustomEvent('ruby:ui-changed'));
+    window.dispatchEvent(new CustomEvent('ruby:qrbar-refresh'));
+    window.toastr?.success?.(`已切换到 API 方案「${profile.name}」`);
+}
+
+export function saveCurrentApiProfile() {
+    const nameInput = $('ra_api_profile_name');
+    const name = String(nameInput?.value || '').trim();
+    if (!name) {
+        window.toastr?.warning?.('请先填写方案名称');
+        nameInput?.focus();
+        return;
+    }
+    const current = {
+        provider: $('ra_api_provider')?.value === 'custom' ? 'custom' : 'main',
+        url: $('ra_api_url')?.value.trim() || '',
+        key: $('ra_api_key')?.value.trim() || '',
+        model: $('ra_api_model_text')?.value.trim() || '',
+        stream: !!$('ra_api_stream')?.checked,
+    };
+    if (current.provider === 'custom' && !current.url) {
+        window.toastr?.warning?.('请先填写 API 地址再保存方案');
+        $('ra_api_url')?.focus();
+        return;
+    }
+    const existing = config.getApiProfiles().find((p) => p.name === name);
+    config.saveApiProfile({
+        ...(existing || {}),
+        name,
+        ...current,
+    });
+    nameInput.value = '';
+    renderApiProfiles();
+    window.dispatchEvent(new CustomEvent('ruby:api-profiles-changed'));
+    window.toastr?.success?.(`API 方案「${name}」已保存`);
+}
+
 /** 模型下拉选项：头部占位项提示可自由填写，正文为拉取到的模型列表 */
 function buildModelOptions(models) {
     const header = '<option value="">— 从列表选择 / 输入框自由填写 —</option>';
@@ -1465,6 +1576,7 @@ function syncModelSelectValue(select, models, value) {
 }
 
 function loadApiTab(data) {
+    renderApiProfiles();
     const apiCfg = config.getApiConfig();
     const uiCfg = config.getUi();
     const providerSel = $('ra_api_provider');
@@ -1487,6 +1599,8 @@ function loadApiTab(data) {
     if (Array.isArray(apiCfg.cache) && apiCfg.cache.length > 0 && dirApi.enabled) {
         dirModelSelect.innerHTML = buildModelOptions(apiCfg.cache);
         syncModelSelectValue(dirModelSelect, apiCfg.cache, dirApi.model || apiCfg.model || '');
+    } else if (!Array.isArray(apiCfg.cache) || apiCfg.cache.length === 0) {
+        dirModelSelect.innerHTML = '';
     }
     syncDirectorApiUi();
     updateDirectorApiHighlight();
@@ -1569,6 +1683,27 @@ function updateDirectorApiHighlight() {
 }
 
 function wirePlayerSections() {
+    on($('ra_api_profile_save'), 'click', saveCurrentApiProfile);
+    on($('ra_api_profiles'), 'click', (event) => {
+        const button = event.target.closest?.('[data-api-profile-action]');
+        if (!button) return;
+        const id = button.dataset.apiProfileId;
+        const profile = config.getApiProfiles().find((item) => item.id === id);
+        if (!profile) return;
+        const action = button.dataset.apiProfileAction;
+        if (action === 'delete') {
+            if (!window.confirm(`删除 API 方案「${profile.name}」？`)) return;
+            config.deleteApiProfile(id);
+            renderApiProfiles();
+            window.dispatchEvent(new CustomEvent('ruby:api-profiles-changed'));
+            window.toastr?.success?.(`已删除 API 方案「${profile.name}」`);
+        } else {
+            applyApiProfile(profile, action);
+        }
+    });
+    on($('ra_api_profile_name'), 'keydown', (event) => {
+        if (event.key === 'Enter') saveCurrentApiProfile();
+    });
     on($('ra_pure_manual'), 'change', (e) => {
         config.saveUi({ pureManualRun: e.target.checked });
         syncPureManualUi();

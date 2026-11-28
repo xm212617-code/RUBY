@@ -1,4 +1,5 @@
 import { h } from './env.js';
+import * as config from './config.js';
 import { getKnowledgeIndex } from './agent-knowledge.js';
 
 const DEFAULT_SETTINGS = {
@@ -81,11 +82,15 @@ function settingsMarkup(settings) {
         return `<label class="agent-field"><span>${h(field.label)}</span><input ${attributes}></label>`;
     }).join('');
 
+    const profileOptions = config.getApiProfiles().map((profile) => `<option value="${h(profile.id)}">${h(profile.name)}${profile.model ? ` · ${h(profile.model)}` : ''}</option>`).join('');
+    const profileSelect = `<div class="agent-field"><span>API 方案快切</span><span class="agent-profile-control"><select data-agent-profile><option value="">— 选择已保存方案 —</option>${profileOptions}</select></span><span class="agent-profile-save"><input type="text" data-agent-profile-name maxlength="80" placeholder="新方案名称"><button type="button" class="agent-button" data-agent-profile-save>保存当前</button></span></div>`;
+
     return `
         <details class="agent-settings">
             <summary>API 与限流设置 <span class="agent-save-status" data-agent-save-status aria-live="polite"></span></summary>
             <div class="agent-settings-grid">
                 <label class="agent-field"><span>配置来源</span><select data-agent-setting="connection">${connectionOptions}</select></label>
+                ${profileSelect}
                 ${fields}
             </div>
             <p class="agent-settings-note">自动整理阈值按请求消息JSON的字符数计算，不是token数，也不是输入硬上限；可自行提高或设0。设0后不主动整理，仅在API明确报告上下文超长时尝试整理恢复。它与“最大输出tokens”独立，不能扩大模型实际上下文窗口。</p>
@@ -252,10 +257,57 @@ function settingValue(input) {
     return Number.isFinite(value) ? value : null;
 }
 
+function refreshAgentProfileOptions(root) {
+    const select = root.querySelector('[data-agent-profile]');
+    if (!select) return;
+    const previous = select.value;
+    const options = ['<option value="">— 选择已保存方案 —</option>', ...config.getApiProfiles().map((profile) => `<option value="${h(profile.id)}">${h(profile.name)}${profile.model ? ` · ${h(profile.model)}` : ''}</option>`)];
+    select.innerHTML = options.join('');
+    select.value = config.getApiProfiles().some((profile) => profile.id === previous) ? previous : '';
+}
+
+async function applyAgentProfile(root, controller, profile) {
+    const connection = profile.provider === 'main' ? 'main' : 'custom';
+    const patch = { connection, url: profile.url, key: profile.key, model: profile.model };
+    const saved = await controller.saveSettings(patch);
+    Object.assign(root.__agentSettings || {}, saved || patch);
+    root.__agentSettings = { ...(root.__agentSettings || {}), ...(saved || patch) };
+    updateAgentControls(root, controller.getState());
+    const status = root.querySelector('[data-agent-save-status]');
+    if (status) status.textContent = `已应用：${profile.name}`;
+}
+
+function saveAgentCurrentProfile(root, controller) {
+    const settings = controller.getSettings?.() || {};
+    const ruby = config.getApiConfig();
+    const provider = settings.connection === 'custom' ? 'custom' : settings.connection === 'main' ? 'main' : ruby.provider;
+    const source = settings.connection === 'custom' ? settings : ruby;
+    const nameInput = root.querySelector('[data-agent-profile-name]');
+    const name = String(nameInput?.value || '').trim();
+    if (!name) {
+        const status = root.querySelector('[data-agent-save-status]');
+        if (status) status.textContent = '请填写方案名称';
+        nameInput?.focus();
+        return;
+    }
+    const existing = config.getApiProfiles().find((profile) => profile.name === name);
+    config.saveApiProfile({ ...(existing || {}), name, provider, url: source.url || '', key: source.key || '', model: source.model || '', stream: source.stream !== false });
+    if (nameInput) nameInput.value = '';
+    refreshAgentProfileOptions(root);
+    globalThis.window?.dispatchEvent?.(new CustomEvent('ruby:api-profiles-changed'));
+    const status = root.querySelector('[data-agent-save-status]');
+    if (status) status.textContent = `已保存：${name}`;
+}
+
 function bindControls(root, controller, settings) {
     let actionPending = false;
 
     const onClick = async (event) => {
+        const profileSave = event.target.closest?.('[data-agent-profile-save]');
+        if (profileSave && root.contains(profileSave)) {
+            saveAgentCurrentProfile(root, controller);
+            return;
+        }
         const modeButton = event.target.closest?.('[data-agent-mode]');
         if (modeButton && root.contains(modeButton)) {
             const nextMode = modeButton.dataset.agentMode;
@@ -297,6 +349,21 @@ function bindControls(root, controller, settings) {
     };
 
     const onChange = async (event) => {
+        const profileSelect = event.target.closest?.('[data-agent-profile]');
+        if (profileSelect && root.contains(profileSelect)) {
+            const profile = config.getApiProfiles().find((item) => item.id === profileSelect.value);
+            if (!profile) return;
+            const status = root.querySelector('[data-agent-save-status]');
+            if (status) status.textContent = '应用中…';
+            try {
+                await applyAgentProfile(root, controller, profile);
+            } catch (error) {
+                if (status) status.textContent = `应用失败：${asText(error?.message || error)}`;
+            } finally {
+                profileSelect.value = '';
+            }
+            return;
+        }
         const input = event.target.closest?.('[data-agent-setting]');
         if (!input || !root.contains(input)) return;
         const key = input.dataset.agentSetting;
@@ -324,9 +391,12 @@ function bindControls(root, controller, settings) {
 
     root.addEventListener('click', onClick);
     root.addEventListener('change', onChange);
+    const onProfilesChanged = () => refreshAgentProfileOptions(root);
+    globalThis.window?.addEventListener?.('ruby:api-profiles-changed', onProfilesChanged);
     return () => {
         root.removeEventListener('click', onClick);
         root.removeEventListener('change', onChange);
+        globalThis.window?.removeEventListener?.('ruby:api-profiles-changed', onProfilesChanged);
     };
 }
 

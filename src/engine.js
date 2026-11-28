@@ -851,7 +851,7 @@ async function runDirectorTask(d, ctxObj) {
     // 流式等传输方式完全跟随RUBY基础API设置，不存在独立传输设计
     const dirApi = config.getDirectorApiConfig();
     const effApiCfg = dirApi.enabled
-        ? { ...apiCfg, url: dirApi.url || apiCfg.url, key: dirApi.key || apiCfg.key, model: dirApi.model || apiCfg.model }
+        ? { ...apiCfg, provider: dirApi.provider || apiCfg.provider, url: dirApi.url || apiCfg.url, key: dirApi.key || apiCfg.key, model: dirApi.model || apiCfg.model }
         : apiCfg;
     log(`director api: ${dirApi.enabled
         ? `独立（model=${effApiCfg.model || '未设置'}｜url=${dirApi.url ? '已覆盖' : '跟随'}｜key=${dirApi.key ? '已覆盖' : '跟随'}）`
