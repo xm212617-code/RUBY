@@ -1463,6 +1463,19 @@ body.ruby-dark #ra_panel .sub-tab.active { background: var(--ra-surface); }
 .agent-field { display: grid; gap: 4px; min-width: 0; color: var(--agent-muted); font-size: 11px; }
 .agent-field input, .agent-field select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; color: var(--agent-text); background: var(--agent-surface); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); font: inherit; font-size: 13px; }
 .agent-field input:focus, .agent-field select:focus, .agent-mode-switch button:focus-visible, .agent-button:focus-visible { outline: 2px solid var(--agent-accent); outline-offset: 2px; }
+.agent-profile-control { display: flex; gap: 6px; min-width: 0; }
+.agent-profile-control select { flex: 1; }
+.agent-profile-save { display: flex; gap: 6px; min-width: 0; }
+.agent-profile-save input { flex: 1; }
+.agent-profile-save .agent-button { flex: 0 0 auto; padding-inline: 9px; }
+.api-profile-list { display: grid; gap: 8px; margin-top: 10px; }
+.api-profile-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; background: var(--ra-surface-2); border: 1px solid var(--ra-border); border-radius: var(--ra-radius-s); }
+.api-profile-main { display: grid; gap: 3px; min-width: 0; }
+.api-profile-main strong { color: var(--ra-text); font-size: 13px; }
+.api-profile-main span { color: var(--ra-text-3); font-size: 11px; overflow-wrap: anywhere; }
+.api-profile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.api-profile-active { color: var(--ra-green-deep, #2c5530); font-size: 11px; font-weight: 700; }
+.api-profile-empty { padding: 10px; color: var(--ra-text-3); font-size: 12px; border: 1px dashed var(--ra-border); border-radius: var(--ra-radius-s); }
 .agent-settings-note { margin: 0; padding: 0 11px 10px; color: var(--agent-muted); font-size: 11px; }
 .agent-log-entry { padding: 8px 10px; background: var(--agent-subtle); border: 1px solid var(--agent-line); border-radius: var(--ra-radius-s, 6px); }
 .agent-log-meta { justify-content: flex-start; color: var(--agent-muted); font-size: 10px; }
@@ -1502,6 +1515,9 @@ body.ruby-dark #ra_panel .form-body .ra-agent-panel .agent-feedback[data-kind="s
     .agent-button { width: 100%; }
     .agent-scope-list li { align-items: flex-start; flex-direction: column; gap: 3px; }
     .agent-scope-list li span { text-align: left; }
+    .api-profile-row { align-items: flex-start; flex-direction: column; }
+    .api-profile-actions { justify-content: flex-start; width: 100%; }
+    .api-profile-actions .btn { flex: 1 1 auto; }
 }
 
 /* 面板右上角主题切换按钮 */

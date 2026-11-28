@@ -46,6 +46,7 @@ export const DEFAULT_DIRECTOR = {
 
 const makeDefaultDirectorApi = () => ({
     enabled: false,         // 玩家侧勾选：独立导演API（建议智商更高的模型）
+    provider: '',            // 空=跟随RUBY渠道；main/custom 可由已保存方案显式指定
     url: '',                // 空=跟随RUBY分析API地址
     key: '',                // 空=跟随RUBY分析API密钥
     model: '',              // 空=跟随RUBY分析API模型
@@ -86,6 +87,31 @@ const makeDefaultApi = () => ({
     cache: [],
     reasoningEffort: '',
 });
+
+export function normalizeApiProfile(raw) {
+    const p = (raw && typeof raw === 'object') ? raw : {};
+    const provider = p.provider === 'main' ? 'main' : 'custom';
+    return {
+        id: String(p.id || `api_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
+        name: String(p.name || '未命名 API 方案').trim().slice(0, 80) || '未命名 API 方案',
+        provider,
+        url: provider === 'custom' ? String(p.url || '').trim().replace(/\/+$/, '') : '',
+        // 明文密钥仅存在本机 extensionSettings；这里不参与卡片数据归一化/导出。
+        key: provider === 'custom' ? (typeof p.key === 'string' ? p.key : String(p.key || '')) : '',
+        model: provider === 'custom' ? String(p.model || '').trim() : '',
+        stream: p.stream !== false,
+    };
+}
+
+function normalizeApiProfiles(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    return raw.map(normalizeApiProfile).filter((p) => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+    });
+}
 
 const makeDefaultUi = () => ({
     orbHidden: false,
@@ -149,6 +175,7 @@ export function getSettings() {
     const store = (c.extensionSettings[SETTINGS_KEY] ||= {});
     store.api = { ...makeDefaultApi(), ...(store.api || {}) };
     store.api.cache = Array.isArray(store.api.cache) ? store.api.cache : [];
+    store.apiProfiles = normalizeApiProfiles(store.apiProfiles);
     const rawProvider = String(store.api.provider || '');
     if (rawProvider !== 'main' && rawProvider !== 'custom') {
         store.api.provider = (rawProvider === 'st' || rawProvider === '') && !store.api.url ? 'main' : 'custom';
@@ -156,6 +183,7 @@ export function getSettings() {
     store.global = normalizeConfigData(store.global || makeDefaultConfigData());
     store.characterConfigs = (store.characterConfigs && typeof store.characterConfigs === 'object') ? store.characterConfigs : {};
     store.directorApi = { ...makeDefaultDirectorApi(), ...(store.directorApi && typeof store.directorApi === 'object' ? store.directorApi : {}) };
+    if (!['', 'main', 'custom'].includes(store.directorApi.provider)) store.directorApi.provider = '';
     store.directorApi.enabled = !!store.directorApi.enabled;
     store.ui = { ...makeDefaultUi(), ...(store.ui || {}) };
     // 生成的角色分析聊天书登记簿：全局（跨角色/跨聊天），key 为 chatId（缺失时回退书名）。
@@ -599,6 +627,33 @@ export function saveApiConfig(patch = {}) {
     if (!store) return;
     store.api = { ...store.api, ...patch };
     persist();
+}
+
+/** API 快切方案：全局本机设置，绝不随当前角色卡保存。 */
+export function getApiProfiles() {
+    const store = getSettings();
+    return store ? store.apiProfiles.map((p) => ({ ...p })) : [];
+}
+
+export function saveApiProfile(profile = {}) {
+    const store = getSettings();
+    if (!store) return null;
+    const normalized = normalizeApiProfile(profile);
+    const index = store.apiProfiles.findIndex((p) => p.id === normalized.id);
+    if (index >= 0) store.apiProfiles[index] = normalized;
+    else store.apiProfiles.push(normalized);
+    persist();
+    return { ...normalized };
+}
+
+export function deleteApiProfile(id) {
+    const store = getSettings();
+    if (!store) return false;
+    const before = store.apiProfiles.length;
+    store.apiProfiles = store.apiProfiles.filter((p) => p.id !== String(id || ''));
+    if (store.apiProfiles.length === before) return false;
+    persist();
+    return true;
 }
 
 export function getUi() {
